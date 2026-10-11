@@ -35,7 +35,7 @@ import ImpersonationBanner from "./auth/ImpersonationBanner";
 import ImpersonationDialog from "./auth/ImpersonationDialog";
 import AppSnackbar from "./components/AppSnackbar";
 
-const DISPLAY_LOGO_WHITE = PRODUCT_BRAND.logo.dark;
+const DISPLAY_LOGO_WHITE = PRODUCT_BRAND.logo.nav;
 const DISPLAY_PRODUCT_NAME = PRODUCT_BRAND.productName;
 const NAVBAR_DARK = "#1e293b";
 
@@ -655,7 +655,7 @@ export default function Dashboard() {
         />
       </AppBar>
       <Toolbar sx={{ minHeight: 56 }} />
-      <Box component="main" sx={{ p: { xs: 2, md: 3 }, minHeight: "calc(100vh - 56px)", bgcolor: "transparent" }}>
+      <Box component="main" sx={{ p: { xs: 2, md: 3 }, minHeight: "calc(100dvh - 56px - 40px)", bgcolor: "transparent" }}>
         <Outlet />
       </Box>
       <ImpersonationDialog

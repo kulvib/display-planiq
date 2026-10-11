@@ -13,7 +13,7 @@ function MaintenanceScreen({ state, canStopImpersonation, onStopImpersonation, s
   const navigate = useNavigate();
   const expected = formatMaintenanceExpectedAt(state?.expected_end_at);
   return (
-    <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 2, bgcolor: "#020617" }}>
+    <Box sx={{ minHeight: "calc(100dvh - 40px)", display: "grid", placeItems: "center", p: 2, bgcolor: "#020617" }}>
       <Paper elevation={0} sx={{ width: "100%", maxWidth: 640, p: { xs: 3, sm: 5 }, bgcolor: "#0f172a", color: "#f8fafc", border: "1px solid rgba(148,163,184,0.18)" }}>
         <Stack spacing={2}>
           <Typography variant="h4" component="h1" sx={{ fontWeight: 900 }}>PlanIQ Display er midlertidigt lukket</Typography>
@@ -39,7 +39,7 @@ function MaintenanceScreen({ state, canStopImpersonation, onStopImpersonation, s
 
 function StatusError({ retry, checking }) {
   return (
-    <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center", p: 2, bgcolor: "#020617" }}>
+    <Box sx={{ minHeight: "calc(100dvh - 40px)", display: "grid", placeItems: "center", p: 2, bgcolor: "#020617" }}>
       <Paper elevation={0} sx={{ width: "100%", maxWidth: 640, p: { xs: 3, sm: 5 }, bgcolor: "#0f172a", color: "#f8fafc" }}>
         <Stack spacing={2}>
           <Typography variant="h4" component="h1">Driftsstatus kunne ikke bekræftes</Typography>
@@ -121,7 +121,7 @@ export default function MaintenanceGate({ children }) {
 
   const adminLogin = location.pathname === "/login" && new URLSearchParams(location.search).get("maintenance_admin") === "1";
   if (checking && !state) {
-    return <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}><CircularProgress aria-label="Kontrollerer driftsstatus" /></Box>;
+    return <Box sx={{ minHeight: "calc(100dvh - 40px)", display: "grid", placeItems: "center" }}><CircularProgress aria-label="Kontrollerer driftsstatus" /></Box>;
   }
   if (!state && statusError) return <StatusError retry={() => void refresh()} checking={checking} />;
 

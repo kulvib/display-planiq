@@ -11,7 +11,9 @@ import { Link as RouterLink } from "react-router-dom";
 import { apiUrl } from "./api";
 import { formatApiError } from "./api/apiError";
 
-const DISPLAY_LOGO_SRC = "/brand/planiq-display/planiq-display-logo-on-dark.png";
+import { PRODUCT_BRAND } from "./branding";
+
+const DISPLAY_LOGO_SRC = PRODUCT_BRAND.logo.dark;
 
 function getErrorMessage(payload, fallback = "Der opstod en fejl") {
   if (!payload) return fallback;
@@ -89,7 +91,7 @@ export default function ForgotPassword() {
   return (
     <Box
       sx={{
-        minHeight: "100vh",
+        minHeight: "calc(100dvh - 40px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

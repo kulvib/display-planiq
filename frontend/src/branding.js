@@ -1,6 +1,6 @@
-const LOGO_SRC = "/brand/planiq-display/planiq-display-logo.png";
-const LOGO_ON_DARK_SRC = "/brand/planiq-display/planiq-display-logo-on-dark.png";
-const LOGO_MONO_DARK_SRC = "/brand/planiq-display/planiq-display-logo-mono-dark.png";
+const LOGO_SRC = "/brand/planiq-display/planiq-display-logo-primary.svg";
+const LOGO_ON_DARK_SRC = "/brand/planiq-display/planiq-display-logo-reversed.svg";
+const LOGO_MONO_DARK_SRC = "/brand/planiq-display/planiq-display-logo-mono-navy.svg";
 const MARK_SRC = "/brand/planiq-display/planiq-display-mark.png";
 const MARK_ON_DARK_SRC = "/brand/planiq-display/planiq-display-mark-on-dark.png";
 
@@ -19,6 +19,7 @@ export const PRODUCT_BRAND = {
   // PRODUCT_BRAND.logo.light / .dark direkte, mens nyere Display-filer
   // bruger de flade *Src-felter nedenfor. Begge bevares med samme værdier.
   logo: {
+    nav: "/brand/planiq-display/planiq-display-logo-white.svg",
     light: LOGO_SRC,
     dark: LOGO_ON_DARK_SRC,
     monoDark: LOGO_MONO_DARK_SRC,
@@ -33,7 +34,8 @@ export const PRODUCT_BRAND = {
   markOnDarkSrc: MARK_ON_DARK_SRC,
   mailProductName: "PlanIQ Display",
   mailFromName: "PlanIQ Display",
-  mailLogoPath: LOGO_SRC,
+  // Mailklienter understøtter PNG mere konsekvent end SVG. Filen er det godkendte v5-logo.
+  mailLogoPath: "/brand/planiq-display/planiq-display-logo.png",
 };
 
 export function getBrowserTitle(pageTitle) {

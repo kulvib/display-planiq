@@ -18,8 +18,8 @@ PAYLOAD_SOURCES = {
         ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png",
         0o444,
     ),
-    "planiq-display-logo-on-dark.png": (
-        ROOT / "frontend/public/brand/planiq-display/planiq-display-logo-on-dark.png",
+    "planiq-display-desktop-wallpaper-3840x2160.png": (
+        ROOT / "frontend/public/brand/planiq-display/planiq-display-desktop-wallpaper-3840x2160.png",
         0o444,
     ),
 }
