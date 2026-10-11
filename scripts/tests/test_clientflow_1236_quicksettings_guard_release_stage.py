@@ -14,7 +14,7 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_1236_identity_stages_exactly_one_release_ahead_of_approved_catalog() -> None:
+def test_1236_identity_matches_immutably_published_fresh_install_catalog() -> None:
     assert read("client/VERSION").strip() == "1.3.35"
     release = json.loads(read("client/release/release-input.json"))
     assert release["release_sequence"] == 1236
@@ -23,17 +23,18 @@ def test_1236_identity_stages_exactly_one_release_ahead_of_approved_catalog() ->
     assert release["architecture"] == "amd64"
 
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1235
-    assert catalog["latest_stable"] == "1.3.34"
-    assert catalog["default_install_version"] == "1.3.34"
+    assert catalog["catalog_sequence"] == 1236
+    assert catalog["latest_stable"] == "1.3.35"
+    assert catalog["default_install_version"] == "1.3.35"
     assert len(catalog["releases"]) == 1
     published = catalog["releases"][0]
-    assert published["release_id"] == "clientflow-1.3.34-seq-1235"
+    assert published["release_id"] == "clientflow-1.3.35-seq-1236"
     assert published["install_modes"] == ["fresh_install"]
     assert published["update_allowed"] is False
     assert published["rollback_allowed"] is False
-    assert all(item["version"] != "1.3.35" for item in catalog["releases"])
-    assert all(item["release_sequence"] != 1236 for item in catalog["releases"])
+    assert published["installable"] is True
+    assert all(item["release_sequence"] != 1235 for item in catalog["releases"])
+    assert all(item["version"] != "1.3.34" for item in catalog["releases"])
 
 
 def test_guard_fix_is_in_staged_runtime_but_periodic_policy_is_unchanged() -> None:

@@ -92,8 +92,8 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
         }
     ]
 
-def test_1334_1235_promotion_preserves_1333_1234_source_freeze_history_and_release_chain() -> None:
-    # Source-only 1.3.35/1236 stages ahead of the immutable 1.3.34 catalog.
+def test_1335_1236_promotion_preserves_1334_and_older_release_history() -> None:
+    # Approved 1.3.35/1236 replaces the selector, not historical evidence.
     assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.35"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
@@ -106,12 +106,12 @@ def test_1334_1235_promotion_preserves_1333_1234_source_freeze_history_and_relea
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1235
-    assert catalog["latest_stable"] == "1.3.34"
-    assert catalog["default_install_version"] == "1.3.34"
+    assert catalog["catalog_sequence"] == 1236
+    assert catalog["latest_stable"] == "1.3.35"
+    assert catalog["default_install_version"] == "1.3.35"
     selected = catalog["releases"][0]
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert selected["release_id"] == "clientflow-1.3.34-seq-1235"
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert selected["release_id"] == "clientflow-1.3.35-seq-1236"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["rollback_allowed"] is False
@@ -329,6 +329,8 @@ def test_source_checksum_manifest_matches_current_files() -> None:
     assert "CHANGED_FILES_1334_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.txt" in seen
     assert "CLIENTFLOW_1.3.34_1235_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
     assert "CHANGED_FILES_1334_1235_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
+    assert "CLIENTFLOW_1.3.35_1236_FRESH_INSTALL_CATALOG_PROMOTION.md" in seen
+    assert "CHANGED_FILES_1335_1236_FRESH_INSTALL_CATALOG_PROMOTION.txt" in seen
     assert "frontend/tests/clientflowPhysicalAcceptanceBlockers1235.test.mjs" in seen
     assert "scripts/tests/test_clientflow_1235_physical_acceptance_blockers_stage1.py" in seen
 

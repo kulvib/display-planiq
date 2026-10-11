@@ -11,8 +11,7 @@ def read(path: str) -> str:
 
 
 def test_1334_1235_stage1_history_is_preserved_after_exact_release_promotion() -> None:
-    # Preserve 1.3.34 promotion evidence even while the next source identity
-    # has been staged but not approved, built or catalog-promoted.
+    # Preserve historical 1.3.34 evidence after exact 1.3.35 catalog promotion.
     assert read("client/VERSION").strip() == "1.3.35"
     release_input = json.loads(read("client/release/release-input.json"))
     assert release_input["release_sequence"] == 1236
@@ -21,11 +20,11 @@ def test_1334_1235_stage1_history_is_preserved_after_exact_release_promotion() -
     assert "Not source-frozen" in historical_stage
 
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1235
-    assert catalog["latest_stable"] == "1.3.34"
-    assert catalog["default_install_version"] == "1.3.34"
+    assert catalog["catalog_sequence"] == 1236
+    assert catalog["latest_stable"] == "1.3.35"
+    assert catalog["default_install_version"] == "1.3.35"
     assert len(catalog["releases"]) == 1
-    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.34-seq-1235"
+    assert catalog["releases"][0]["release_id"] == "clientflow-1.3.35-seq-1236"
     assert catalog["releases"][0]["install_modes"] == ["fresh_install"]
     assert catalog["releases"][0]["update_allowed"] is False
 
