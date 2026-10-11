@@ -27,7 +27,7 @@ def _desired() -> bool:
 
 def run() -> None:
     while _desired():
-        kiosk_session_policy.enforce(lockdown_quicksettings=True)
+        kiosk_session_policy.enforce(lockdown_quicksettings=True, use_setpriv=True)
         time.sleep(INTERVAL_SECONDS)
 
 

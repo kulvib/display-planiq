@@ -14,6 +14,7 @@ import subprocess
 KIOSK_USER = "clientflow-kiosk"
 LOGINCTL = Path("/usr/bin/loginctl")
 RUNUSER = Path("/usr/sbin/runuser")
+SETPRIV = Path("/usr/bin/setpriv")
 GSETTINGS = Path("/usr/bin/gsettings")
 ACTIVE_BRAND_WALLPAPER = Path(
     "/opt/clientflow/active/client-runtime/brand/planiq-display/planiq-display-desktop-wallpaper-3840x2160.png"
@@ -95,8 +96,28 @@ def _active_local_kiosk_session() -> str | None:
     return None
 
 
-def _user_command(record: pwd.struct_passwd, command: list[str]) -> list[str]:
+def _user_command(
+    record: pwd.struct_passwd, command: list[str], *, use_setpriv: bool = False
+) -> list[str]:
     runtime_dir = Path(f"/run/user/{record.pw_uid}")
+    if use_setpriv:
+        # The optional quick-settings guard runs with NoNewPrivileges=yes.
+        # Avoid runuser/PAM session setup inside that sandbox. setpriv drops
+        # directly to the fixed kiosk UID/GID and irreversibly drops caps.
+        return [
+            str(SETPRIV),
+            f"--reuid={record.pw_uid}",
+            f"--regid={record.pw_gid}",
+            "--init-groups",
+            "--inh-caps=-all",
+            "--bounding-set=-all",
+            "--no-new-privs",
+            "env",
+            f"HOME={record.pw_dir}",
+            f"XDG_RUNTIME_DIR={runtime_dir}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime_dir / 'bus'}",
+            *command,
+        ]
     return [
         str(RUNUSER),
         "-u",
@@ -110,7 +131,9 @@ def _user_command(record: pwd.struct_passwd, command: list[str]) -> list[str]:
     ]
 
 
-def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool = False) -> None:
+def _apply_gsettings(
+    record: pwd.struct_passwd, *, lockdown_quicksettings: bool = False, use_setpriv: bool = False
+) -> None:
     runtime_dir = Path(f"/run/user/{record.pw_uid}")
     bus = runtime_dir / "bus"
     if not bus.exists():
@@ -146,10 +169,10 @@ def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool 
     else:
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: PlanIQ Display wallpaper mangler", flush=True)
     for schema, key, value in settings:
-        _run(_user_command(record, [str(GSETTINGS), "set", schema, key, value]))
+        _run(_user_command(record, [str(GSETTINGS), "set", schema, key, value], use_setpriv=use_setpriv))
 
 
-def _apply_audio(record: pwd.struct_passwd) -> None:
+def _apply_audio(record: pwd.struct_passwd, *, use_setpriv: bool = False) -> None:
     if not WPCTL.is_file() or not os.access(WPCTL, os.X_OK):
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: /usr/bin/wpctl mangler", flush=True)
         return
@@ -157,15 +180,15 @@ def _apply_audio(record: pwd.struct_passwd) -> None:
     if not (runtime_dir / "pipewire-0").exists():
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: PipeWire sink ikke klar", flush=True)
         return
-    base = _user_command(record, [str(WPCTL)])
+    base = _user_command(record, [str(WPCTL)], use_setpriv=use_setpriv)
     _run([*base, "set-mute", "@DEFAULT_AUDIO_SINK@", "0"])
     _run([*base, "set-volume", "@DEFAULT_AUDIO_SINK@", "0.60"])
 
 
-def enforce(*, lockdown_quicksettings: bool = False) -> None:
+def enforce(*, lockdown_quicksettings: bool = False, use_setpriv: bool = False) -> None:
     if os.geteuid() != 0:
         raise KioskSessionPolicyError("Kiosk session-policy kræver root")
-    for binary in (RUNUSER, GSETTINGS, NMCLI, RFKILL):
+    for binary in (SETPRIV if use_setpriv else RUNUSER, GSETTINGS, NMCLI, RFKILL):
         if not binary.is_file() or not os.access(binary, os.X_OK):
             raise KioskSessionPolicyError(f"Ubuntu kiosk-baseline mangler {binary}")
 
@@ -191,8 +214,12 @@ def enforce(*, lockdown_quicksettings: bool = False) -> None:
     else:
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: powerprofilesctl mangler", flush=True)
 
-    _apply_gsettings(record, lockdown_quicksettings=lockdown_quicksettings)
-    _apply_audio(record)
+    if use_setpriv:
+        _apply_gsettings(record, lockdown_quicksettings=lockdown_quicksettings, use_setpriv=True)
+        _apply_audio(record, use_setpriv=True)
+    else:
+        _apply_gsettings(record, lockdown_quicksettings=lockdown_quicksettings)
+        _apply_audio(record)
     print(f"CLIENTFLOW_KIOSK_SESSION_POLICY_OK: session={session_id}", flush=True)
 
 
