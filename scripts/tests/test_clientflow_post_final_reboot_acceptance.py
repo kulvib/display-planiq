@@ -159,7 +159,22 @@ def test_display_runtime_proof_requires_current_boot_exact_countdown_and_configu
         "countdown_reason": "system_start",
         "countdown_seconds": 10,
     }))
-    (pid_dir / "cmdline").write_bytes(b"/usr/bin/google-chrome-stable\0--start-fullscreen\0about:blank\0")
+    chrome_executable = tmp_path / "opt" / "google" / "chrome" / "chrome"
+    chrome_executable.parent.mkdir(parents=True)
+    chrome_executable.touch()
+    (pid_dir / "exe").symlink_to(chrome_executable)
+    (pid_dir / "status").write_text("Name:\tchrome\nUid:\t1001\t1001\t1001\t1001\n", encoding="ascii")
+    command = [
+        str(chrome_executable),
+        "--ozone-platform=wayland", "--start-fullscreen",
+        f"--user-data-dir={tmp_path / 'browser-profile'}",
+        "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222",
+        "about:blank",
+    ]
+    (pid_dir / "cmdline").write_bytes(("\0".join(command) + "\0").encode())
+    monkeypatch.setattr(gate, "CANONICAL_CHROME_EXECUTABLE", chrome_executable)
+    monkeypatch.setattr(gate, "CANONICAL_CHROME_PROFILE", tmp_path / "browser-profile")
+    monkeypatch.setattr(gate.pwd, "getpwnam", lambda _username: namedtuple("Pw", "pw_uid")(1001))
     monkeypatch.setattr(gate, "DISPLAY_CONFIG_PATH", config)
     monkeypatch.setattr(gate, "DISPLAY_STATUS_PATH", status)
     monkeypatch.setattr(gate, "DISPLAY_BOOT_MARKER_PATH", marker)
@@ -175,6 +190,74 @@ def test_display_runtime_proof_requires_current_boot_exact_countdown_and_configu
     }))
     with pytest.raises(gate.PostFinalRebootAcceptanceError, match="10 sekunders"):
         gate._verify_display_runtime("boot-b")
+
+
+@pytest.mark.parametrize("argv0", ["canonical_launcher", "canonical_elf"])
+def test_post_reboot_chrome_acceptance_matches_debian_launcher_and_exec_elf(
+    monkeypatch, tmp_path: Path, argv0: str
+) -> None:
+    """The real 26.04 Chrome process execs /opt/google/chrome/chrome."""
+    executable = tmp_path / "opt" / "google" / "chrome" / "chrome"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    launcher = tmp_path / "usr" / "bin" / "google-chrome-stable"
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    proc_root = tmp_path / "proc"
+    proc = proc_root / "4525"
+    proc.mkdir(parents=True)
+    (proc / "exe").symlink_to(executable)
+    (proc / "status").write_text("Name:\tchrome\nUid:\t1001\t1001\t1001\t1001\n", encoding="ascii")
+    profile = tmp_path / "browser-profile"
+    arguments = [
+        str(executable if argv0 == "canonical_elf" else launcher),
+        "--ozone-platform=wayland", "--start-fullscreen",
+        f"--user-data-dir={profile}",
+        "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222",
+        "about:blank",
+    ]
+
+    def store(args: list[str]) -> None:
+        (proc / "cmdline").write_bytes(("\0".join(args) + "\0").encode())
+
+    store(arguments)
+    monkeypatch.setattr(gate, "PROC_ROOT", proc_root)
+    monkeypatch.setattr(gate, "CANONICAL_CHROME_EXECUTABLE", executable)
+    monkeypatch.setattr(gate, "CANONICAL_CHROME_LAUNCHER", launcher)
+    monkeypatch.setattr(gate, "CANONICAL_CHROME_PROFILE", profile)
+    monkeypatch.setattr(gate.pwd, "getpwnam", lambda _username: namedtuple("Pw", "pw_uid")(1001))
+    gate._verify_chrome_process(4525)
+
+    # Every tested boundary is required, even when /proc says Chrome runs.
+    for missing in ("--ozone-platform=wayland", "--start-fullscreen", f"--user-data-dir={profile}",
+                    "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222", "about:blank"):
+        store([arg for arg in arguments if arg != missing])
+        with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+            gate._verify_chrome_process(4525)
+    store(arguments)
+
+    (proc / "status").write_text("Name:\tchrome\nUid:\t1002\t1002\t1002\t1002\n", encoding="ascii")
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+        gate._verify_chrome_process(4525)
+    (proc / "status").write_text("Name:\tchrome\nUid:\t1001\t1001\t1001\t1001\n", encoding="ascii")
+
+    malicious = tmp_path / "untrusted" / "chrome"
+    malicious.parent.mkdir(parents=True)
+    malicious.touch()
+    (proc / "exe").unlink()
+    (proc / "exe").symlink_to(malicious)
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+        gate._verify_chrome_process(4525)
+
+    (proc / "exe").unlink()
+    (proc / "exe").symlink_to(executable)
+    store(["/tmp/untrusted-chrome", *arguments[1:]])
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+        gate._verify_chrome_process(4525)
+
+    (proc / "cmdline").unlink()
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="identitetsverificeres"):
+        gate._verify_chrome_process(4525)
 
 
 def test_browser_guard_proof_requires_correct_url_marker_css_and_no_visible_consent(monkeypatch) -> None:
