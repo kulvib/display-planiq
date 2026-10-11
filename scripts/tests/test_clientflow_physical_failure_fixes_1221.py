@@ -50,9 +50,11 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
 def test_source_1334_1235_is_promoted_fresh_install_only_without_update_authority():
-    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.34"
+    # The promoted 1.3.34 remains the only installable release while the
+    # 1.3.35 / 1236 guard fix is an unapproved source-only candidate.
+    assert VERSION.read_text(encoding="utf-8").strip() == "1.3.35"
     release_input = json.loads(_source(RELEASE_INPUT))
-    assert release_input["release_sequence"] == 1235
+    assert release_input["release_sequence"] == 1236
     assert release_input["minimum_ubuntu_lts"] == "26.04"
     assert release_input["architecture"] == "amd64"
     assert release_input["runtime_python"] == "3.13.14"
@@ -64,7 +66,7 @@ def test_source_1334_1235_is_promoted_fresh_install_only_without_update_authorit
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.34-seq-1235"
     assert selected["release_sequence"] == 1235
-    assert release_input["release_sequence"] == catalog["catalog_sequence"]
+    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]
