@@ -64,12 +64,14 @@ def test_catalog_1235_aligns_with_frozen_source_and_excludes_old_selections() ->
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    assert source_version == "1.3.34"
-    assert release_input["release_sequence"] == 1235
+    # The published catalog intentionally lags the next source-only release.
+    # Never select an unapproved ClientFlow bundle for a fresh install.
+    assert source_version == "1.3.35"
+    assert release_input["release_sequence"] == 1236
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] == release_input["release_sequence"]
-    assert data["latest_stable"] == source_version
-    assert data["default_install_version"] == source_version
+    assert data["catalog_sequence"] == release_input["release_sequence"] - 1
+    assert data["latest_stable"] == "1.3.34"
+    assert data["default_install_version"] == "1.3.34"
     assert release["release_id"] == "clientflow-1.3.34-seq-1235"
     assert all(item["release_sequence"] != 1234 for item in data["releases"])
     assert all(item["release_sequence"] != 1228 for item in data["releases"])
