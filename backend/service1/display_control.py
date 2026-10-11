@@ -24,6 +24,10 @@ DISPLAY_CONFIGURATION_SCHEMA = 2
 DISPLAY_CONFIGURATION_V1_SCHEMA = 1
 DISPLAY_MIN_COMMAND_AGENT_VERSION = "1.3.5"
 DISPLAY_CONFIGURATION_V2_MIN_AGENT_VERSION = "1.3.12"
+# Repeated successful repairs that immediately drift again must not manufacture
+# another command on every status checkpoint. Keep the reported security drift
+# visible, and allow a fresh operator intent to bypass this bounded cooldown.
+LOCKDOWN_DRIFT_RETRY_SECONDS = 300
 DISPLAY_CONTROL_COMMANDS = frozenset(
     {"start_browser", "stop_browser", "reset_browser", "set_display_power", "detect_resolution", "apply_resolution", "set_kiosk_lockdown"}
 )
@@ -353,6 +357,32 @@ def reconcile_display_configuration(
 
 
 
+
+def _lockdown_drift_retry_recent(client: Client, *, observed_desired: bool | None, desired: bool) -> bool:
+    """Delay *repeat* repairs of the same unresolved drift after a completed apply.
+
+    A new desired-state request always bypasses the delay, including a manual
+    re-request of the same setting. Unknown/failed observations also retain
+    the existing immediate reconciliation path. No additional database read is
+    needed; these timestamps belong to the Client already authorized/loaded.
+    """
+    if observed_desired is not desired:
+        return False
+    completed_at = getattr(client, "desktop_lockdown_last_applied_at", None)
+    if not isinstance(completed_at, datetime):
+        return False
+    if completed_at.tzinfo is not None:
+        completed_at = completed_at.astimezone(timezone.utc).replace(tzinfo=None)
+    requested_at = getattr(client, "desktop_lockdown_updated_at", None)
+    if isinstance(requested_at, datetime):
+        if requested_at.tzinfo is not None:
+            requested_at = requested_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if requested_at > completed_at:
+            return False
+    elapsed_seconds = (utcnow() - completed_at).total_seconds()
+    return 0 <= elapsed_seconds < LOCKDOWN_DRIFT_RETRY_SECONDS
+
+
 def reconcile_kiosk_lockdown(
     session: Session,
     *,
@@ -416,6 +446,15 @@ def reconcile_kiosk_lockdown(
             row.error_code = "lockdown_superseded"
             row.error_message = "Et nyere Kiosk-lockdown ønske er gældende"
             session.add(row)
+
+    if observed_status == "drifted" and _lockdown_drift_retry_recent(
+        client, observed_desired=observed_desired, desired=desired
+    ):
+        # The agent reported a genuine security-policy failure immediately
+        # after a completed repair. Leave the authoritative drifted status and
+        # diagnostic message intact; retry after the cooldown rather than
+        # queueing thousands of identical commands and Neon writes per day.
+        return None
 
     client.desktop_lockdown_status = "pending"
     if observed_status == "drifted":
