@@ -21,7 +21,9 @@ import { useAuth } from "./auth/AuthProvider";
 import { apiUrl } from "./api";
 import { formatApiError } from "./api/apiError";
 
-const DISPLAY_LOGO_SRC = "/brand/planiq-display/planiq-display-logo-on-dark.png";
+import { PRODUCT_BRAND } from "./branding";
+
+const DISPLAY_LOGO_SRC = PRODUCT_BRAND.logo.dark;
 
 const PASSWORD_MIN_LENGTH = 12;
 const PASSWORD_MAX_UTF8_BYTES = 72;
@@ -167,7 +169,7 @@ export default function ResetPassword() {
   return (
     <Box
       sx={{
-        minHeight: "100vh",
+        minHeight: "calc(100dvh - 40px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",

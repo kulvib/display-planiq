@@ -16,7 +16,7 @@ LOGINCTL = Path("/usr/bin/loginctl")
 RUNUSER = Path("/usr/sbin/runuser")
 GSETTINGS = Path("/usr/bin/gsettings")
 ACTIVE_BRAND_WALLPAPER = Path(
-    "/opt/clientflow/active/client-runtime/brand/planiq-display/planiq-display-logo-on-dark.png"
+    "/opt/clientflow/active/client-runtime/brand/planiq-display/planiq-display-desktop-wallpaper-3840x2160.png"
 )
 NMCLI = Path("/usr/bin/nmcli")
 RFKILL = Path("/usr/sbin/rfkill")
@@ -137,7 +137,7 @@ def _apply_gsettings(record: pwd.struct_passwd, *, lockdown_quicksettings: bool 
             [
                 ("org.gnome.desktop.background", "picture-uri", repr(uri)),
                 ("org.gnome.desktop.background", "picture-uri-dark", repr(uri)),
-                ("org.gnome.desktop.background", "picture-options", "'centered'"),
+                ("org.gnome.desktop.background", "picture-options", "'scaled'"),
                 ("org.gnome.desktop.background", "primary-color", "'#111827'"),
                 ("org.gnome.desktop.background", "secondary-color", "'#111827'"),
                 ("org.gnome.desktop.background", "color-shading-type", "'solid'"),

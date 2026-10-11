@@ -184,14 +184,14 @@ def test_usb_builder_is_deterministic_and_packages_only_repo_owned_preclaim_boot
             "payload/clientflow-fresh-install",
             "payload/clientflow_bootstrap_common.py",
             "payload/planiq-display-mark.png",
-            "payload/planiq-display-logo-on-dark.png",
+            "payload/planiq-display-desktop-wallpaper-3840x2160.png",
         }
         assert b"clientflow-factory-prepare" in archive.read("PAYLOAD_SHA256SUMS.txt")
         assert archive.read("payload/planiq-display-mark.png") == (
             ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png"
         ).read_bytes()
-        assert archive.read("payload/planiq-display-logo-on-dark.png") == (
-            ROOT / "frontend/public/brand/planiq-display/planiq-display-logo-on-dark.png"
+        assert archive.read("payload/planiq-display-desktop-wallpaper-3840x2160.png") == (
+            ROOT / "frontend/public/brand/planiq-display/planiq-display-desktop-wallpaper-3840x2160.png"
         ).read_bytes()
         assert archive.read("PlanIQ Display.png") == (
             ROOT / "frontend/public/brand/planiq-display/planiq-display-logo.png"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="284" height="226" viewBox="-10 0 284 226" role="img" aria-label="PlanIQ Display icon">
+<defs><linearGradient id="navy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#162A46"/><stop offset="0.55" stop-color="#07182B"/><stop offset="1" stop-color="#0D2543"/></linearGradient><linearGradient id="accent" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#087484"/><stop offset="0.36" stop-color="#0399A9"/><stop offset="0.72" stop-color="#06A9B7"/><stop offset="1" stop-color="#04C1CE"/></linearGradient><mask id="stage-dots" maskUnits="userSpaceOnUse" x="0" y="0" width="270" height="222"><rect x="0" y="0" width="270" height="222" fill="#fff"/><circle cx="135" cy="158" r="4.2" fill="#000"/><circle cx="152" cy="171" r="4.5" fill="#000"/><circle cx="169" cy="183" r="5.2" fill="#000"/><circle cx="190" cy="192" r="6.7" fill="#000"/></mask></defs>
+<path d="M 135 206 A 102 102 0 1 1 192 155 L 170 132 A 71 71 0 1 0 110 177 Z" fill="url(#navy)"/>
+<path d="M 77 139 L 137 139 L 177 178 L 239 178 L 224 159 L 240 159 L 266 189 L 239 218 L 222 218 L 237 203 L 169 203 L 120 155 L 93 155 Z" fill="url(#accent)"/>
+<rect x="62" y="68" width="90" height="51" rx="5.5" fill="none" stroke="url(#accent)" stroke-width="5.5"/>
+<path d="M 84 104 V 108 M 106 98 V 108 M 128 89 V 108" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+</svg>

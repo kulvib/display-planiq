@@ -137,7 +137,7 @@ def test_kiosk_session_policy_source_contains_audio_and_gnome_baseline():
         '"show-banners", "false"',
         '"picture-uri", repr(uri)',
         '"picture-uri-dark", repr(uri)',
-        '"picture-options", "\'centered\'"',
+        '"picture-options", "\'scaled\'"',
         '"primary-color", "\'#111827\'"',
         '"show-in-lock-screen", "false"',
     ):

@@ -203,7 +203,7 @@ def test_factory_provisioning_hides_virtual_home_before_first_kiosk_login() -> N
     assert '("org.gnome.shell.extensions.ding", "show-trash", "false")' in settings
     assert '("org.gnome.desktop.background", "picture-uri", repr(wallpaper_uri))' in settings
     assert '("org.gnome.desktop.background", "picture-uri-dark", repr(wallpaper_uri))' in settings
-    assert '("org.gnome.desktop.background", "picture-options", "\'centered\'")' in settings
+    assert '("org.gnome.desktop.background", "picture-options", "\'scaled\'")' in settings
     assert "prepare_factory_kiosk_desktop_settings(KIOSK_USER)" in provision
 
 
