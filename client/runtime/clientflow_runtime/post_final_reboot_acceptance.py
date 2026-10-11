@@ -33,6 +33,11 @@ DISPLAY_CONFIG_PATH = Path("/var/lib/clientflow/display-runtime/configuration.js
 DISPLAY_STATUS_PATH = Path("/var/lib/clientflow/display-runtime/runtime-status.json")
 DISPLAY_BOOT_MARKER_PATH = Path("/var/lib/clientflow/display-runtime/browser-boot.json")
 PROC_ROOT = Path("/proc")
+# Chrome Stable's Debian launcher execs the package-owned ELF in /opt.
+# Check the kernel's /proc/<pid>/exe target; argv[0] is not proof of identity.
+CANONICAL_CHROME_LAUNCHER = Path("/usr/bin/google-chrome-stable")
+CANONICAL_CHROME_EXECUTABLE = Path("/opt/google/chrome/chrome")
+CANONICAL_CHROME_PROFILE = Path("/var/lib/clientflow/display-runtime/browser-profile")
 RUN_USER_ROOT = Path("/run/user")
 RUNUSER = Path("/usr/sbin/runuser")
 GDBUS = Path("/usr/bin/gdbus")
@@ -213,6 +218,44 @@ def _verify_nautilus_ding_session() -> None:
         raise PostFinalRebootAcceptanceError("DING/Nautilus startup-fejl er observeret i det aktuelle boot")
 
 
+def _verify_chrome_process(browser_pid: int) -> None:
+    """Accept only the real Chrome Stable ELF running as our kiosk user.
+
+    The /usr/bin/google-chrome-stable Debian launcher execs the ELF at
+    /opt/google/chrome/chrome, which changes the process argv[0]. The
+    executable symlink from /proc is kernel-owned, unlike spoofable argv[0].
+    """
+    proc = PROC_ROOT / str(browser_pid)
+    try:
+        executable = os.readlink(proc / "exe")
+        cmdline = (proc / "cmdline").read_bytes().split(b"\0")
+        status_lines = (proc / "status").read_text(encoding="ascii").splitlines()
+        uids_line = next(line for line in status_lines if line.startswith("Uid:"))
+        process_uids = [int(field) for field in uids_line.split()[1:]]
+        kiosk_uid = pwd.getpwnam(KIOSK_USER).pw_uid
+    except (OSError, KeyError, StopIteration, ValueError) as exc:
+        raise PostFinalRebootAcceptanceError("Kørende Chrome-proces kan ikke identitetsverificeres") from exc
+
+    arguments = [item.decode("utf-8", errors="replace") for item in cmdline if item]
+    required_arguments = {
+        "--ozone-platform=wayland",
+        "--start-fullscreen",
+        f"--user-data-dir={CANONICAL_CHROME_PROFILE}",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=9222",
+        "about:blank",
+    }
+    if (
+        executable != str(CANONICAL_CHROME_EXECUTABLE)
+        or not arguments
+        or arguments[0] not in {str(CANONICAL_CHROME_LAUNCHER), str(CANONICAL_CHROME_EXECUTABLE)}
+        or len(process_uids) != 4
+        or any(uid != kiosk_uid for uid in process_uids)
+        or not required_arguments.issubset(arguments)
+    ):
+        raise PostFinalRebootAcceptanceError("Kørende browser matcher ikke canonical Chrome kiosk-runtime")
+
+
 def _verify_display_runtime(current_boot: str) -> str:
     configuration = _read_json_object(DISPLAY_CONFIG_PATH, "Display-konfiguration")
     kiosk_url = str(configuration.get("kiosk_url") or "").strip()
@@ -229,13 +272,7 @@ def _verify_display_runtime(current_boot: str) -> str:
         browser_pid = 0
     if status.get("state") != "running" or status.get("browser_requested") is not True or browser_pid <= 1:
         raise PostFinalRebootAcceptanceError("Browser runtime er ikke verificeret running efter final reboot")
-    try:
-        cmdline = (PROC_ROOT / str(browser_pid) / "cmdline").read_bytes().split(b"\0")
-    except OSError as exc:
-        raise PostFinalRebootAcceptanceError("Kørende browser-proces kan ikke verificeres") from exc
-    arguments = [item.decode("utf-8", errors="replace") for item in cmdline if item]
-    if not arguments or Path(arguments[0]).name != "google-chrome-stable" or "about:blank" not in arguments:
-        raise PostFinalRebootAcceptanceError("Kørende browser matcher ikke canonical Chrome kiosk-runtime")
+    _verify_chrome_process(browser_pid)
 
     marker = _read_json_object(DISPLAY_BOOT_MARKER_PATH, "Browser boot-marker")
     if marker.get("boot_id") != current_boot:
