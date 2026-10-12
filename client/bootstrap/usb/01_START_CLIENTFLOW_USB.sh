@@ -44,7 +44,7 @@ command -v sha256sum >/dev/null 2>&1 || fail "sha256sum mangler på Ubuntu-klien
 [[ -d "$PAYLOAD_DIR" && -f "$CHECKSUMS" && -f "$TOP_CHECKSUMS" ]] || fail "USB-payload eller checksum-manifest mangler."
 
 mapfile -t actual < <(find "$PAYLOAD_DIR" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
-expected=(clientflow-factory-prepare clientflow-fresh-install clientflow_bootstrap_common.py planiq-display-mark.png planiq-display-desktop-wallpaper-3840x2160.png)
+expected=(clientflow-factory-prepare clientflow-fresh-install clientflow_bootstrap_common.py planiq-display-mark.png planiq-display-mark-on-dark.png planiq-display-desktop-wallpaper-3840x2160.png)
 mapfile -t expected < <(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)
 [[ "${actual[*]}" == "${expected[*]}" ]] || fail "USB-payloadens filset matcher ikke den canonical ClientFlow-kontrakt."
 
@@ -61,6 +61,7 @@ sudo install -o root -g root -m 0444 "$PAYLOAD_DIR/clientflow_bootstrap_common.p
 sudo install -o root -g root -m 0555 "$PAYLOAD_DIR/clientflow-factory-prepare" "$TARGET/clientflow-factory-prepare"
 sudo install -o root -g root -m 0555 "$PAYLOAD_DIR/clientflow-fresh-install" "$TARGET/clientflow-fresh-install"
 sudo install -o root -g root -m 0444 "$PAYLOAD_DIR/planiq-display-mark.png" "$TARGET/planiq-display-mark.png"
+sudo install -o root -g root -m 0444 "$PAYLOAD_DIR/planiq-display-mark-on-dark.png" "$TARGET/planiq-display-mark-on-dark.png"
 sudo install -o root -g root -m 0444 "$PAYLOAD_DIR/planiq-display-desktop-wallpaper-3840x2160.png" "$TARGET/planiq-display-desktop-wallpaper-3840x2160.png"
 
 printf '\n'

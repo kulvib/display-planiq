@@ -9,6 +9,7 @@ COMMON = ROOT / "client/bootstrap/clientflow_bootstrap_common.py"
 FRESH = ROOT / "client/bootstrap/clientflow-fresh-install"
 USB_START = ROOT / "client/bootstrap/usb/01_START_CLIENTFLOW_USB.sh"
 BRAND_MARK = ROOT / "frontend/public/brand/planiq-display/planiq-display-mark.png"
+BRAND_MARK_DARK = ROOT / "frontend/public/brand/planiq-display/planiq-display-mark-on-dark.png"
 BRAND_WALLPAPER = ROOT / "frontend/public/brand/planiq-display/planiq-display-desktop-wallpaper-3840x2160.png"
 USB_BUILDER = ROOT / "scripts/build_clientflow_usb_installer.py"
 
@@ -19,9 +20,12 @@ def test_desktop_launchers_use_repo_owned_planiq_display_mark() -> None:
         'PLANIQ_DISPLAY_DESKTOP_ICON = PERSISTENT_ROOT / "planiq-display-mark.png"'
         in source
     )
-    assert 'f"Icon={PLANIQ_DISPLAY_DESKTOP_ICON}"' in source
+    assert 'PLANIQ_DISPLAY_DESKTOP_ICON_DARK = PERSISTENT_ROOT / "planiq-display-mark-on-dark.png"' in source
+    assert 'filename == "02 Aktiver ClientFlow.desktop"' in source
+    assert 'f"Icon={icon}"' in source
     assert '"Icon=utilities-terminal"' not in source
     assert '"planiq-display-mark.png": 0o444' in source
+    assert '"planiq-display-mark-on-dark.png": 0o444' in source
     assert 'PLANIQ_DISPLAY_WALLPAPER = PERSISTENT_ROOT / "planiq-display-desktop-wallpaper-3840x2160.png"' in source
     assert '"planiq-display-desktop-wallpaper-3840x2160.png": 0o444' in source
 
@@ -30,10 +34,11 @@ def test_brand_mark_is_persisted_and_removed_with_exact_bootstrap_cleanup() -> N
     fresh = FRESH.read_text(encoding="utf-8")
     start = USB_START.read_text(encoding="utf-8")
     assert '"planiq-display-mark.png",' in fresh
+    assert '"planiq-display-mark-on-dark.png",' in fresh
     assert '"planiq-display-desktop-wallpaper-3840x2160.png",' in fresh
     assert (
         'expected=(clientflow-factory-prepare clientflow-fresh-install '
-        'clientflow_bootstrap_common.py planiq-display-mark.png planiq-display-desktop-wallpaper-3840x2160.png)'
+        'clientflow_bootstrap_common.py planiq-display-mark.png planiq-display-mark-on-dark.png planiq-display-desktop-wallpaper-3840x2160.png)'
         in start
     )
     assert (
@@ -45,6 +50,7 @@ def test_brand_mark_is_persisted_and_removed_with_exact_bootstrap_cleanup() -> N
         '"$PAYLOAD_DIR/planiq-display-mark.png" "$TARGET/planiq-display-mark.png"'
         in start
     )
+    assert '"$PAYLOAD_DIR/planiq-display-mark-on-dark.png" "$TARGET/planiq-display-mark-on-dark.png"' in start
     assert (
         'sudo install -o root -g root -m 0444 '
         '"$PAYLOAD_DIR/planiq-display-desktop-wallpaper-3840x2160.png" "$TARGET/planiq-display-desktop-wallpaper-3840x2160.png"'
@@ -87,13 +93,16 @@ def test_usb_builder_packages_exact_existing_brand_mark(tmp_path: Path) -> None:
     assert expected.startswith(b"\x89PNG\r\n\x1a\n")
     with zipfile.ZipFile(output) as archive:
         packaged = archive.read("payload/planiq-display-mark.png")
+        packaged_dark = archive.read("payload/planiq-display-mark-on-dark.png")
         wallpaper = archive.read("payload/planiq-display-desktop-wallpaper-3840x2160.png")
         manifest = archive.read("PAYLOAD_SHA256SUMS.txt").decode("utf-8")
     assert packaged == expected
+    assert packaged_dark == BRAND_MARK_DARK.read_bytes()
     assert wallpaper == BRAND_WALLPAPER.read_bytes()
     digest = hashlib.sha256(expected).hexdigest()
     wallpaper_digest = hashlib.sha256(BRAND_WALLPAPER.read_bytes()).hexdigest()
     assert f"{digest}  payload/planiq-display-mark.png" in manifest
+    assert f"{hashlib.sha256(packaged_dark).hexdigest()}  payload/planiq-display-mark-on-dark.png" in manifest
     assert f"{wallpaper_digest}  payload/planiq-display-desktop-wallpaper-3840x2160.png" in manifest
 
 

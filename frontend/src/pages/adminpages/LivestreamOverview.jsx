@@ -8,6 +8,8 @@ import {
   IconButton,
   Paper,
   Stack,
+  TextField,
+  MenuItem,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -15,8 +17,9 @@ import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import GridViewIcon from "@mui/icons-material/GridView";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { Link } from "react-router-dom";
-import { apiUrl, authHeaders, authenticatedFetch, getControlRoomClients } from "../../api";
+import { apiUrl, authHeaders, authenticatedFetch, getControlRoomClients, getOrganizations } from "../../api";
 import { compactDarkChipSx } from "../../utils/chipStyles";
+import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -417,6 +420,9 @@ function LivestreamTile({ client, pageMediaActive }) {
 
 export default function LivestreamOverview() {
   const [clients, setClients] = useState([]);
+  const [organizations, setOrganizations] = useState([]);
+  const [search, setSearch] = useState("");
+  const [sortOrder, setSortOrder] = useState("online");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pageMediaActive, setPageMediaActive] = useState(document.visibilityState !== "hidden");
@@ -432,6 +438,18 @@ export default function LivestreamOverview() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    // One scoped organization read per page mount, never per keystroke/poll.
+    // Access restrictions are enforced by the existing organizations endpoint.
+    let active = true;
+    getOrganizations().then((items) => {
+      if (active) setOrganizations(Array.isArray(items) ? items : []);
+    }).catch(() => {
+      if (active) setError("Organisationsnavne kunne ikke indlæses. Prøv at opdatere siden.");
+    });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -466,9 +484,14 @@ export default function LivestreamOverview() {
     };
   }, []);
 
+  const organizationNameMap = useMemo(() => organizationNamesById(organizations), [organizations]);
   const sortedClients = useMemo(
-    () => [...clients].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "da-DK")),
-    [clients],
+    () => sortLivestreamClients(
+      clients.filter((client) => clientMatchesSearch(client, search, organizationNameMap)),
+      sortOrder,
+      organizationNameMap,
+    ),
+    [clients, search, sortOrder, organizationNameMap],
   );
 
   return (
@@ -498,9 +521,44 @@ export default function LivestreamOverview() {
         </Stack>
       </Paper>
 
+      <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2.5, background: "rgba(15,23,42,0.72)", border: "1px solid rgba(148,163,184,0.16)" }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+          <TextField
+            type="search"
+            size="small"
+            fullWidth
+            label="Søg i livestream"
+            placeholder="Organisation, klient, lokation eller klient-ID"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            slotProps={{ htmlInput: { maxLength: 160 } }}
+          />
+          <TextField
+            select
+            size="small"
+            label="Sortér efter"
+            value={sortOrder}
+            onChange={(event) => setSortOrder(event.target.value)}
+            sx={{ minWidth: { xs: "100%", md: 250 } }}
+          >
+            <MenuItem value="online">Online først</MenuItem>
+            <MenuItem value="name">Klientnavn A–Å</MenuItem>
+            <MenuItem value="name_desc">Klientnavn Å–A</MenuItem>
+            <MenuItem value="organization">Organisation A–Å</MenuItem>
+            <MenuItem value="location">Lokation A–Å</MenuItem>
+            <MenuItem value="manual">Rækkefølge fra Clientlist</MenuItem>
+          </TextField>
+        </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+          {sortedClients.length} af {clients.length} godkendte klienter · Søgning og sortering foregår lokalt.
+        </Typography>
+      </Paper>
+
       {error && <Alert severity="error">{error}</Alert>}
       {loading && sortedClients.length === 0 ? (
         <Stack sx={{ minHeight: 240, alignItems: "center", justifyContent: "center" }}><CircularProgress /></Stack>
+      ) : sortedClients.length === 0 ? (
+        <Alert severity="info">Ingen godkendte klienter matcher søgningen.</Alert>
       ) : (
         <Box
           sx={{
