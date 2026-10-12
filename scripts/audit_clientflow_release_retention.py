@@ -141,6 +141,98 @@ def inspect_store(directory: Path, *, require_three: bool = False) -> dict:
     return result
 
 
+def plan_publication(
+    directory: Path,
+    *,
+    release_id: str,
+    size_bytes: int,
+    sha256: str,
+) -> dict:
+    """Fail-closed, read-only preflight for an immutable, forward-only publish.
+
+    Never authorizes deletion: even the oldest approved bundle may be needed
+    by an offline client or an explicit recovery procedure. Source retention
+    and *client* rollback permissions are independent.
+    """
+    match = RELEASE_FILE.fullmatch(release_id + ".tar")
+    if match is None:
+        raise StoreAuditError("Incoming release ID is not canonical")
+    if not isinstance(size_bytes, int) or size_bytes <= 0:
+        raise StoreAuditError("Incoming bundle size is invalid")
+    if re.fullmatch(r"[0-9a-f]{64}", sha256) is None:
+        raise StoreAuditError("Incoming bundle SHA-256 is invalid")
+
+    snapshot = inspect_store(directory)
+    version, sequence = match.group(1), int(match.group(2))
+    existing = snapshot["protected_latest"] + snapshot["older_review_only"]
+    same = next((item for item in existing if item["release_id"] == release_id), None)
+    if same is not None:
+        if same["size_bytes"] != size_bytes or same["sha256"] != sha256:
+            raise StoreAuditError("Existing approved bundle does not match incoming bytes")
+        needed = 0
+        disposition = "already_published"
+        projected = existing
+    else:
+        if any(
+            item["version"] == version or item["release_sequence"] == sequence
+            for item in existing
+        ):
+            raise StoreAuditError("Incoming release duplicates an approved version/sequence")
+        if existing and sequence <= max(item["release_sequence"] for item in existing):
+            raise StoreAuditError("Refusing to publish an older release into the active store")
+        needed = size_bytes + RESERVED_FREE_BYTES
+        if snapshot["disk_available_bytes"] < needed:
+            raise StoreAuditError(
+                "Insufficient free disk space for the immutable copy and 64-MiB reserve"
+            )
+        disposition = "ready_to_publish"
+        projected = [
+            {
+                "release_id": release_id,
+                "version": version,
+                "release_sequence": sequence,
+                "size_bytes": size_bytes,
+                "sha256": sha256,
+            },
+            *existing,
+        ]
+
+    projected.sort(key=lambda item: item["release_sequence"], reverse=True)
+    return {
+        "mode": "read_only_publication_preflight",
+        "disposition": disposition,
+        "incoming_release_id": release_id,
+        "disk_available_bytes": snapshot["disk_available_bytes"],
+        "required_available_bytes": needed,
+        "reserved_free_bytes": RESERVED_FREE_BYTES,
+        "protected_after_publication": [
+            item["release_id"] for item in projected[:KEEP_LATEST_APPROVED]
+        ],
+        "older_review_only": [
+            item["release_id"] for item in projected[KEEP_LATEST_APPROVED:]
+        ],
+        "automatic_deletion_enabled": False,
+        "rollback_enabled": False,
+    }
+
+
+def verify_publication(directory: Path, *, release_id: str, size_bytes: int, sha256: str) -> dict:
+    """Independent postflight inspection; never modifies approved artifacts."""
+    snapshot = inspect_store(directory)
+    matches = [
+        item
+        for item in snapshot["protected_latest"] + snapshot["older_review_only"]
+        if item["release_id"] == release_id
+    ]
+    if len(matches) != 1 or (
+        matches[0]["size_bytes"], matches[0]["sha256"]
+    ) != (size_bytes, sha256):
+        raise StoreAuditError("Published artifact missing or failed independent verification")
+    if snapshot["disk_available_bytes"] < RESERVED_FREE_BYTES:
+        raise StoreAuditError("Post-publication disk reserve is below safety threshold")
+    return snapshot
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-dir", type=Path)

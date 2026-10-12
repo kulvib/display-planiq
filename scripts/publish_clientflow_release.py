@@ -13,12 +13,19 @@ import stat
 import sys
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
 
 from clientflow_release.bundle import open_verified_bundle  # noqa: E402
 from clientflow_release.constants import INSTALL_MODE_UPDATE, MAX_BUNDLE_BYTES  # noqa: E402
 from clientflow_release.crypto import sha256_fd  # noqa: E402
+from scripts.audit_clientflow_release_retention import (  # noqa: E402
+    RESERVED_FREE_BYTES,
+    StoreAuditError,
+    plan_publication,
+    verify_publication,
+)
 
 
 def _source_release_identity(repo: Path = REPO) -> tuple[str, int, str]:
@@ -171,6 +178,30 @@ def publish(
                     raise RuntimeError("Artifact-ID er allerede publiceret med andre bytes")
                 return artifact_dir / destination_name, size, digest
 
+            # The preflight independently authenticates existing approved
+            # bundles before any new temporary copy can consume Render space.
+            # Keep this inside the securely opened directory lifetime.
+            try:
+                directory_stat = os.fstat(directory_fd)
+                snapshot_stat = artifact_dir.stat(follow_symlinks=False)
+                if (directory_stat.st_dev, directory_stat.st_ino) != (
+                    snapshot_stat.st_dev, snapshot_stat.st_ino
+                ):
+                    raise RuntimeError("Artifact directory changed during publication")
+                plan_publication(
+                    artifact_dir,
+                    release_id=str(manifest["release_id"]),
+                    size_bytes=size,
+                    sha256=digest,
+                )
+                # Disk can change between audit and copy; re-check the pinned
+                # directory descriptor (not a separately resolved pathname).
+                free = os.fstatvfs(directory_fd)
+                if free.f_bavail * free.f_frsize < size + RESERVED_FREE_BYTES:
+                    raise RuntimeError("Not enough free disk space for immutable publication")
+            except StoreAuditError as exc:
+                raise RuntimeError("Release retention preflight rejected publication") from exc
+
             temporary_fd, temporary_name = _create_temporary_artifact(directory_fd, str(manifest["release_id"]))
             try:
                 os.lseek(source_handle.fileno(), 0, os.SEEK_SET)
@@ -244,9 +275,28 @@ def main(argv: list[str] | None = None) -> int:
         expected_approval_reference=args.expected_approval_reference,
         expected_source_commit=args.expected_source_commit,
     )
+    try:
+        verified = verify_publication(
+            args.artifact_dir.resolve(),
+            release_id=path.stem,
+            size_bytes=size,
+            sha256=digest,
+        )
+    except StoreAuditError as exc:
+        print(f"RELEASE_STORE_POSTFLIGHT=FAIL: {exc}", file=sys.stderr)
+        return 1
     print(path)
     print(f"BUNDLE_SIZE={size}")
     print(f"BUNDLE_SHA256={digest}")
+    print("RELEASE_STORE_POSTFLIGHT=PASS")
+    print("RELEASE_PROTECTED_LATEST=" + ",".join(
+        item["release_id"] for item in verified["protected_latest"]
+    ))
+    print("RELEASE_OLDER_REVIEW_ONLY=" + ",".join(
+        item["release_id"] for item in verified["older_review_only"]
+    ))
+    print("RELEASE_AUTOMATIC_DELETION=NO")
+    print("RELEASE_ROLLBACK_ENABLED=NO")
     return 0
 
 
