@@ -237,6 +237,17 @@ def _verify_chrome_process(browser_pid: int) -> None:
         raise PostFinalRebootAcceptanceError("Kørende Chrome-proces kan ikke identitetsverificeres") from exc
 
     arguments = [item.decode("utf-8", errors="replace") for item in cmdline if item]
+    # Linux Chrome rewrites its process title in-place after launch. On Ubuntu
+    # 26.04 the kernel may consequently expose a single space-separated title
+    # in /proc/<pid>/cmdline instead of the original NUL-separated argv.
+    # Only normalize that exact observed format; the executable identity and
+    # all four kiosk UIDs still have to match the live kernel /proc metadata.
+    if len(arguments) == 1:
+        if arguments[0].startswith((
+            f"{CANONICAL_CHROME_EXECUTABLE} ",
+            f"{CANONICAL_CHROME_LAUNCHER} ",
+        )):
+            arguments = arguments[0].split()
     required_arguments = {
         "--ozone-platform=wayland",
         "--start-fullscreen",
@@ -252,6 +263,7 @@ def _verify_chrome_process(browser_pid: int) -> None:
         or len(process_uids) != 4
         or any(uid != kiosk_uid for uid in process_uids)
         or not required_arguments.issubset(arguments)
+        or any(argument.startswith("--type=") for argument in arguments)
     ):
         raise PostFinalRebootAcceptanceError("Kørende browser matcher ikke canonical Chrome kiosk-runtime")
 

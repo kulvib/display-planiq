@@ -228,6 +228,26 @@ def test_post_reboot_chrome_acceptance_matches_debian_launcher_and_exec_elf(
     monkeypatch.setattr(gate.pwd, "getpwnam", lambda _username: namedtuple("Pw", "pw_uid")(1001))
     gate._verify_chrome_process(4525)
 
+    # Chromium's Linux setproctitle may flatten the entire cmdline to argv[0].
+    # This was observed physically on ClientFlow 1.3.35 / Ubuntu 26.04.
+    store([" ".join(arguments)])
+    gate._verify_chrome_process(4525)
+    for missing_flag in arguments[1:]:
+        store([" ".join(arg for arg in arguments if arg != missing_flag)])
+        with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+            gate._verify_chrome_process(4525)
+    store([" ".join([arg for arg in arguments if arg != "--start-fullscreen"] +
+                    ["--start-fullscreen=spoofed"])])
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+        gate._verify_chrome_process(4525)
+    store([" ".join([*arguments, "--type=renderer"])])
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+        gate._verify_chrome_process(4525)
+    store(["/tmp/untrusted-chrome " + " ".join(arguments[1:])])
+    with pytest.raises(gate.PostFinalRebootAcceptanceError, match="canonical Chrome"):
+        gate._verify_chrome_process(4525)
+    store(arguments)
+
     # Every tested boundary is required, even when /proc says Chrome runs.
     for missing in ("--ozone-platform=wayland", "--start-fullscreen", f"--user-data-dir={profile}",
                     "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222", "about:blank"):

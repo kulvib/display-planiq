@@ -10,6 +10,11 @@ User=root
 Group=root
 ExecStart=/opt/clientflow/active/runtime/bin/clientflow-kiosk-quicksettings-guard
 Environment=CLIENTFLOW_LOCKDOWN_QUICKSETTINGS_INTERVAL=2
+# setpriv must retain CAP_SETUID/CAP_SETGID to enter the kiosk session and
+# CAP_SETPCAP to discard the child's capability bounding set afterward.
+# Keep NoNewPrivileges and the existing service sandbox intact; the child
+# still executes with --bounding-set=-all --inh-caps=-all --no-new-privs.
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_SETPCAP
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

@@ -256,6 +256,19 @@ def _validate_operational_service_contracts(units: dict[str, Path]) -> None:
     for unit in ("clientflow-status-agent.service", "clientflow-display-runtime.service"):
         _require_address_families(units, unit, {"AF_UNIX", "AF_NETLINK", "AF_INET", "AF_INET6"})
 
+    # Ubuntu 26.04: the optional quick-settings guard uses setpriv under NNP.
+    # Its subprocess needs UID/GID switching capabilities and CAP_SETPCAP to
+    # clear its bounding set before executing the unprivileged kiosk command.
+    _require_single_service_value(
+        units, "clientflow-kiosk-quicksettings-guard.service", "NoNewPrivileges", "yes"
+    )
+    guard_unit = units["clientflow-kiosk-quicksettings-guard.service"]
+    guard_ambient = _service_directive_values(guard_unit, "AmbientCapabilities")
+    if len(guard_ambient) != 1 or not {"CAP_SETUID", "CAP_SETGID", "CAP_SETPCAP"} <= set(guard_ambient[0].split()):
+        raise SystemdContractError(
+            "Quick-settings-guard privilege-drop contract mangler ambient CAP_SETUID/CAP_SETGID/CAP_SETPCAP"
+        )
+
     # Frozen Livestream deliberately retains NNP while explicitly carrying the
     # capability pair needed by setpriv --reuid/--regid. Guard that isolation
     # while the Ubuntu executable host gate proves it works under real systemd.

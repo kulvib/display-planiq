@@ -74,6 +74,7 @@ def test_guard_keeps_original_systemd_hardening():
     periodic = (ROOT / "client/systemd/clientflow-kiosk-session-policy.service").read_text(encoding="utf-8")
     for required in (
         "User=root",
+        "AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_SETPCAP",
         "NoNewPrivileges=yes",
         "PrivateTmp=yes",
         "ProtectSystem=strict",
