@@ -556,6 +556,40 @@ def _epoch_datetime(value: Any) -> datetime | None:
         return None
 
 
+def _browser_countdown_projection(runtime: dict[str, Any]) -> dict[str, Any] | None:
+    """Bounded, read-only deadline for browser status UI interpolation.
+
+    The client writes a timestamp with every 1-second countdown tick. Reports
+    may arrive several seconds later; never restart the countdown on receipt.
+    This projection shares the already-loaded Display status row (no new query).
+    """
+    if str(runtime.get("state") or "").strip().lower() != "countdown":
+        return None
+    try:
+        remaining = int(runtime.get("countdown_remaining"))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # Only the canonical short countdowns are eligible. Fail closed for bad,
+    # future-dated or long-lived state instead of inventing a fresh timer.
+    if remaining < 1 or remaining > 10:
+        return None
+    observed = _epoch_datetime(runtime.get("updated_at"))
+    if observed is None:
+        return None
+    deadline = observed.replace(tzinfo=timezone.utc) + timedelta(seconds=remaining)
+    now = datetime.now(timezone.utc)
+    time_left = (deadline - now).total_seconds()
+    if time_left <= 0 or time_left > remaining + 2:
+        return None
+    return {
+        "reason": str(runtime.get("countdown_reason") or "").strip().lower(),
+        "step": str(runtime.get("step") or "countdown").strip().lower(),
+        "remaining_seconds": remaining,
+        "ends_at": deadline.isoformat().replace("+00:00", "Z"),
+        "server_now": now.isoformat().replace("+00:00", "Z"),
+    }
+
+
 def _browser_runtime_projection(runtime: dict[str, Any]) -> tuple[str, str, str | None, bool | None]:
     """Project the canonical Display runtime into the same operator text as local GUI.
 
@@ -654,12 +688,14 @@ def _display_read_projection_from_rows(
     browser_requested = runtime.get("browser_requested") if isinstance(runtime.get("browser_requested"), bool) else None
     runtime_updated = _epoch_datetime(runtime.get("updated_at"))
     chrome_status, chrome_color, chrome_step, chrome_running = _browser_runtime_projection(runtime)
+    browser_countdown = _browser_countdown_projection(runtime)
     step_updated = runtime_updated
     power = status_payload.get("display_power") if isinstance(status_payload, dict) else None
     power = power if isinstance(power, dict) else {}
     power_state = str(power.get("state") or "unknown").strip().lower()
     power_updated = _epoch_datetime(power.get("updated_at"))
     if power_state in {"on", "off"} and power_updated is not None and (runtime_updated is None or power_updated >= runtime_updated):
+        browser_countdown = None
         chrome_step = "display_wake_complete" if power_state == "on" else "display_sleep_complete"
         chrome_status = "Skærm vækket — klient online" if power_state == "on" else "Skærm slukket — klienten er stadig online"
         chrome_color = "green" if power_state == "on" else "blue"
@@ -689,6 +725,7 @@ def _display_read_projection_from_rows(
         "browser_refresh_interval_sec": int(getattr(desired, "browser_refresh_interval_sec", 900)) if desired else 900,
         "display_configuration_revision": desired.revision if desired else None,
         "chrome_status": chrome_status,
+        "browser_countdown": browser_countdown,
         "chrome_color": chrome_color,
         "chrome_step": chrome_step,
         "chrome_running": chrome_running,

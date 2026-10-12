@@ -23,6 +23,7 @@ const ClientDetailsLivestreamSection = lazy(() => import("./ClientDetailsLivestr
 const ClientCalendarDialog = lazy(() => import("../calendarpage/ClientCalendarDialog"));
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { isPageVisible } from "../../utils/pageVisibility";
+import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./browserCountdown.mjs";
 import { useAuth } from "../../auth/AuthProvider";
 
 import {
@@ -984,6 +985,27 @@ export default function ClientDetailsPage({
   const [liveChromeStatus, setLiveChromeStatus] = useState(
     client?.chrome_status ?? null
   );
+  const [browserCountdown, setBrowserCountdown] = useState(null);
+  const [countdownClockMs, setCountdownClockMs] = useState(() => Date.now());
+  // Only repaint while an authoritative countdown is in progress. Background
+  // tabs recompute from the deadline on visibility/focus; no network timers.
+  useEffect(() => {
+    if (!browserCountdown) return undefined;
+    const tick = () => setCountdownClockMs(Date.now());
+    tick();
+    const interval = window.setInterval(() => {
+      if (isPageVisible()) tick();
+    }, 1000);
+    window.addEventListener("focus", tick);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", tick);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [browserCountdown]);
+  useEffect(() => { setBrowserCountdown(null); }, [client?.id]);
+
   const [liveChromeColor, setLiveChromeColor] = useState(
     client?.chrome_color ?? null
   );
@@ -1291,6 +1313,9 @@ export default function ClientDetailsPage({
 
           if (data?.presence) setLivePresence(data.presence);
           if (data?.chrome_status != null) setLiveChromeStatus(data.chrome_status);
+          // Authoritative agent tick + server clock; never extrapolate from text.
+          const snapshot = receiveBrowserCountdown(data?.browser_countdown, Date.now());
+          setBrowserCountdown(snapshot ? { ...snapshot, clientId: client.id } : null);
           if (data?.chrome_color != null)  setLiveChromeColor(data.chrome_color);
           let polledChromeRunning = null;
           let polledChromeRunningHasValue = false;
@@ -1671,6 +1696,12 @@ export default function ClientDetailsPage({
     };
   }, [liveUpdateFields, localOsUpdateCommandId]);
 
+  const currentBrowserCountdown = browserCountdown?.clientId === client?.id ? browserCountdown : null;
+  const visibleChromeStatus = formatBrowserCountdownStatus(currentBrowserCountdown, countdownClockMs)
+    ?? (currentBrowserCountdown === null && ["countdown", "display_sleep_countdown"].includes(String(liveStep || "").toLowerCase())
+      ? "Afventer ny browserstatus fra klienten…"
+      : liveChromeStatus ?? client?.chrome_status ?? null);
+
   const liveClient = useMemo(
     () => ({
       ...(client || {}),
@@ -1691,7 +1722,7 @@ export default function ClientDetailsPage({
       uptime: displayUptime ?? client?.uptime ?? null,
       pending_chrome_action: effectivePendingAction,
       state: effectiveClientState,
-      chrome_status: liveChromeStatus ?? client?.chrome_status ?? null,
+      chrome_status: visibleChromeStatus,
       chrome_color: liveChromeColor ?? client?.chrome_color ?? null,
       chrome_step: liveStep ?? client?.chrome_step ?? null,
       last_chrome_step: liveStep ?? client?.last_chrome_step ?? client?.chrome_step ?? null,
@@ -1709,7 +1740,7 @@ export default function ClientDetailsPage({
       livePresence,
       effectivePendingAction,
       effectiveClientState,
-      liveChromeStatus,
+      visibleChromeStatus,
       liveChromeColor,
       liveStep,
       liveChromeRunning,
@@ -1752,7 +1783,7 @@ export default function ClientDetailsPage({
             clientOnline={clientOnline}
             networkUnavailable={networkUnavailable}
             networkMessage={networkMessage}
-            liveChromeStatus={liveChromeStatus}
+            liveChromeStatus={visibleChromeStatus}
             clientState={effectiveClientState}
             refreshing={refreshing}
             onRefresh={handleRefresh}
@@ -1779,7 +1810,7 @@ export default function ClientDetailsPage({
               clientOnline={clientOnline}
               clientActionPending={wakeCompleteWithoutPending ? false : clientActionPending}
               liveStep={liveStep}
-              liveChromeStatus={liveChromeStatus}
+              liveChromeStatus={visibleChromeStatus}
               chromeRunning={liveChromeRunning}
               browserRequested={liveBrowserRequested}
               clientStatus={client?.status}
