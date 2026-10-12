@@ -1694,6 +1694,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         # the browser does not need a second presence request every 5 seconds.
         "presence": presence.public_dict(),
         "chrome_status": chrome_status_value,
+        "browser_countdown": display_projection.get("browser_countdown"),
         "chrome_last_updated": client.chrome_last_updated,
         "chrome_color": chrome_color_value,
         "chrome_step": chrome_step_value,
