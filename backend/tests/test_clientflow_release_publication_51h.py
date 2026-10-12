@@ -342,3 +342,62 @@ def test_51h_publication_source_uses_pinned_bundle_and_directory_descriptors():
     assert "read_bundle_artifact_regions_fd" in approval_source
     assert "read_bundle(candidate_bundle)" not in approval_source
     assert "sha256_file(candidate_bundle" not in approval_source
+
+
+def test_publication_preflight_blocks_invalid_existing_release_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    source = _approved_bundle(
+        tmp_path / "source",
+        approval_reference="approval-preflight",
+        source_commit="c" * 40,
+        marker=b"approved-new-source",
+    )
+    expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(release_bundle, "validate_runtime_artifacts", lambda _payload, _manifest: None)
+    monkeypatch.setattr(publication, "_source_release_identity", _source_identity)
+
+    store = tmp_path / "store"
+    store.mkdir(mode=0o700)
+    previous = store / "clientflow-1.3.35-seq-1236.tar"
+    previous.write_bytes(b"not an approved release")
+    old_bytes = previous.read_bytes()
+    with pytest.raises(RuntimeError, match="retention preflight"):
+        publication.publish(
+            source, store,
+            expected_bundle_sha256=expected_sha,
+            expected_approval_reference="approval-preflight",
+            expected_source_commit="c" * 40,
+        )
+    assert previous.read_bytes() == old_bytes
+    assert sorted(p.name for p in store.iterdir()) == [previous.name]
+
+
+def test_publication_postflight_independently_verifies_approved_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    source = _approved_bundle(
+        tmp_path / "source",
+        approval_reference="approval-postflight",
+        source_commit="c" * 40,
+        marker=b"canonical-approved-postflight",
+    )
+    expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(release_bundle, "validate_runtime_artifacts", lambda _payload, _manifest: None)
+    monkeypatch.setattr(publication, "_source_release_identity", _source_identity)
+
+    store = tmp_path / "store"
+    store.mkdir(mode=0o700)
+    destination, size, digest = publication.publish(
+        source, store,
+        expected_bundle_sha256=expected_sha,
+        expected_approval_reference="approval-postflight",
+        expected_source_commit="c" * 40,
+    )
+    result = publication.verify_publication(
+        store, release_id=destination.stem,
+        size_bytes=size, sha256=digest,
+    )
+    assert result["approved_count"] == 1
+    assert result["protected_latest"][0]["release_id"] == RELEASE_ID
+    assert destination.read_bytes() == source.read_bytes()
