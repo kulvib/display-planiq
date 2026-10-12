@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import json
 import os
+import logging
+import time
 from pathlib import Path
 from typing import Any
 
 from .command_agent import CommandContext, CommandRejected, QueueAgent
+from .display_countdown_bridge import CountdownStatusBridge, _countdown_token
 from .config import DomainCredential
 from .constants import Domain
 from .display_local_control import (
@@ -17,6 +20,7 @@ from .display_local_control import (
     set_display_power,
 )
 from .net import DomainTransport
+from .status import report_status
 from .unix_rpc import RpcError, call
 
 STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_STATUS_FILE", "/var/lib/clientflow/display-runtime/runtime-status.json"))
@@ -81,13 +85,41 @@ def _status() -> dict[str, Any]:
     }
 
 
+def _send_countdown_transition(transport: DomainTransport, phase: str, token: str) -> None:
+    """Send the current state only, never an obsolete countdown snapshot."""
+    payload = _status()
+    runtime = payload.get("runtime")
+    if not isinstance(runtime, dict):
+        return
+    if phase == "started":
+        if _countdown_token(runtime, now=time.time()) != token:
+            return
+    elif phase == "finished":
+        if str(runtime.get("state") or "").lower() == "countdown":
+            return
+    else:
+        return
+    report_status(transport, observed_state="online", payload=payload)
+
+
 def main() -> int:
     credential = DomainCredential.load(Domain.DISPLAY)
-    QueueAgent(
-        DomainTransport(credential),
-        _handle,
-        status_payload=_status,
-        report_status_after_command=True,
-        piggyback_status_on_claim=True,
-    ).run_forever()
+    transport = DomainTransport(credential)
+    # Read-only local polling; network writes only on countdown boundaries.
+    bridge = CountdownStatusBridge(
+        STATUS_PATH,
+        lambda phase, token: _send_countdown_transition(transport, phase, token),
+        logger=logging.getLogger("clientflow.display.agent"),
+    )
+    bridge.start()
+    try:
+        QueueAgent(
+            transport,
+            _handle,
+            status_payload=_status,
+            report_status_after_command=True,
+            piggyback_status_on_claim=True,
+        ).run_forever()
+    finally:
+        bridge.close()
     return 0

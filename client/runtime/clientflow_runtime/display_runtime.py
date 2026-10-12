@@ -185,12 +185,18 @@ class DisplayRuntime:
         return result
 
     def _countdown(self, step: str, seconds: int, *, reason: str) -> None:
-        for remaining in range(max(0, int(seconds)), 0, -1):
+        # Stable identity across all ticks: the Display agent can publish one
+        # transition promptly, even while its command handler is blocked here.
+        total = max(0, int(seconds))
+        started_at = time.time()
+        for remaining in range(total, 0, -1):
             self._status(
                 "countdown",
                 step=step,
                 countdown_remaining=remaining,
                 countdown_reason=reason,
+                countdown_started_at=started_at,
+                countdown_total_seconds=total,
             )
             time.sleep(1)
 
