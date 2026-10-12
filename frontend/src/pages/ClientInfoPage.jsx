@@ -63,6 +63,7 @@ import {
 } from "../api";
 import { useAuth } from "../auth/AuthProvider";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearchSort.mjs";
 
 /*
   ClientInfoPage.jsx
@@ -690,6 +691,7 @@ export default function ClientInfoPage() {
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
 
   const [clients, setClients] = useState([]);
+  const [clientSearch, setClientSearch] = useState("");
   const [deletedClients, setDeletedClients] = useState([]);
   const [organizations, setOrganizations] = useState([]);
   const [organizationSelections, setOrganizationSelections] = useState({});
@@ -956,9 +958,17 @@ export default function ClientInfoPage() {
     setDragClients(approved);
   }, [clients]);
 
+  // Search only the already authorized clients. Do not mutate dragClients/order.
+  const organizationNameMap = React.useMemo(() => organizationNamesById(organizations), [organizations]);
+  const searchActive = clientSearch.trim().length > 0;
+  const visibleApprovedClients = React.useMemo(
+    () => dragClients.filter((client) => clientMatchesSearch(client, clientSearch, organizationNameMap)),
+    [dragClients, clientSearch, organizationNameMap],
+  );
+
   // Pending/enrollment-klienter: nyeste først.
   const unapprovedClients = clients
-    .filter((c) => c.status !== "approved")
+    .filter((c) => c.status !== "approved" && clientMatchesSearch(c, clientSearch, organizationNameMap))
     .slice()
     .sort((a, b) => {
       const byCreated =
@@ -1053,13 +1063,13 @@ export default function ClientInfoPage() {
   }, [confirmClientId, handleRemoveClient]);
 
   const onDragStart = useCallback(() => {
-    if (!canManageClients) return;
+    if (!canManageClients || searchActive) return;
     isDraggingRef.current = true;
-  }, [canManageClients]);
+  }, [canManageClients, searchActive]);
 
   const onDragEnd = useCallback(
     async (result) => {
-      if (!canManageClients) {
+      if (!canManageClients || searchActive) {
         isDraggingRef.current = false;
         return;
       }
@@ -1106,7 +1116,7 @@ export default function ClientInfoPage() {
         setSavingSort(false);
       }
     },
-    [dragClients, fetchClients, showSnackbar, canManageClients],
+    [dragClients, fetchClients, showSnackbar, canManageClients, searchActive],
   );
 
   const handleRestoreClient = useCallback(
@@ -1634,6 +1644,21 @@ export default function ClientInfoPage() {
           </Tooltip>
         </Stack>
       </Paper>
+      <Paper sx={{ p: 1.5, mb: 2, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
+        <TextField
+          fullWidth
+          size="small"
+          type="search"
+          label="Søg i klientoversigten"
+          placeholder="Klientnavn, ID, lokation, organisation, hostname eller IP"
+          value={clientSearch}
+          onChange={(event) => setClientSearch(event.target.value)}
+          slotProps={{ htmlInput: { maxLength: 160 } }}
+          helperText={searchActive
+            ? `${visibleApprovedClients.length} godkendte · ${unapprovedClients.length} afventer · Ryd søgningen for at ændre rækkefølge`
+            : "Søgning foregår lokalt, uden ekstra databasekald."}
+        />
+      </Paper>
       {/* Godkendte klienter */}
       <Typography
         variant="h5"
@@ -1760,20 +1785,21 @@ export default function ClientInfoPage() {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {dragClients.length === 0 ? (
+                    {visibleApprovedClients.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={colSpanApproved} align="center">
-                          Ingen godkendte klienter.
+                          {searchActive ? "Ingen klienter matcher søgningen." : "Ingen godkendte klienter."}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      dragClients.map((client, idx) => (
+                      visibleApprovedClients.map((client, idx) => (
                         <Draggable
                           key={client.id}
                           draggableId={String(client.id)}
                           index={idx}
                           isDragDisabled={
                             !canManageClients ||
+                            searchActive ||
                             savingSort ||
                             !!removingClientId
                           }
@@ -1970,7 +1996,7 @@ export default function ClientInfoPage() {
                   {unapprovedClients.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={10} align="center">
-                        Ingen ikke-godkendte klienter.
+                        {searchActive ? "Ingen afventende klienter matcher søgningen." : "Ingen ikke-godkendte klienter."}
                       </TableCell>
                     </TableRow>
                   ) : (

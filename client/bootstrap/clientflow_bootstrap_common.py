@@ -25,6 +25,7 @@ FACTORY_STATE = BOOTSTRAP_ROOT / "factory-state.json"
 USB_STATE = BOOTSTRAP_ROOT / "usb-state.json"
 PERSISTENT_ROOT = Path("/usr/local/lib/clientflow-bootstrap")
 PLANIQ_DISPLAY_DESKTOP_ICON = PERSISTENT_ROOT / "planiq-display-mark.png"
+PLANIQ_DISPLAY_DESKTOP_ICON_DARK = PERSISTENT_ROOT / "planiq-display-mark-on-dark.png"
 PLANIQ_DISPLAY_WALLPAPER = PERSISTENT_ROOT / "planiq-display-desktop-wallpaper-3840x2160.png"
 SYSTEMCTL = Path("/usr/bin/systemctl")
 NMCLI = Path("/usr/bin/nmcli")
@@ -1494,6 +1495,8 @@ def _trust_desktop_file(user: str, path: Path) -> None:
 def write_desktop_launcher(user: str, *, filename: str, name: str, comment: str, exec_path: str) -> Path:
     desktop = desktop_dir(user)
     target = desktop / filename
+    # Customer activation lives on the dark kiosk desktop after the first reboot.
+    icon = PLANIQ_DISPLAY_DESKTOP_ICON_DARK if filename == "02 Aktiver ClientFlow.desktop" else PLANIQ_DISPLAY_DESKTOP_ICON
     content = "\n".join(
         [
             "[Desktop Entry]",
@@ -1503,7 +1506,7 @@ def write_desktop_launcher(user: str, *, filename: str, name: str, comment: str,
             f"Comment={comment}",
             "Terminal=false",
             f"Exec={exec_path}",
-            f"Icon={PLANIQ_DISPLAY_DESKTOP_ICON}",
+            f"Icon={icon}",
             "Categories=Utility;System;",
             "StartupNotify=true",
             "X-GNOME-Trusted=true",
@@ -1571,6 +1574,7 @@ def install_persistent_bootstrap(source_dir: Path) -> None:
         "clientflow-factory-prepare": 0o555,
         "clientflow-fresh-install": 0o555,
         "planiq-display-mark.png": 0o444,
+        "planiq-display-mark-on-dark.png": 0o444,
         "planiq-display-desktop-wallpaper-3840x2160.png": 0o444,
     }
     _ensure_root_directory(PERSISTENT_ROOT, mode=0o755)
