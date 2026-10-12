@@ -55,7 +55,7 @@ def test_catalog_1236_promotes_exact_1335_fresh_install_identity() -> None:
     }
 
 
-def test_catalog_1236_aligns_with_frozen_source_and_excludes_old_selections() -> None:
+def test_catalog_1236_remains_promoted_while_new_source_is_staged() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -64,12 +64,12 @@ def test_catalog_1236_aligns_with_frozen_source_and_excludes_old_selections() ->
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    # The published catalog must now match the exact approved, immutable
-    # 1.3.35 / 1236 release; never select an unapproved bundle.
-    assert source_version == "1.3.35"
-    assert release_input["release_sequence"] == 1236
+    # The exact approved 1.3.35/1236 remains the ONLY installer selection.
+    # Source 1.3.36/1237 has not passed the release approval/publication gates.
+    assert source_version == "1.3.36"
+    assert release_input["release_sequence"] == 1237
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] == release_input["release_sequence"]
+    assert data["catalog_sequence"] == release_input["release_sequence"] - 1
     assert data["latest_stable"] == "1.3.35"
     assert data["default_install_version"] == "1.3.35"
     assert release["release_id"] == "clientflow-1.3.35-seq-1236"

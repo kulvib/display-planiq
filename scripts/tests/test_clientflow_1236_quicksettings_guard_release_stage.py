@@ -15,9 +15,9 @@ def read(relative: str) -> str:
 
 
 def test_1236_identity_matches_immutably_published_fresh_install_catalog() -> None:
-    assert read("client/VERSION").strip() == "1.3.35"
+    assert read("client/VERSION").strip() == "1.3.36"
     release = json.loads(read("client/release/release-input.json"))
-    assert release["release_sequence"] == 1236
+    assert release["release_sequence"] == 1237
     assert release["runtime_python"] == "3.13.14"
     assert release["minimum_ubuntu_lts"] == "26.04"
     assert release["architecture"] == "amd64"
