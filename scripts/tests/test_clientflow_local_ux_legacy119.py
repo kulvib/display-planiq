@@ -89,7 +89,12 @@ def test_local_gui_preserves_legacy119_sections_copy_and_safe_actions() -> None:
     assert 'color: #6f6f6f;' in source
     assert 'BRAND_LOGO_PATH = Path(' in source
     assert 'planiq-display-logo.png' in source
-    assert 'Gtk.Picture.new_for_filename(str(BRAND_LOGO_PATH))' in source
+    # The approved master vector is preferred when a GTK SVG loader is present;
+    # the original approved PNG must remain a safe fallback.
+    assert 'BRAND_LOGO_PATH.with_name("planiq-display-logo-primary.svg")' in source
+    assert 'logo_path = BRAND_LOGO_PATH' in source
+    assert 'GdkPixbuf.Pixbuf.new_from_file(str(vector_logo))' in source
+    assert 'Gtk.Picture.new_for_filename(str(logo_path))' in source
     assert 'logo.set_content_fit(Gtk.ContentFit.CONTAIN)' in source
 
     # The local GUI keeps the frozen domains read-only and only mutates Display

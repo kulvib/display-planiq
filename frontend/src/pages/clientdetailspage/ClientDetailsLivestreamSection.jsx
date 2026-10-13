@@ -9,6 +9,8 @@ import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { apiUrl, authenticatedFetch, authHeaders, updateClient } from "../../api";
+import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
+import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
 const HEALTH_STABLE_POLL_MS = 10_000;
@@ -713,6 +715,7 @@ export default function ClientDetailsLivestreamSection({
 
   const [serverReady, setServerReady]           = useState(false);
   const [manifestReady, setManifestReady]       = useState(false);
+  const [needsTapToPlay, setNeedsTapToPlay]     = useState(false);
   const [error, setError]                       = useState("");
   const [buffering, setBuffering]               = useState(false);
   const [currentSegNum, setCurrentSegNum]       = useState(null);
@@ -770,6 +773,9 @@ export default function ClientDetailsLivestreamSection({
 
   const theme    = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTouchHandset = useMediaQuery("(hover: none) and (pointer: coarse) and (max-width: 1023.95px)");
+  const mobileSession = useMobileLivestreamSession(isTouchHandset);
+  const mobileViewerActive = !isTouchHandset || mobileSession.isActive;
   const { user } = useAuth();
   const role = user?.role || "";
   const isSuperadmin = role === "superadmin";
@@ -839,7 +845,7 @@ export default function ClientDetailsLivestreamSection({
 
 
   const ensureStreamStarted = useCallback(async (reason = "auto", { force = false } = {}) => {
-    if (!canControlStream) return false;
+    if (!canControlStream || !mobileViewerActive) return false;
     if (!clientId || clientOnline === false) return false;
     if (!force && autoStartRequestedRef.current) return false;
     if (autoStartInFlightRef.current) return false;
@@ -877,10 +883,10 @@ export default function ClientDetailsLivestreamSection({
     } finally {
       autoStartInFlightRef.current = false;
     }
-  }, [canControlStream, clientId, clientOnline, onCommandSent]);
+  }, [canControlStream, clientId, clientOnline, mobileViewerActive, onCommandSent]);
 
   const restartStreamAfterDisplayChange = useCallback(async () => {
-    if (!clientId || clientOnline === false) return;
+    if (!clientId || clientOnline === false || !mobileViewerActive) return;
     const streamHasBeenActive =
       serverReady ||
       manifestReady ||
@@ -940,6 +946,7 @@ export default function ClientDetailsLivestreamSection({
   }, [
     clientId,
     clientOnline,
+    mobileViewerActive,
     lastSegNum,
     lastSegmentTimestamp,
     manifestReady,
@@ -1023,6 +1030,15 @@ export default function ClientDetailsLivestreamSection({
     };
   }, [clientId]);
 
+  useEffect(() => {
+    if (!isTouchHandset || mobileSession.isActive) return;
+    // A stopped mobile viewer must not continue using a previously granted HLS token.
+    resetStreamState();
+    mediaCapabilityRef.current = "";
+    setMediaCapability("");
+    setViewerContactEstablished(false);
+  }, [isTouchHandset, mobileSession.isActive, resetStreamState]);
+
   // Viewer-presence ejer Livestream-v2 lifecycle server-side. Browseren sender
   // kun presence/leave; backend bestemmer generation, grace og stop.
 
@@ -1067,7 +1083,7 @@ export default function ClientDetailsLivestreamSection({
           // Ryd ikke serverens HLS-filer ved almindelig reconnect. Segmentnavne
           // genbruges fra 00000 efter reset og kan give cache/manifest-problemer
           // i browseren. Genindlæs kun HLS-afspilleren lokalt.
-          if (!cancelled) {
+          if (!cancelled && mobileViewerActive) {
             await ensureStreamStarted("client_reconnected", { force: true });
             setLocalRefreshKey((k) => k + 1);
             if (typeof onRestartStream === "function") {
@@ -1086,7 +1102,7 @@ export default function ClientDetailsLivestreamSection({
     }
 
     return undefined;
-  }, [clientId, clientOnline, ensureStreamStarted, onRestartStream, resetStreamState]);
+  }, [clientId, clientOnline, mobileViewerActive, ensureStreamStarted, onRestartStream, resetStreamState]);
 
   // -------------------------------------------------------------------------
   // Viewer-owned lifecycle: 25s heartbeat, 75s lease and a 30s browser warm-grace.
@@ -1094,11 +1110,15 @@ export default function ClientDetailsLivestreamSection({
   // departure/unmount still leaves immediately. Backend coalesces multiple viewers.
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || inactivityStopped) return undefined;
+    if (!clientId || inactivityStopped || !mobileViewerActive) return undefined;
 
     let stopped = false;
     let hiddenLeaveTimer = null;
     viewerLeaveSentRef.current = false;
+    if (isTouchHandset) {
+      viewerIdRef.current = `viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+    const sessionViewerId = viewerIdRef.current;
 
     const sendHeartbeat = async () => {
       if (stopped || viewerLeaveSentRef.current || document.visibilityState === "hidden") return;
@@ -1112,7 +1132,7 @@ export default function ClientDetailsLivestreamSection({
             accept: "application/json",
           },
           body: JSON.stringify({
-            viewer_id: viewerIdRef.current,
+            viewer_id: sessionViewerId,
             source: "client_details_livestream",
           }),
           signal: AbortSignal.timeout(8000),
@@ -1126,6 +1146,10 @@ export default function ClientDetailsLivestreamSection({
           throw new Error(detail || `Viewer-heartbeat fejlede (${resp.status})`);
         }
         const payload = await resp.json().catch(() => null);
+        if (stopped) {
+          void sendViewerLeave(clientId, sessionViewerId, { source: "client_details_livestream_late_heartbeat" });
+          return;
+        }
         if (payload?.media_capability) {
           mediaCapabilityRef.current = String(payload.media_capability);
           setMediaCapability(String(payload.media_capability));
@@ -1139,6 +1163,7 @@ export default function ClientDetailsLivestreamSection({
           setAutoStartStatus("Livestream starter automatisk — venter på segmenter …");
         }
       } catch (err) {
+        if (stopped) return;
         if (isRequestTimeout(err)) {
           // En enkelt transport-timeout må ikke nulstille en gyldig viewer-lease
           // eller vise browserens rå "signal timed out" som producerfejl.
@@ -1156,7 +1181,7 @@ export default function ClientDetailsLivestreamSection({
     const sendLeaveOnce = (source = "client_details_livestream_leave") => {
       if (viewerLeaveSentRef.current) return;
       viewerLeaveSentRef.current = true;
-      sendViewerLeave(clientId, viewerIdRef.current, {
+      sendViewerLeave(clientId, sessionViewerId, {
         keepalive: true,
         source,
       });
@@ -1228,13 +1253,13 @@ export default function ClientDetailsLivestreamSection({
       document.removeEventListener("webkitfullscreenchange", onFullscreenChange);
       sendLeaveOnce("client_details_livestream_unmount");
     };
-  }, [clientId, inactivityStopped]);
+  }, [clientId, inactivityStopped, mobileViewerActive, isTouchHandset]);
 
   // -------------------------------------------------------------------------
   // Poll /health
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || inactivityStopped || !pageVisible || !mediaCapability) return;
+    if (!clientId || inactivityStopped || !pageVisible || !mediaCapability || !mobileViewerActive) return;
     setServerReady(false);
     setStreamStale(false);
     let stop = false;
@@ -1286,13 +1311,13 @@ export default function ClientDetailsLivestreamSection({
 
     pollUntilReady();
     return () => { stop = true; };
-  }, [clientId, effectiveRefreshKey, inactivityStopped, pageVisible, mediaCapability]);
+  }, [clientId, effectiveRefreshKey, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive]);
 
   // -------------------------------------------------------------------------
   // HLS.js lifecycle
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || !serverReady || inactivityStopped || !pageVisible || !mediaCapability) return undefined;
+    if (!clientId || !serverReady || inactivityStopped || !pageVisible || !mediaCapability || !mobileViewerActive) return undefined;
     setManifestReady(false);
     setError("");
     setCurrentSegNum(null);
@@ -1386,7 +1411,9 @@ export default function ClientDetailsLivestreamSection({
             lastHlsProgressAtRef.current = Date.now();
             setManifestReady(true);
             setError("");
-            playTimeout = window.setTimeout(() => video.play().catch(() => {}), 100);
+            playTimeout = window.setTimeout(() => {
+              video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+            }, 100);
           });
 
           hls.on(Hls.Events.MANIFEST_LOADED, () => {
@@ -1486,7 +1513,9 @@ export default function ClientDetailsLivestreamSection({
             if (disposed) return;
             lastHlsProgressAtRef.current = Date.now();
             setManifestReady(true);
-            playTimeout = window.setTimeout(() => video.play().catch(() => {}), 100);
+            playTimeout = window.setTimeout(() => {
+              video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+            }, 100);
           };
           video.addEventListener("loadedmetadata", nativeLoadedHandler, { once: true });
           return;
@@ -1512,13 +1541,13 @@ export default function ClientDetailsLivestreamSection({
       resetVideo();
       setManifestReady(false);
     };
-  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability]);
+  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || !manifestReady || inactivityStopped) return undefined;
+    if (!clientId || !manifestReady || inactivityStopped || !mobileViewerActive) return undefined;
 
     let stopped = false;
 
@@ -1583,6 +1612,7 @@ export default function ClientDetailsLivestreamSection({
     manifestReady,
     effectiveRefreshKey,
     inactivityStopped,
+    mobileViewerActive,
     onRestartStream,
     resetStreamState,
   ]);
@@ -1591,7 +1621,7 @@ export default function ClientDetailsLivestreamSection({
   // Playback watchdog — især vigtig i fullscreen
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || !manifestReady || inactivityStopped) return undefined;
+    if (!clientId || !manifestReady || inactivityStopped || !mobileViewerActive) return undefined;
 
     const timer = window.setInterval(() => {
       const video = videoRef.current;
@@ -1623,7 +1653,7 @@ export default function ClientDetailsLivestreamSection({
     }, FULLSCREEN_WATCHDOG_MS);
 
     return () => window.clearInterval(timer);
-  }, [clientId, manifestReady, inactivityStopped]);
+  }, [clientId, manifestReady, inactivityStopped, mobileViewerActive]);
 
   // -------------------------------------------------------------------------
   // Forsinkelsesberegning
@@ -1644,7 +1674,7 @@ export default function ClientDetailsLivestreamSection({
   // Handlers
   // -------------------------------------------------------------------------
   const handleRefreshClick = async () => {
-    if (refreshing || !clientId) return;
+    if (refreshing || !clientId || !mobileViewerActive) return;
 
     autoStartRequestedRef.current = false;
     autoStartInFlightRef.current = false;
@@ -1683,7 +1713,13 @@ export default function ClientDetailsLivestreamSection({
   };
 
   const handleFullscreen = () => {
-    const el = videoContainerRef.current || videoRef.current;
+    // iPhone Safari exposes fullscreen on the video, not its containing Box.
+    const nativeVideo = videoRef.current;
+    if (isTouchHandset && typeof nativeVideo?.webkitEnterFullscreen === "function") {
+      nativeVideo.webkitEnterFullscreen();
+      return;
+    }
+    const el = videoContainerRef.current || nativeVideo;
     if (!el) return;
     if      (el.requestFullscreen)       el.requestFullscreen();
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
@@ -1709,7 +1745,7 @@ export default function ClientDetailsLivestreamSection({
   }, [showControls]);
 
   function handleVideoWaiting() { setBuffering(true);  }
-  function handleVideoPlaying() { setBuffering(false); }
+  function handleVideoPlaying() { setBuffering(false); setNeedsTapToPlay(false); }
   function handleVideoCanPlay() { setBuffering(false); }
 
   const lagStatus       = getLagStatus(manifestReady ? computedLag : null);
@@ -2292,7 +2328,7 @@ export default function ClientDetailsLivestreamSection({
                   variant="outlined"
                   startIcon={refreshing ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
                   onClick={handleRefreshClick}
-                  disabled={refreshing || !clientId}
+                  disabled={refreshing || !clientId || !mobileViewerActive}
                   sx={{ borderRadius: 999, fontWeight: 850 }}
                 >
                   Genindlæs
@@ -2315,6 +2351,34 @@ export default function ClientDetailsLivestreamSection({
           </Stack>
         </Stack>
 
+        {isTouchHandset && (
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center" sx={{ p: 1 }}>
+            <TextField
+              select size="small" label="Varighed" value={mobileSession.durationSeconds}
+              onChange={(event) => mobileSession.selectDuration(event.target.value)}
+              disabled={mobileSession.isActive}
+              sx={{ minWidth: 114 }}
+            >
+              {MOBILE_LIVESTREAM_DURATIONS.map((seconds) => (
+                <MenuItem key={seconds} value={seconds}>{seconds} sek.</MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="contained" sx={{ minHeight: 44, textTransform: "none" }}
+              onClick={mobileSession.isActive ? () => mobileSession.stop() : mobileSession.start}
+              disabled={!clientId && !mobileSession.isActive}
+              aria-label={mobileSession.isActive ? "Stop mobil-preview" : "Start mobil-preview"}
+            >
+              {mobileSession.isActive ? "Stop" : "Start"}
+            </Button>
+            <Typography variant="caption" color="text.secondary" aria-live="polite">
+              {mobileSession.isActive
+                ? `Stopper om ${mobileSession.remainingSeconds} sek.`
+                : mobileSession.expired ? "Tiden er udløbet" : "Afspilning er stoppet"}
+            </Typography>
+          </Stack>
+        )}
+
         {(error || autoStartError) && !livestreamVisuallyOffline && (
           <Alert severity="error" sx={{ borderRadius: 2 }}>
             {error || autoStartError}
@@ -2327,6 +2391,11 @@ export default function ClientDetailsLivestreamSection({
             gridTemplateColumns: isSuperadmin || isViewer
               ? { xs: "minmax(0, 1fr) 320px", md: "minmax(0, 1fr) 320px", lg: "minmax(0, 1fr) 320px" }
               : { xs: "1fr", md: "1fr", lg: "1fr" },
+            // Touch handsets only: portrait and landscape get one usable video
+            // column. Desktop layout remains byte-for-byte unchanged.
+            "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+              gridTemplateColumns: "minmax(0, 1fr)",
+            },
             gap: { xs: 1.2, sm: 1.45, md: 1.55 },
             alignItems: "stretch",
             justifyContent: "stretch",
@@ -2380,6 +2449,13 @@ export default function ClientDetailsLivestreamSection({
                 minHeight: { xs: 180, md: "100%" },
                 height: { xs: "auto", md: "100%" },
                 maxHeight: { xs: 280, md: "none" },
+                "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+                  maxHeight: "min(56dvh, 420px)",
+                },
+                "@media (orientation: landscape) and (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+                  minHeight: 130,
+                  maxHeight: "min(72dvh, 460px)",
+                },
                 bgcolor: "#000",
                 display: "flex",
                 "&:fullscreen": {
@@ -2418,6 +2494,22 @@ export default function ClientDetailsLivestreamSection({
                 tabIndex={-1}
                 key={effectiveRefreshKey}
               />
+              {isTouchHandset && needsTapToPlay && (
+                <Button
+                  variant="contained"
+                  onClick={() => {
+                    const video = videoRef.current;
+                    if (video) void video.play().then(() => setNeedsTapToPlay(false)).catch(() => {});
+                  }}
+                  sx={{
+                    position: "absolute", zIndex: 40, left: "50%", top: "50%",
+                    transform: "translate(-50%, -50%)", minHeight: 44,
+                    background: "rgba(15,23,42,0.94)", color: "#fff",
+                  }}
+                >
+                  Afspil livestream
+                </Button>
+              )}
 
               {streamOverlayMeta && (
                 <Box
@@ -2495,7 +2587,17 @@ export default function ClientDetailsLivestreamSection({
                 </Box>
               )}
 
-              {!manifestReady && (
+              {isTouchHandset && !mobileSession.isActive && (
+                <Box sx={{
+                  position: "absolute", inset: 0, display: "flex", zIndex: 15,
+                  justifyContent: "center", alignItems: "center", textAlign: "center",
+                  bgcolor: "rgba(0,0,0,0.92)", color: "#fff", p: 2,
+                }}>
+                  <Typography variant="body2">Vælg varighed, og tryk Start for at se livestream.</Typography>
+                </Box>
+              )}
+
+              {!manifestReady && (!isTouchHandset || mobileSession.isActive) && (
                 <Box sx={{
                   position: "absolute",
                   inset: 0,
@@ -2529,7 +2631,7 @@ export default function ClientDetailsLivestreamSection({
                 </Box>
               )}
 
-              {manifestReady && (
+              {manifestReady && mobileViewerActive && (
                 <IconButton
                   onClick={handleFullscreen}
                   aria-label="Fuld skærm"

@@ -27,6 +27,7 @@ PROJECTION_FIELDS = (
     "chrome_running",
     "browser_requested",
     "chrome_step",
+    "browser_countdown",
     "display_power",
     "service_calendar_status",
     "pending_chrome_action",

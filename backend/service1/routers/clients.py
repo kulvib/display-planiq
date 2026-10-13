@@ -1140,6 +1140,7 @@ def _apply_display_projection_for_read(
     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
     _set_runtime_read_attr(client, "browser_requested", projection["browser_requested"])
     _set_runtime_read_attr(client, "chrome_step", projection["chrome_step"])
+    _set_runtime_read_attr(client, "browser_countdown", projection.get("browser_countdown"))
     _set_runtime_read_attr(client, "display_power", projection.get("display_power"))
     _set_runtime_read_attr(client, "service_calendar_status", projection["service_calendar_status"])
 

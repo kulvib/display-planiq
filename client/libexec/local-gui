@@ -29,7 +29,8 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import Gdk, GLib, Gtk, Pango, GdkPixbuf  # noqa: E402
 
 SOCKET_PATH = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/display/runtime.sock")
 STATUS_PATH = Path(os.getenv("CLIENTFLOW_DISPLAY_STATUS_PATH", "/var/lib/clientflow/display-runtime/runtime-status.json"))
@@ -478,6 +479,12 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         width, height = self._target_panel_size()
         self.set_default_size(width, height)
         self.set_resizable(False)
+        # GTK4/Wayland: prevent minimize, maximize and close titlebar controls.
+        # cfadmin still has a separate administration session. Do not force
+        # the GUI above fullscreen Chrome; this only removes window actions.
+        titlebar = Gtk.HeaderBar()
+        titlebar.set_show_title_buttons(False)
+        self.set_titlebar(titlebar)
         # The kiosk GUI is a permanent operational surface. Remove the window
         # manager close affordance and consume close requests (including common
         # keyboard/window-manager close actions) instead of letting the kiosk
@@ -709,8 +716,21 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         outer.add_css_class("legacy-root")
         self.set_child(outer)
 
-        if BRAND_LOGO_PATH.is_file():
-            logo = Gtk.Picture.new_for_filename(str(BRAND_LOGO_PATH))
+        # Prefer the approved v5 vector master on GTK4; fall back to the
+        # unchanged PNG when the host lacks an SVG image loader.
+        vector_logo = BRAND_LOGO_PATH.with_name("planiq-display-logo-primary.svg")
+        logo_path = BRAND_LOGO_PATH
+        if vector_logo.is_file():
+            # GdkPixbuf verifies SVG loader support before selecting GTK's
+            # vector-backed paintable. A missing SVG loader must not hide logo.
+            try:
+                GdkPixbuf.Pixbuf.new_from_file(str(vector_logo))
+            except (GLib.Error, OSError):
+                pass
+            else:
+                logo_path = vector_logo
+        if logo_path.is_file():
+            logo = Gtk.Picture.new_for_filename(str(logo_path))
             logo.add_css_class("brand-logo")
             logo.set_content_fit(Gtk.ContentFit.CONTAIN)
             logo.set_can_shrink(True)
