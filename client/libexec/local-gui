@@ -702,9 +702,11 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
 
     def _copy_controls(self, grid: Gtk.Grid, row: int, key: str, *, ok_column: int = 2, copy_column: int = 3) -> tuple[Gtk.Label, Gtk.Button]:
         ok = self._label("", css="copy-ok", xalign=1)
-        button = Gtk.Button(label="⧉")
+        # The old Unicode glyph was missing on some kiosk font sets; use a
+        # themed GTK icon so the affordance is visible and clickable on Wayland.
+        button = Gtk.Button.new_from_icon_name("edit-copy-symbolic")
         button.add_css_class("copy-button")
-        button.set_tooltip_text("Kopiér")
+        button.set_tooltip_text("Kopiér værdi til udklipsholder")
         button.connect("clicked", lambda _button, selected=key: self._copy(selected))
         grid.attach(ok, ok_column, row, 1, 1)
         grid.attach(button, copy_column, row, 1, 1)
@@ -880,15 +882,38 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         if display is None:
             self.error_label.set_text("Clipboard er ikke tilgængeligt.")
             return
-        display.get_clipboard().set_text(value)
-        self.error_label.set_text("")
+        clipboard = display.get_clipboard()
         ok = self.copy_ok.get(key)
+        # GTK4/Wayland is asynchronous: a set_text call alone does not prove
+        # another application can read the clipboard. Verify the new payload.
+        try:
+            clipboard.set_text(value)
+        except (GLib.Error, RuntimeError) as exc:
+            self.error_label.set_text(f"Kopiering fejlede: {exc}")
+            return
         if ok is not None:
-            ok.set_text("Kopieret!")
-            def clear() -> bool:
-                ok.set_text("")
-                return False
-            GLib.timeout_add(1500, clear)
+            ok.set_text("Kopierer…")
+
+        def on_read(_clipboard: Gdk.Clipboard, result: object) -> None:
+            try:
+                actual = _clipboard.read_text_finish(result)
+            except (GLib.Error, RuntimeError):
+                actual = None
+            if actual != value:
+                self.error_label.set_text("Kunne ikke verificere udklipsholderen.")
+                if ok is not None:
+                    ok.set_text("")
+                return
+            self.error_label.set_text("")
+            if ok is not None:
+                ok.set_text("Kopieret!")
+                def clear() -> bool:
+                    if ok.get_text() == "Kopieret!":
+                        ok.set_text("")
+                    return False
+                GLib.timeout_add(1500, clear)
+
+        clipboard.read_text_async(None, on_read)
 
     @staticmethod
     def _color_class(color: str | None) -> str | None:

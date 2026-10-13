@@ -29,3 +29,7 @@ test("running process still disables redundant start", () => {
   });
   assert.equal(getBrowserProcessActionDisabledInfo("start", false, true), null);
 });
+
+test("running browser can be stopped even if requested state is already false", () => {
+  assert.equal(getBrowserProcessActionDisabledInfo("stop", true, false), null);
+});

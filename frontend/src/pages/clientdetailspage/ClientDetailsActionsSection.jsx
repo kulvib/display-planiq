@@ -27,7 +27,7 @@ import TerminalIcon from "@mui/icons-material/Terminal";
 import DesktopWindowsIcon from "@mui/icons-material/DesktopWindows";
 import { useTheme } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
-import { getBrowserProcessActionDisabledInfo } from "./displayActionPolicy.mjs";
+import { controlRoomActionDecision } from "./controlRoomActionMatrix.mjs";
 
 /*
   DetailsActionsSection.jsx
@@ -387,6 +387,8 @@ export default function ClientDetailsActionsSection({
   refreshing,
   showSnackbar: showSnackbarProp,
   clientOnline = false,
+  pendingReboot = false,
+  pendingShutdown = false,
   clientActionPending = false,
   liveStep = null,
   liveChromeStatus = null,
@@ -415,10 +417,10 @@ export default function ClientDetailsActionsSection({
 }) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const isTouchHandset = useMediaQuery("(hover: none) and (pointer: coarse) and (max-width: 1023.95px)");
   const { user } = useAuth();
 
   const role = user?.role || "";
-  const isAdmin = role === "admin" || role === "superadmin";
   const isAdministrator = role === "admin";
   const isSuperadmin = role === "superadmin";
   const isViewer = role === "viewer";
@@ -442,7 +444,6 @@ export default function ClientDetailsActionsSection({
   const clientUnavailable = clientOnline !== true;
   const clientUnavailableMessage = "Klienten er ikke online via canonical Status-domain";
   const normalizedClientStatus = String(clientStatus || "").trim().toLowerCase();
-  const clientIsApproved = normalizedClientStatus === "approved";
   const normalizedLivestreamStatus = String(livestreamStatus || "").trim().toLowerCase();
   const normalizedLivestreamProcessStatus = String(livestreamProcessStatus || "").trim().toLowerCase();
   const livestreamIsRunning =
@@ -453,8 +454,6 @@ export default function ClientDetailsActionsSection({
 
   const clientflowDeploymentState = String(clientflowDeployment?.state || "").trim().toLowerCase();
   const clientflowUpdateBusy = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(clientflowDeploymentState);
-  const clientflowBusyTooltip =
-    "ClientFlow opdateres via canonical deployment — vent til deploymenten er afsluttet";
 
   const normalizedUbuntuUpdateStatus = String(ubuntuUpdateStatus || "").trim().toLowerCase();
   const effectiveUbuntuStepNorm = String(ubuntuUpdateStep || liveStep || "").trim().toLowerCase();
@@ -485,8 +484,6 @@ export default function ClientDetailsActionsSection({
 
   const ubuntuUpdateBusy = ubuntuUpdateInProgress;
 
-  const ubuntuUpdateBusyTooltip =
-    "Ubuntu opdateres — vent til opdateringen er færdig";
 
   const sleepActionPending = SLEEP_PENDING_ACTIONS.has(normalizedPendingAction);
   const wakeActionPending = WAKE_PENDING_ACTIONS.has(normalizedPendingAction);
@@ -495,6 +492,8 @@ export default function ClientDetailsActionsSection({
   // Det er vigtigt at medtage lokal pendingAction="reboot"/"shutdown", fordi
   // reboot/sluk ikke er en chrome-command og derfor ofte når UI'et før liveStep.
   const isSystemLocked =
+    pendingReboot === true ||
+    pendingShutdown === true ||
     SYSTEM_LOCK_STEPS.has(liveStepNorm) ||
     normalizedClientState.startsWith("reboot") ||
     normalizedClientState.startsWith("shut");
@@ -591,146 +590,43 @@ export default function ClientDetailsActionsSection({
     [showSnackbarProp]
   );
 
-  const doAction = useCallback(
-    async (action) => {
-      if (clientUnavailable) {
-        notify({
-          message: `${clientUnavailableMessage} — handling afvist`,
-          severity: "warning",
-        });
-        return;
-      }
-
-      if (isSystemLocked) {
-        notify({
-          message: "Klienten genstarter eller lukker ned — handling afvist",
-          severity: "warning",
-        });
-        return;
-      }
-
-      if (clientflowUpdateBusy) {
-        notify({
-          message: clientflowBusyTooltip,
-          severity: "warning",
-        });
-        return;
-      }
-
-      if (ubuntuUpdateBusy) {
-        notify({
-          message: ubuntuUpdateBusyTooltip,
-          severity: "warning",
-        });
-        return;
-      }
-
-      if ((action === "start" || action === "stop") && normalizedClientStatus && !clientIsApproved) {
-        notify({
-          message: "Kiosk browser kan først styres, når klienten er godkendt",
-          severity: "warning",
-        });
-        return;
-      }
-
-
-      if (isSleeping && action !== "wakeup") {
-        notify({
-          message: "Skærmen er slukket — brug Tænd skærm først",
-          severity: "warning",
-        });
-        return;
-      }
-
-      if (action === "wakeup" && (wakeInProgress || !isSleeping)) {
-        notify({
-          message: wakeInProgress ? "Tænd skærm er allerede sendt" : "Skærmen er allerede tændt",
-          severity: "info",
-        });
-        return;
-      }
-
-      setActionLoading((prev) => ({ ...prev, [action]: true }));
-      try {
-        await handleClientAction(action);
-      } catch (err) {
-        notify({
-          message: "Fejl: " + (err?.message || "Kunne ikke udføre handling"),
-          severity: "error",
-        });
-      } finally {
-        setActionLoading((prev) => ({ ...prev, [action]: false }));
-      }
-    },
-    [
-      clientUnavailable,
-      clientUnavailableMessage,
-      isSystemLocked,
-      clientflowUpdateBusy,
-      clientflowBusyTooltip,
-      ubuntuUpdateBusy,
-      ubuntuUpdateBusyTooltip,
-      normalizedClientStatus,
-      clientIsApproved,
-      isSleeping,
-      wakeInProgress,
-      handleClientAction,
-      notify,
-    ]
-  );
-
+  // Both visual button locking and the actual click use the same matrix;
+  // in-flight ref closes the gap before React commits the loading state.
+  const inFlightActionRef = useRef(null);
   const getActionDisabledInfo = useCallback(
-    (key) => {
-      if (clientUnavailable) return { disabled: true, reason: clientUnavailableMessage };
-      if (isSystemLocked) return { disabled: true, reason: "Klienten genstarter eller lukker ned" };
-      if (clientflowUpdateBusy) return { disabled: true, reason: clientflowBusyTooltip };
-      if (ubuntuUpdateBusy) return { disabled: true, reason: ubuntuUpdateBusyTooltip };
-
-      if ((key === "start" || key === "stop") && normalizedClientStatus && !clientIsApproved) {
-        return { disabled: true, reason: "Kiosk browser kan først styres, når klienten er godkendt" };
-      }
-
-
-      if (wakeInProgress && key === "wakeup") {
-        return { disabled: true, reason: "Tænd skærm er allerede sendt" };
-      }
-
-      if (isSleeping) {
-        if (key === "wakeup") return { disabled: false, reason: "Tænd skærm" };
-        return {
-          disabled: true,
-          reason: "Skærmen er slukket — brug Tænd skærm først",
-        };
-      }
-
-      if (key === "wakeup") return { disabled: true, reason: "Skærmen er allerede tændt" };
-      if (key === "sleep" && sleepActionPending) return { disabled: true, reason: "Sluk skærm er allerede sendt" };
-      const browserProcessInfo = getBrowserProcessActionDisabledInfo(
-        key,
-        chromeIsRunning,
-        explicitBrowserRequested
-      );
-      if (browserProcessInfo) return browserProcessInfo;
-
-      return { disabled: false, reason: null };
-    },
-    [
-      clientUnavailable,
-      clientUnavailableMessage,
-      isSystemLocked,
-      clientflowUpdateBusy,
-      clientflowBusyTooltip,
-      ubuntuUpdateBusy,
-      ubuntuUpdateBusyTooltip,
-      normalizedClientStatus,
-      clientIsApproved,
-      wakeInProgress,
-      isSleeping,
-      sleepActionPending,
-      chromeIsRunning,
-      explicitBrowserRequested,
-    ]
+    (key) => controlRoomActionDecision(key, {
+      role, online: !clientUnavailable, systemLocked: isSystemLocked,
+      clientflowBusy: clientflowUpdateBusy, ubuntuBusy: ubuntuUpdateBusy,
+      clientStatus: normalizedClientStatus,
+      pendingAction: normalizedPendingAction,
+      sleeping: isSleeping, wakeInProgress,
+      chromeRunning: chromeIsRunning, browserRequested: explicitBrowserRequested,
+      busy: actionPanelBusy || inFlightActionRef.current !== null,
+    }),
+    [role, clientUnavailable, isSystemLocked, clientflowUpdateBusy,
+      ubuntuUpdateBusy, normalizedClientStatus, normalizedPendingAction,
+      isSleeping, wakeInProgress, chromeIsRunning, explicitBrowserRequested, actionPanelBusy]
   );
+
+  const doAction = useCallback(async (action) => {
+    const decision = getActionDisabledInfo(action);
+    if (decision.disabled) {
+      notify({ message: decision.reason || "Handling ikke tilgængelig", severity: "warning" });
+      return;
+    }
+    // Synchronous, cross-action single-flight even on rapid double-click.
+    if (inFlightActionRef.current !== null) return;
+    inFlightActionRef.current = action;
+    setActionLoading((prev) => ({ ...prev, [action]: true }));
+    try {
+      await handleClientAction(action);
+    } catch (err) {
+      notify({ message: "Fejl: " + (err?.message || "Kunne ikke udføre handling"), severity: "error" });
+    } finally {
+      inFlightActionRef.current = null;
+      setActionLoading((prev) => ({ ...prev, [action]: false }));
+    }
+  }, [getActionDisabledInfo, handleClientAction, notify]);
 
   const isDisabledByState = useCallback(
     (key) => getActionDisabledInfo(key).disabled,
@@ -987,10 +883,10 @@ export default function ClientDetailsActionsSection({
         >
           {title}
         </Typography>
-        <Grid container spacing={1}>
+        <Grid container spacing={isTouchHandset ? 0.75 : 1}>
           {buttons.map((btn) => (
-            <Grid key={btn.key} size={12}>
-              <ActionButton btn={btn} isMobile={isMobile} busy={actionPanelBusy} />
+            <Grid key={btn.key} size={isTouchHandset ? 6 : 12}>
+              <ActionButton btn={btn} isMobile={isMobile || isTouchHandset} busy={actionPanelBusy} />
             </Grid>
           ))}
         </Grid>
@@ -1102,6 +998,11 @@ export default function ClientDetailsActionsSection({
                 : "repeat(2, minmax(220px, 1fr))",
             },
             gap: { xs: 1.15, sm: 1.35 },
+            // Landscape phones may be wider than the sm breakpoint; leave
+            // desktop grids unchanged and only compact real touch devices.
+            "@media (hover: none) and (pointer: coarse) and (min-width: 600px) and (max-width: 1023.95px)": {
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            },
             alignItems: "stretch",
           }}
         >
