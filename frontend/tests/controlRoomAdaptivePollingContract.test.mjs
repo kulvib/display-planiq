@@ -38,7 +38,17 @@ test("Control Room list uses DB-free realtime invalidation with bounded reconcil
   assert.match(page, /BUSY_CLIENT_LIST_CHROME_STEPS\.has\(chromeStep\)/);
   assert.match(page, /ca\.chrome_status !== cb\.chrome_status/);
   assert.match(page, /ca\.chrome_color !== cb\.chrome_color/);
-  assert.match(page, /browserStatus = String\(client\?\.chrome_status/);
+  // The server remains authoritative for the reported browser status and
+  // countdown deadline; local ticking must never introduce 1s backend polling.
+  const statusCell = page.slice(page.indexOf("const ClientStatusCell"), page.indexOf("const ClientHealthCell"));
+  assert.match(statusCell, /const countdown = client\?\.browser_countdown/);
+  assert.match(statusCell, /receiveBrowserCountdown\(countdown, Date\.now\(\)\)/);
+  assert.match(statusCell, /const browserStatus = String\(/);
+  assert.match(statusCell, /formatBrowserCountdownStatus\(snapshot, clockMs\)/);
+  assert.match(statusCell, /client\?\.chrome_status \|\| "Browserstatus ukendt"/);
+  assert.match(statusCell, /window\.setInterval\([\s\S]*?250\)/);
+  assert.match(statusCell, /return \(\) => window\.clearInterval\(timer\)/);
+  assert.doesNotMatch(statusCell, /getControlRoomClients\(|getChromeStatus\(|fetch\(/);
   assert.match(page, /label = `\$\{onlineText\} \/ \$\{stateText\} \/ \$\{browserStatus\}`/);
   assert.match(page, /client\?\.pending_reboot === true/);
   assert.match(page, /client\?\.pending_shutdown === true/);

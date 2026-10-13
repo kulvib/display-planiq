@@ -200,7 +200,19 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
 
         self.assertNotIn("localExplicitStop", viewer_block)
         self.assertNotIn("explicitlyStopped", viewer_block)
-        self.assertIn("[clientId, inactivityStopped]", viewer_block)
+        # Desktop must retain the original viewer-owned lease automatically.
+        # Only touch-handset viewing is gated by its bounded, explicit session.
+        self.assertIn("const mobileViewerActive = !isTouchHandset || mobileSession.isActive;", source)
+        self.assertIn(
+            "if (!clientId || inactivityStopped || !mobileViewerActive) return undefined;",
+            viewer_block,
+        )
+        self.assertIn("[clientId, inactivityStopped, mobileViewerActive, isTouchHandset]", viewer_block)
+        # A stopped mobile session must release *its viewer*, not issue a
+        # producer-wide stop that could interrupt a desktop viewer.
+        self.assertIn('sendLeaveOnce("client_details_livestream_unmount")', viewer_block)
+        self.assertIn("viewer-heartbeat", viewer_block)
+        self.assertNotIn("sendLivestreamCommand", viewer_block)
 
     def test_retryable_stop_timeout_is_not_stale_while_generation_is_stopping(self) -> None:
         source = read_backend("service1/livestream_v2.py")
