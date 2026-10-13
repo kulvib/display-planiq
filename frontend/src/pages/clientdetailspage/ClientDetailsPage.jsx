@@ -823,6 +823,8 @@ function glassPanelSx(theme, isMobile = false) {
 
 function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMessage, liveChromeStatus, clientState, refreshing, onRefresh, onBack, isMobile }) {
   const theme = useTheme();
+  const touchHandset = useMediaQuery("(hover: none) and (pointer: coarse) and (max-width: 1023.95px)");
+  const compactMobile = isMobile || touchHandset;
   const clientName = client?.name || client?.client_name || "Ukendt infoskærm";
   const organizationName = client?.organization_name || client?.organization?.name || "";
   const location = client?.locality || client?.location || "Ingen lokation";
@@ -834,10 +836,10 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
         ...glassPanelSx(theme, isMobile),
         p: isMobile ? 1.25 : 1.75,
         display: "flex",
-        alignItems: isMobile ? "stretch" : "center",
+        alignItems: compactMobile ? "stretch" : "center",
         justifyContent: "space-between",
         gap: 1.5,
-        flexDirection: isMobile ? "column" : "row",
+        flexDirection: compactMobile ? "column" : "row",
       }}
     >
       <Stack
@@ -877,7 +879,14 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
         sx={{
           flexWrap: "wrap",
           alignItems: "center",
-          justifyContent: isMobile ? "flex-start" : "flex-end"
+          justifyContent: compactMobile ? "flex-start" : "flex-end",
+          ...(touchHandset ? {
+            "& .MuiChip-root": { height: "auto", minHeight: 24, maxWidth: "100%" },
+            "& .MuiChip-label": {
+              whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.3,
+              py: 0.5, textOverflow: "clip",
+            },
+          } : {})
         }}>
         <DashboardChip dark label={clientOnline ? "Online" : "Offline"} color={clientOnline ? "success" : "error"} variant="filled" />
         <DashboardChip dark label={clientState || "ukendt"} color={clientState === "normal" ? "success" : "warning"} />
@@ -1808,6 +1817,8 @@ export default function ClientDetailsPage({
               handleOpenRemoteDesktop={handleOpenRemoteDesktop}
               refreshing={refreshing}
               clientOnline={clientOnline}
+              pendingReboot={liveClient?.pending_reboot === true}
+              pendingShutdown={liveClient?.pending_shutdown === true}
               clientActionPending={wakeCompleteWithoutPending ? false : clientActionPending}
               liveStep={liveStep}
               liveChromeStatus={visibleChromeStatus}

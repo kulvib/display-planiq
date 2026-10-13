@@ -554,8 +554,9 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
     .trim()
     .toLowerCase();
   const browserStatus = String(
-    (isOnline && snapshot ? formatBrowserCountdownStatus(snapshot, clockMs) : null)
-      || client?.chrome_status || "Browserstatus ukendt",
+    (isOnline && (snapshot || ["countdown", "display_sleep_countdown"].includes(String(client?.chrome_step || "").toLowerCase()))
+      ? formatBrowserCountdownStatus(snapshot, clockMs) || "Afventer ny browserstatus fra klienten…"
+      : client?.chrome_status || "Browserstatus ukendt"),
   ).trim();
   const browserColor = String(client?.chrome_color || "").trim().toLowerCase();
   const tone = !isOnline || browserColor === "red"
@@ -579,6 +580,19 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+          },
+          // Let operators actually read the countdown on portrait/landscape
+          // touch devices; leave the desktop status-chip geometry untouched.
+          "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+            height: "auto",
+            maxWidth: "100%",
+            "& .MuiChip-label": {
+              whiteSpace: "normal",
+              overflowWrap: "anywhere",
+              textOverflow: "clip",
+              lineHeight: 1.3,
+              py: 0.65,
+            },
           },
         })}
       />
@@ -712,7 +726,11 @@ const EnrollmentIdentityCell = memo(function EnrollmentIdentityCell({
 export default function ClientInfoPage() {
   const { user } = useAuth();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("sm"));
+  const smallViewport = useMediaQuery(theme.breakpoints.down("sm"));
+  // Landscape phones cross MUI's sm breakpoint but still need the compact
+  // table; desktop devices retain their existing table and layout.
+  const touchHandset = useMediaQuery("(hover: none) and (pointer: coarse) and (max-width: 1023.95px)");
+  const isMobile = smallViewport || touchHandset;
 
   const [clients, setClients] = useState([]);
   const [clientSearch, setClientSearch] = useState("");

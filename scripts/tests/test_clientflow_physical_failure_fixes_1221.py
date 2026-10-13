@@ -165,7 +165,14 @@ def test_gui_matches_deployed_1_1_19_visible_structure_and_order():
     assert 'SWITCH_USER_HELPER' not in source
     assert 'shell=True' not in source
     assert 'Gtk.Label(label="ClientFlow"' not in source
-    assert 'button = Gtk.Button(label="⧉")' in source
+    # Preserve the original copy affordance while using an icon that renders
+    # reliably in GTK4/Wayland instead of the font-dependent legacy glyph.
+    assert 'button = Gtk.Button.new_from_icon_name("edit-copy-symbolic")' in source
+    assert 'button.connect("clicked", lambda _button, selected=key: self._copy(selected))' in source
+    assert 'clipboard.set_text(value)' in source
+    assert 'clipboard.read_text_async(None, on_read)' in source
+    assert 'actual = _clipboard.read_text_finish(result)' in source
+    assert 'if actual != value:' in source
     assert 'ok.set_text("Kopieret!")' in source
     assert "GLib.timeout_add(1500, clear)" in source
 
