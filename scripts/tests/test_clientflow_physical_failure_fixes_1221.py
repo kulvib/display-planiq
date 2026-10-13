@@ -49,8 +49,8 @@ def _method_local_tuple(source: str, class_name: str, method_name: str, name: st
                             return ast.literal_eval(child.value)
     raise AssertionError(f"{class_name}.{method_name} local {name} not found")
 
-def test_staged_1336_1237_preserves_approved_1335_1236_fresh_install_selector():
-    # Staged source never gives an unapproved 1.3.36 install authority.
+def test_approved_1336_1237_fresh_install_selector_keeps_update_blocked():
+    # 1.3.36 only gains fresh-install authority after immutable Render publication.
     assert VERSION.read_text(encoding="utf-8").strip() == "1.3.36"
     release_input = json.loads(_source(RELEASE_INPUT))
     assert release_input["release_sequence"] == 1237
@@ -59,13 +59,13 @@ def test_staged_1336_1237_preserves_approved_1335_1236_fresh_install_selector():
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1236
-    assert catalog["latest_stable"] == "1.3.35"
-    assert catalog["default_install_version"] == "1.3.35"
+    assert catalog["catalog_sequence"] == 1237
+    assert catalog["latest_stable"] == "1.3.36"
+    assert catalog["default_install_version"] == "1.3.36"
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.35-seq-1236"
-    assert selected["release_sequence"] == 1236
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert selected["release_id"] == "clientflow-1.3.36-seq-1237"
+    assert selected["release_sequence"] == 1237
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]

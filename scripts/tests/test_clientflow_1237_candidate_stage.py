@@ -1,6 +1,6 @@
 """Exact new release identity, fail-closed runtime selection and physical blockers.
 
-This source-staging contract is not publication or physical approval.
+Source was built, approved, and catalog-promoted; physical acceptance is still pending.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_source_1237_is_staged_one_sequence_ahead_of_immutable_1236() -> None:
+def test_source_1237_is_promoted_only_after_immutable_publication() -> None:
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.36"
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
@@ -21,17 +21,18 @@ def test_source_1237_is_staged_one_sequence_ahead_of_immutable_1236() -> None:
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1236
-    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.35"
+    assert catalog["catalog_sequence"] == 1237
+    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.36"
     assert len(catalog["releases"]) == 1
-    previous = catalog["releases"][0]
-    assert previous["release_id"] == "clientflow-1.3.35-seq-1236"
-    assert previous["release_sequence"] == 1236
-    assert previous["install_modes"] == ["fresh_install"]
-    assert previous["installable"] is True
-    assert previous["update_allowed"] is False
-    assert previous["rollback_allowed"] is False
-    assert not any(x["release_sequence"] == 1237 for x in catalog["releases"])
+    selected = catalog["releases"][0]
+    assert selected["release_id"] == "clientflow-1.3.36-seq-1237"
+    assert selected["release_sequence"] == 1237
+    assert selected["install_modes"] == ["fresh_install"]
+    assert selected["installable"] is True
+    assert selected["update_allowed"] is False
+    assert selected["rollback_allowed"] is False
+    assert not any(x["release_sequence"] == 1236 for x in catalog["releases"])
+    assert "3d44274f79d0df899963edef4c93ada153f31d77d62692dbf3bb6a1c9799c856" in (ROOT / "CLIENTFLOW_1.3.36_1237_FRESH_INSTALL_CATALOG_PROMOTION.md").read_text(encoding="utf-8")
 
 
 def test_1237_candidate_keeps_guard_and_chrome_regressions() -> None:
