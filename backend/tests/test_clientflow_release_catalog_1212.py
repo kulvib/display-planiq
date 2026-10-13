@@ -17,12 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
-def test_catalog_1237_promotes_exact_1336_fresh_install_identity() -> None:
+def test_catalog_1238_promotes_exact_1337_fresh_install_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1237
-    assert data["latest_stable"] == "1.3.36"
-    assert data["default_install_version"] == "1.3.36"
+    assert data["catalog_sequence"] == 1238
+    assert data["latest_stable"] == "1.3.37"
+    assert data["default_install_version"] == "1.3.37"
     assert data["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
@@ -30,11 +30,11 @@ def test_catalog_1237_promotes_exact_1336_fresh_install_identity() -> None:
 
     assert len(data["releases"]) == 1
     release = data["releases"][0]
-    assert release["version"] == "1.3.36"
-    assert release["client_version"] == "1.3.36"
-    assert release["release_sequence"] == 1237
-    assert release["release_id"] == "clientflow-1.3.36-seq-1237"
-    assert release["revision"] == "clientflow-1.3.36-seq-1237"
+    assert release["version"] == "1.3.37"
+    assert release["client_version"] == "1.3.37"
+    assert release["release_sequence"] == 1238
+    assert release["release_id"] == "clientflow-1.3.37-seq-1238"
+    assert release["revision"] == "clientflow-1.3.37-seq-1238"
     assert release["status"] == "stable"
     assert release["installable"] is True
     assert release["update_allowed"] is False
@@ -55,7 +55,7 @@ def test_catalog_1237_promotes_exact_1336_fresh_install_identity() -> None:
     }
 
 
-def test_catalog_1237_promoted_after_exact_approval_and_publication() -> None:
+def test_catalog_1238_promoted_after_exact_approval_and_publication() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     release = data["releases"][0]
 
@@ -64,15 +64,15 @@ def test_catalog_1237_promoted_after_exact_approval_and_publication() -> None:
         (ROOT / "client/release/release-input.json").read_text(encoding="utf-8")
     )
 
-    # Only exactly approved and published 1.3.36/1237 is selectable.
-    # The old 1.3.35/1236 selector is removed; history is preserved as evidence.
+    # Only exactly approved and published 1.3.37/1238 is selectable.
+    # The previous 1.3.36/1237 selector is removed; history is preserved as evidence.
     assert source_version == "1.3.37"
     assert release_input["release_sequence"] == 1238
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] + 1 == release_input["release_sequence"]
-    assert data["latest_stable"] == "1.3.36"
-    assert data["default_install_version"] == "1.3.36"
-    assert release["release_id"] == "clientflow-1.3.36-seq-1237"
+    assert data["catalog_sequence"] == release_input["release_sequence"]
+    assert data["latest_stable"] == "1.3.37"
+    assert data["default_install_version"] == "1.3.37"
+    assert release["release_id"] == "clientflow-1.3.37-seq-1238"
     assert all(item["release_sequence"] != 1234 for item in data["releases"])
     assert all(item["release_sequence"] != 1228 for item in data["releases"])
     assert all(item["version"] != "1.3.27" for item in data["releases"])
@@ -90,21 +90,21 @@ def test_catalog_1237_promoted_after_exact_approval_and_publication() -> None:
         assert field not in release
 
 
-def test_catalog_1237_fresh_install_resolves_but_update_and_old_version_fail_closed() -> None:
+def test_catalog_1238_fresh_install_resolves_but_update_and_old_version_fail_closed() -> None:
     load_catalog.cache_clear()
     fresh = resolve_fresh_install_release()
 
-    assert fresh["version"] == "1.3.36"
-    assert fresh["release_id"] == "clientflow-1.3.36-seq-1237"
-    assert fresh["release_sequence"] == 1237
+    assert fresh["version"] == "1.3.37"
+    assert fresh["release_id"] == "clientflow-1.3.37-seq-1238"
+    assert fresh["release_sequence"] == 1238
     assert fresh["status"] == "stable"
     assert fresh["installable"] is True
     assert fresh["update_allowed"] is False
     assert fresh["install_modes"] == ["fresh_install"]
 
     with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):
-        resolve_release("1.3.36")
-    for legacy in ("1.3.35", "1.3.34", "1.3.33"):
+        resolve_release("1.3.37")
+    for legacy in ("1.3.36", "1.3.35", "1.3.34", "1.3.33"):
         with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
             resolve_release(legacy)
 
@@ -127,6 +127,20 @@ def test_1237_catalog_promotion_documents_exact_immutable_artifact_and_pending_p
     history = ROOT / "CLIENTFLOW_1.3.34_1235_FRESH_INSTALL_CATALOG_PROMOTION.md"
     assert history.is_file()
     assert "51e93dad8b1cffd43e03845ae0a7e2472d955a65" in history.read_text(encoding="utf-8")
+
+
+def test_1238_catalog_promotion_document_matches_exact_published_approval() -> None:
+    record = (ROOT / "CLIENTFLOW_1.3.37_1238_FRESH_INSTALL_CATALOG_PROMOTION.md").read_text(
+        encoding="utf-8"
+    )
+    assert "93ba1777be84c1d4206fcf9cabd3dc1e3666ec5e" in record
+    assert "495dd2813c9575c2b5e4cb6c2cb21b721fdcd4c5f2465e5ce7ed9f434b8d1241" in record
+    assert "e68c2702a047a01549bca29b4305c808b450f68fe9bcc6d2e5a0777d99bad655" in record
+    assert "911d59c45159fe41b85c96366c1d0bd84762cb81a042519d2b177da86339adfe" in record
+    assert "223498240 bytes" in record
+    assert "RELEASE_STORE_INDEPENDENT_AUDIT=PASS" in record
+    assert "Physical acceptance is **PENDING**" in record
+    assert "No automatic update" in record
 
 
 def test_catalog_rejects_update_allowed_without_in_place_update_mode(tmp_path: Path, monkeypatch) -> None:
