@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-def test_source_identity_staged_ahead_of_approved_catalog():
+def test_source_identity_promoted_only_after_exact_release_approval():
     version = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
@@ -15,19 +15,19 @@ def test_source_identity_staged_ahead_of_approved_catalog():
         "minimum_ubuntu_lts": "26.04", "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1237
-    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.36"
+    assert catalog["catalog_sequence"] == 1238
+    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.37"
     assert len(catalog["releases"]) == 1
     approved = catalog["releases"][0]
-    assert approved["release_id"] == "clientflow-1.3.36-seq-1237"
+    assert approved["release_id"] == "clientflow-1.3.37-seq-1238"
     assert approved["install_modes"] == ["fresh_install"]
     assert approved["installable"] is True
     assert approved["update_allowed"] is False
     assert approved["rollback_allowed"] is False
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert all(row["version"] != version for row in catalog["releases"])
+    assert source["release_sequence"] == catalog["catalog_sequence"]
+    assert all(row["release_id"] != "clientflow-1.3.36-seq-1237" for row in catalog["releases"])
 
-def test_source_stage_makes_no_claim_of_approval():
+def test_historical_source_stage_made_no_premature_approval_claims():
     text = (ROOT / "CLIENTFLOW_1.3.37_1238_SOURCE_STAGE.md").read_text(encoding="utf-8")
     for token in ("STAGED SOURCE IDENTITY ONLY", "NOT approved", "NOT published", "NOT catalog-promoted", "in-place update", "GitHub CI", "physical"): 
         assert token in text
