@@ -149,6 +149,9 @@ def _apply_gsettings(
         # cfadmin's own login session.
         ("org.gnome.desktop.lockdown", "disable-command-line", "true"),
         ("org.gnome.settings-daemon.plugins.media-keys", "terminal", "[]"),
+        # Alt+F9 must not minimize ClientFlow's permanent local status GUI.
+        # Applied only inside clientflow-kiosk's DBus session, not cfadmin.
+        ("org.gnome.desktop.wm.keybindings", "minimize", "[]"),
         ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
         ("org.gnome.desktop.interface", "color-scheme", "'default'"),
         ("org.gnome.desktop.notifications", "show-banners", "false"),

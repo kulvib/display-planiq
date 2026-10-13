@@ -64,6 +64,7 @@ import {
 import { useAuth } from "../auth/AuthProvider";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearchSort.mjs";
+import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientdetailspage/browserCountdown.mjs";
 
 /*
   ClientInfoPage.jsx
@@ -443,6 +444,9 @@ function isClientListEqual(a = [], b = []) {
       ca.state !== cb.state ||
       ca.pending_chrome_action !== cb.pending_chrome_action ||
       ca.chrome_status !== cb.chrome_status ||
+      ca.browser_countdown?.ends_at !== cb.browser_countdown?.ends_at ||
+      ca.browser_countdown?.step !== cb.browser_countdown?.step ||
+      ca.browser_countdown?.reason !== cb.browser_countdown?.reason ||
       ca.chrome_color !== cb.chrome_color ||
       ca.chrome_running !== cb.chrome_running ||
       ca.chrome_step !== cb.chrome_step ||
@@ -527,12 +531,32 @@ const CopyIconButton = memo(function CopyIconButton({
 });
 
 const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
+  // One local UI timer per active countdown; the server remains authoritative.
+  // Do not make 1-second backend requests or infer deadlines from status text.
+  const countdown = client?.browser_countdown;
+  const [clockMs, setClockMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isOnline || !countdown?.ends_at) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") setClockMs(Date.now());
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [isOnline, countdown?.ends_at]);
+  const snapshot = React.useMemo(
+    () => receiveBrowserCountdown(countdown, Date.now()),
+    // ends_at and initial server_now are the authoritative immutable report.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [countdown?.ends_at, countdown?.server_now, countdown?.reason, countdown?.step],
+  );
   const runtimeState = getClientRuntimeStateChipProps(client);
   const onlineText = isOnline ? "online" : "offline";
   const stateText = String(runtimeState.label || "normal")
     .trim()
     .toLowerCase();
-  const browserStatus = String(client?.chrome_status || "Browserstatus ukendt").trim();
+  const browserStatus = String(
+    (isOnline && snapshot ? formatBrowserCountdownStatus(snapshot, clockMs) : null)
+      || client?.chrome_status || "Browserstatus ukendt",
+  ).trim();
   const browserColor = String(client?.chrome_color || "").trim().toLowerCase();
   const tone = !isOnline || browserColor === "red"
     ? "error"

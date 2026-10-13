@@ -12,6 +12,7 @@ import {
   MenuItem,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import GridViewIcon from "@mui/icons-material/GridView";
@@ -20,6 +21,8 @@ import { Link } from "react-router-dom";
 import { apiUrl, authHeaders, authenticatedFetch, getControlRoomClients, getOrganizations } from "../../api";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
+import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
+import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -71,15 +74,19 @@ function LivestreamTile({ client, pageMediaActive }) {
   const viewerIdRef = useRef(makeViewerId(client.id));
   const mediaCapabilityRef = useRef("");
   const activeRef = useRef(false);
+  const isTouchHandset = useMediaQuery("(hover: none) and (pointer: coarse) and (max-width: 1023.95px)");
+  const mobileSession = useMobileLivestreamSession(isTouchHandset);
+  const mobileViewerActive = !isTouchHandset || mobileSession.isActive;
 
   const [intersecting, setIntersecting] = useState(false);
   const [state, setState] = useState("idle");
   const [message, setMessage] = useState("");
   const [activeViewers, setActiveViewers] = useState(null);
   const [latencySeconds, setLatencySeconds] = useState(null);
+  const [needsTapToPlay, setNeedsTapToPlay] = useState(false);
 
   const clientOnline = client?.presence?.is_online === true;
-  const shouldRun = Boolean(pageMediaActive && intersecting && clientOnline);
+  const shouldRun = Boolean(pageMediaActive && intersecting && clientOnline && mobileViewerActive);
 
   const updateLatency = useCallback(() => {
     const video = videoRef.current;
@@ -95,6 +102,12 @@ function LivestreamTile({ client, pageMediaActive }) {
   }, []);
 
   const handleFullscreen = useCallback(async () => {
+    const video = videoRef.current;
+    // Safari on iPhone only exposes video.webkitEnterFullscreen.
+    if (typeof video?.webkitEnterFullscreen === "function") {
+      video.webkitEnterFullscreen();
+      return;
+    }
     const element = previewRef.current;
     if (!element) return;
     try {
@@ -116,6 +129,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       hlsRef.current = null;
     }
     setLatencySeconds(null);
+    setNeedsTapToPlay(false);
     const video = videoRef.current;
     if (video) {
       try {
@@ -136,6 +150,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       healthTimerRef.current = null;
     }
     destroyPlayer();
+    mediaCapabilityRef.current = "";
     if (leave && activeRef.current) {
       activeRef.current = false;
       void sendViewerLeave(client.id, viewerIdRef.current, "livestream_wall_inactive");
@@ -160,11 +175,13 @@ function LivestreamTile({ client, pageMediaActive }) {
     if (!shouldRun) {
       stopLocalWork(true);
       setState(clientOnline ? "paused" : "offline");
-      setMessage(clientOnline ? "Preview er sat på pause uden for visningen." : "Klienten er offline.");
+      setMessage(!mobileViewerActive ? "Tryk Start for et tidsbegrænset mobil-preview." : clientOnline ? "Preview er sat på pause uden for visningen." : "Klienten er offline.");
       return undefined;
     }
 
     let cancelled = false;
+    if (isTouchHandset) viewerIdRef.current = makeViewerId(client.id);
+    const sessionViewerId = viewerIdRef.current;
     activeRef.current = true;
     setState("starting");
     setMessage("Starter preview …");
@@ -198,7 +215,7 @@ function LivestreamTile({ client, pageMediaActive }) {
             if (cancelled) return;
             setState("live");
             setMessage("");
-            video.play().catch(() => {});
+            video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
           });
           hls.on(Hls.Events.FRAG_CHANGED, () => {
             if (!cancelled) updateLatency();
@@ -226,7 +243,7 @@ function LivestreamTile({ client, pageMediaActive }) {
           video.playsInline = true;
           setState("live");
           setMessage("");
-          video.play().catch(() => {});
+          video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
           return;
         }
 
@@ -273,13 +290,18 @@ function LivestreamTile({ client, pageMediaActive }) {
             accept: "application/json",
           },
           body: JSON.stringify({
-            viewer_id: viewerIdRef.current,
+            viewer_id: sessionViewerId,
             source: "superadmin_livestream_wall",
           }),
           signal: AbortSignal.timeout(8000),
         });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const payload = await resp.json();
+        if (cancelled) {
+          // An in-flight heartbeat might have arrived after Stop/timeout.
+          void sendViewerLeave(client.id, sessionViewerId, "livestream_wall_late_heartbeat");
+          return;
+        }
         if (payload?.media_capability) {
           mediaCapabilityRef.current = String(payload.media_capability);
         }
@@ -309,7 +331,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       cancelled = true;
       stopLocalWork(true);
     };
-  }, [client.id, clientOnline, shouldRun, stopLocalWork, updateLatency]);
+  }, [client.id, clientOnline, shouldRun, mobileViewerActive, isTouchHandset, stopLocalWork, updateLatency]);
 
   useEffect(() => () => stopLocalWork(true), [stopLocalWork]);
 
@@ -326,12 +348,46 @@ function LivestreamTile({ client, pageMediaActive }) {
         border: "1px solid rgba(148,163,184,0.16)",
       }}
     >
+      {isTouchHandset && (
+        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center" sx={{ px: 1.4, pt: 1.4 }}>
+          <TextField
+            select size="small" label="Varighed" value={mobileSession.durationSeconds}
+            onChange={(event) => mobileSession.selectDuration(event.target.value)}
+            disabled={mobileSession.isActive}
+            sx={{ minWidth: 114 }}
+          >
+            {MOBILE_LIVESTREAM_DURATIONS.map((seconds) => (
+              <MenuItem key={seconds} value={seconds}>{seconds} sek.</MenuItem>
+            ))}
+          </TextField>
+          <Button
+            variant="contained" size="medium" sx={{ minHeight: 44, textTransform: "none" }}
+            disabled={!clientOnline && !mobileSession.isActive}
+            onClick={mobileSession.isActive ? () => mobileSession.stop() : mobileSession.start}
+            aria-label={mobileSession.isActive ? `Stop preview for ${client.name}` : `Start preview for ${client.name}`}
+          >
+            {mobileSession.isActive ? "Stop" : "Start"}
+          </Button>
+          <Typography variant="caption" color="text.secondary" aria-live="polite">
+            {mobileSession.isActive
+              ? `Stopper om ${mobileSession.remainingSeconds} sek.`
+              : mobileSession.expired ? "Tiden er udløbet" : "Afspilning er stoppet"}
+          </Typography>
+        </Stack>
+      )}
       <Box
         ref={previewRef}
         sx={{
           position: "relative",
           aspectRatio: "16 / 9",
           background: "#020617",
+          "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+            width: "100%", minWidth: 0,
+            maxHeight: "min(55dvh, 480px)",
+          },
+          "@media (orientation: landscape) and (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+            maxHeight: "min(72dvh, 480px)",
+          },
           "&:fullscreen": { width: "100vw", height: "100vh", aspectRatio: "auto" },
         }}
       >
@@ -340,9 +396,26 @@ function LivestreamTile({ client, pageMediaActive }) {
           muted
           autoPlay
           playsInline
+          onPlaying={() => setNeedsTapToPlay(false)}
           onTimeUpdate={updateLatency}
           style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
         />
+        {needsTapToPlay && shouldRun && (
+          <Button
+            variant="contained"
+            onClick={() => {
+              const video = videoRef.current;
+              if (video) void video.play().then(() => setNeedsTapToPlay(false)).catch(() => {});
+            }}
+            sx={{
+              position: "absolute", top: "50%", left: "50%", zIndex: 5,
+              transform: "translate(-50%, -50%)", minHeight: 44,
+              background: "rgba(15,23,42,0.94)", color: "white",
+            }}
+          >
+            Afspil livestream
+          </Button>
+        )}
         <Tooltip title="Vis i fuld skærm">
           <IconButton
             aria-label={`Vis ${client.name || "livestream"} i fuld skærm`}
@@ -396,8 +469,8 @@ function LivestreamTile({ client, pageMediaActive }) {
             sx={compactDarkChipSx(tone)}
           />
         </Stack>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
-          <Typography variant="caption" color="text.secondary">
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between", minWidth: 0, flexWrap: "wrap" }}>
+          <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
             {[
               activeViewers == null ? "" : `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}`,
               `Forsinkelse: ${formatLatency(latencySeconds)}`,
@@ -564,6 +637,10 @@ export default function LivestreamOverview() {
           sx={{
             display: "grid",
             gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", xl: "repeat(3, minmax(0, 1fr))" },
+            // Do not change desktop. Landscape phones often cross sm.
+            "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+              gridTemplateColumns: "minmax(0, 1fr)",
+            },
             gap: 1.5,
           }}
         >
