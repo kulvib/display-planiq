@@ -432,6 +432,9 @@ class ClientControlRoomListRead(ClientBase):
     chrome_color: Optional[str] = None
     chrome_running: Optional[bool] = None
     chrome_step: Optional[str] = None
+    # Read-only Display deadline, derived from the already-loaded status row.
+    # List-page interpolation must never require a per-client read or DB tick.
+    browser_countdown: Optional[dict[str, Any]] = None
     display_power: Optional[str] = None
     pending_chrome_action: Optional[ChromeAction] = ChromeAction.NONE
     pending_reboot: Optional[bool] = False
