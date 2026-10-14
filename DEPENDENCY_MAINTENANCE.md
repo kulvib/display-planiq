@@ -53,6 +53,9 @@ npm run build
 
 Audit-undtagelser skal være specifikke, tidsbegrænsede og dokumenterede i `frontend/dependency-audit-allowlist.json`. Nye eller udløbne advisories blokerer CI.
 
+Status 2026-10-14: Den sidste midlertidige `brace-expansion` 1.1.21-undtagelse er fjernet efter at GitHub CI (`npm audit`) rapporterede **0 sårbarheder / 0 undtagelser**. De tre dokumenterede GitHub-advisories (`GHSA-q2hr-2g5m-vwhr`, `GHSA-qhr7-859c-m2p7`, `GHSA-6j4f-fj2g-mc7p`) angiver alle den låste version 1.1.21 som rettet. `npm audit` kører uændret og må ikke omgås; nye advisories skal behandles som fejl indtil separat verificeret.
+
+
 ## Produktspecifik status
 
 Display bevarer HLS-, WebSocket-, ClientFlow- og Remote Desktop-afhængighederne. Dependency-opdateringer må ikke kombineres med produktændringer.
