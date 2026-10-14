@@ -117,14 +117,60 @@ class RateLimitStorageContractTests(unittest.TestCase):
             patch("service1.rate_limit._redis_client", None),
             patch("service1.rate_limit.RATE_LIMIT_MEMORY_MAX_KEYS", 2),
         ):
-            for index in range(5):
+            for index in range(2):
                 enforce_key_rate_limit(
                     bucket="login",
                     key=f"203.0.113.{index}",
                     max_attempts=2,
                     window_seconds=60,
                 )
-        self.assertLessEqual(len(_memory_windows), 2)
+            with self.assertRaises(RateLimitExceeded) as raised:
+                enforce_key_rate_limit(
+                    bucket="login", key="203.0.113.2", max_attempts=2, window_seconds=60,
+                )
+            self.assertEqual(raised.exception.bucket, "rate-limit-capacity")
+            self.assertEqual(len(_memory_windows), 2)
+            # Capacity must not delete either existing counter.
+            self.assertIn(_storage_key("login", "203.0.113.0"), _memory_windows)
+            self.assertIn(_storage_key("login", "203.0.113.1"), _memory_windows)
+
+    def test_account_lockout_survives_unrelated_key_flood(self) -> None:
+        with (
+            patch("service1.rate_limit._redis_client", None),
+            patch("service1.rate_limit.RATE_LIMIT_MEMORY_MAX_KEYS", 2),
+        ):
+            for _ in range(2):
+                record_key_attempt(bucket="auth-login-account", key="target", window_seconds=60)
+            record_key_attempt(bucket="auth-login-account", key="other", window_seconds=60)
+            with self.assertRaises(RateLimitExceeded):
+                record_key_attempt(bucket="auth-login-account", key="third", window_seconds=60)
+            with self.assertRaises(RateLimitExceeded):
+                assert_key_not_limited(
+                    bucket="auth-login-account", key="target", max_attempts=2, window_seconds=60,
+                )
+            # A rejected unknown identifier is blocked before expensive password work.
+            with self.assertRaises(RateLimitExceeded):
+                assert_key_not_limited(
+                    bucket="auth-login-account", key="third", max_attempts=2, window_seconds=60,
+                )
+            clear_key_rate_limit(bucket="auth-login-account", key="other")
+            record_key_attempt(bucket="auth-login-account", key="third", window_seconds=60)
+            self.assertEqual(len(_memory_windows), 2)
+
+    def test_expired_memory_windows_reclaim_capacity(self) -> None:
+        with (
+            patch("service1.rate_limit._redis_client", None),
+            patch("service1.rate_limit.RATE_LIMIT_MEMORY_MAX_KEYS", 1),
+            patch("service1.rate_limit.time.monotonic", side_effect=[100.0, 101.0, 102.0, 161.0]),
+        ):
+            record_key_attempt(bucket="login", key="first", window_seconds=60)
+            with self.assertRaises(RateLimitExceeded):
+                record_key_attempt(bucket="login", key="second", window_seconds=60)
+            with self.assertRaises(RateLimitExceeded):
+                assert_key_not_limited(bucket="login", key="second", max_attempts=1, window_seconds=60)
+            record_key_attempt(bucket="login", key="second", window_seconds=60)
+            self.assertNotIn(_storage_key("login", "first"), _memory_windows)
+            self.assertIn(_storage_key("login", "second"), _memory_windows)
 
 
 
