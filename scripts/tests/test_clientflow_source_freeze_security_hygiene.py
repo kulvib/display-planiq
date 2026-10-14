@@ -61,7 +61,12 @@ def test_nanoid_high_severity_advisory_is_fixed_without_waiver() -> None:
 
 
 
-def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() -> None:
+def test_brace_expansion_is_patched_and_no_audit_waiver_remains() -> None:
+    """The pinned version fixes all three published GHSA advisories.
+
+    CI's real npm audit returned zero vulnerabilities on 2026-10-14,
+    so retaining the expired waiver would lower the dependency gate's strength.
+    """
     lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
     brace = lock["packages"]["node_modules/brace-expansion"]
     assert brace["version"] == "1.1.21"
@@ -69,28 +74,11 @@ def test_brace_expansion_audit_false_positive_waiver_is_exact_and_short_lived() 
     allowlist = json.loads(
         (ROOT / "frontend" / "dependency-audit-allowlist.json").read_text(encoding="utf-8")
     )
-    exceptions = allowlist.get("exceptions", [])
-    brace_exceptions = [item for item in exceptions if item.get("package") == "brace-expansion"]
-    assert brace_exceptions == [
-        {
-            "package": "brace-expansion",
-            "advisories": [
-                "GHSA-q2hr-2g5m-vwhr",
-                "GHSA-qhr7-859c-m2p7",
-                "GHSA-6j4f-fj2g-mc7p",
-            ],
-            "expires": "2026-10-15",
-            "scope": (
-                "npm audit registry-feed false positive for exact patched "
-                "brace-expansion 1.1.21 only"
-            ),
-            "replacementPlan": (
-                "Remove this exception as soon as npm audit stops reporting these three "
-                "advisories against brace-expansion 1.1.21; do not extend without "
-                "re-verifying the published affected ranges."
-            ),
-        }
-    ]
+    assert allowlist == {"exceptions": []}, (
+        "There are no active frontend advisories: new exceptions require documented "
+        "review and explicit security-test updates"
+    )
+
 
 def test_1337_1238_promotion_preserves_1336_and_older_release_history() -> None:
     # Approved 1.3.37/1238 replaces the selector, not historical evidence.
