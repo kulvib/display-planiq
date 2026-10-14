@@ -251,13 +251,23 @@ def require_agent_token(
     ):
         raise HTTPException(status_code=403, detail="Token tilhører et andet livestream-domæne eller klient")
 
-    credential = session.get(LivestreamV2Credential, str(claims.get("credential_id") or ""))
-    client = session.get(Client, client_id)
+    # Validate credential revocation and Client lifecycle in the same database
+    # round-trip on every request.  Only the needed Client fields are projected;
+    # nothing is cached across requests or WebSocket rechecks.
+    authorization_row = session.exec(
+        select(LivestreamV2Credential, Client.status, Client.deleted_at)
+        .join(Client, Client.id == LivestreamV2Credential.client_id)
+        .where(
+            LivestreamV2Credential.id == str(claims.get("credential_id") or ""),
+            Client.id == client_id,
+        )
+    ).first()
+    if authorization_row is None:
+        raise HTTPException(status_code=401, detail="Livestream credential er tilbagekaldt, forældet eller klienten er deaktiveret")
+    credential, client_status, client_deleted_at = authorization_row
     if (
-        credential is None
-        or client is None
-        or str(getattr(client, "status", "") or "").lower() != "approved"
-        or getattr(client, "deleted_at", None) is not None
+        str(client_status or "").lower() != "approved"
+        or client_deleted_at is not None
         or credential.client_id != client_id
         or credential.domain != DOMAIN
         or credential.revoked_at is not None

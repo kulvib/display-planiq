@@ -179,6 +179,23 @@ def _require_livestream_wake_token(authorization: Optional[str], *, client_id: i
         require_agent_token(session, authorization, client_id=client_id)
 
 
+@router.post("/livestream-agent/clients/{client_id}/presence")
+def livestream_agent_presence(
+    client_id: int,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Authenticated idle liveness without a durable status write.
+
+    The shared QueueAgent sends this pulse after an unchanged status snapshot.
+    Without the route the agent receives 404, enters degraded retry and forces
+    redundant durable status writes. Keep credential/lifecycle revocation checked
+    for each pulse; status remains persisted on change or the 60s checkpoint.
+    """
+    with Session(engine) as session:
+        require_agent_token(session, authorization, client_id=client_id)
+    return {"ok": True, "client_id": client_id}
+
+
 @router.get("/livestream-agent/clients/{client_id}/commands/wait")
 async def livestream_command_wait(
     client_id: int,

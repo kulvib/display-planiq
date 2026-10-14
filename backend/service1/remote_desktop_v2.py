@@ -76,12 +76,17 @@ def authenticate_remote_desktop_credential(
     client_secret: str,
 ) -> RemoteDesktopCredential:
     credential_id = _validate_credential_id(credential_id)
-    credential = session.get(RemoteDesktopCredential, credential_id)
-    client = session.get(RemoteDesktopClient, client_id)
+    # One credential + lifecycle read per token request, no cross-request cache.
+    authorization_row = session.exec(
+        select(RemoteDesktopCredential, RemoteDesktopClient.status)
+        .join(RemoteDesktopClient, RemoteDesktopClient.id == RemoteDesktopCredential.client_id)
+        .where(RemoteDesktopCredential.id == credential_id, RemoteDesktopClient.id == client_id)
+    ).first()
+    if authorization_row is None:
+        raise HTTPException(status_code=401, detail="Ugyldigt Remote Desktop credential")
+    credential, client_status = authorization_row
     if (
-        credential is None
-        or client is None
-        or str(client.status or "").lower() != "approved"
+        str(client_status or "").lower() != "approved"
         or credential.client_id != client_id
         or credential.revoked_at is not None
     ):
@@ -181,12 +186,18 @@ def verify_remote_desktop_agent_token(
     ):
         raise HTTPException(status_code=403, detail="Token tilhører et andet Remote Desktop-domæne eller klient")
 
-    credential = session.get(RemoteDesktopCredential, credential_id)
-    client = session.get(RemoteDesktopClient, client_id)
+    # Revalidate the bound credential and lifecycle on each request, including
+    # established WebSocket channel checks.  No revocation results are cached.
+    authorization_row = session.exec(
+        select(RemoteDesktopCredential, RemoteDesktopClient.status)
+        .join(RemoteDesktopClient, RemoteDesktopClient.id == RemoteDesktopCredential.client_id)
+        .where(RemoteDesktopCredential.id == credential_id, RemoteDesktopClient.id == client_id)
+    ).first()
+    if authorization_row is None:
+        raise HTTPException(status_code=401, detail="Remote Desktop credential er tilbagekaldt eller forældet")
+    credential, client_status = authorization_row
     if (
-        credential is None
-        or client is None
-        or str(client.status or "").lower() != "approved"
+        str(client_status or "").lower() != "approved"
         or credential.client_id != client_id
         or credential.revoked_at is not None
         or int(credential.token_version) != int(claims.get("token_version", -1))

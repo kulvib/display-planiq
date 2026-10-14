@@ -315,12 +315,21 @@ def _remote_desktop_browser_auth_state(browser: BrowserSession) -> tuple[Optiona
 def _remote_desktop_agent_channel_valid(channel: AgentChannel) -> bool:
     """Bounded revalidation for an established RD agent channel."""
     with Session(engine) as session:
-        client = session.get(RemoteDesktopClient, channel.client_id)
-        credential = session.get(RemoteDesktopCredential, channel.credential_id)
+        # Keep the 15-second revocation recheck for both idle WebSocket channels
+        # while fetching credential and client lifecycle in one SQL statement.
+        authorization_row = session.exec(
+            select(RemoteDesktopCredential, RemoteDesktopClient.status)
+            .join(RemoteDesktopClient, RemoteDesktopClient.id == RemoteDesktopCredential.client_id)
+            .where(
+                RemoteDesktopCredential.id == channel.credential_id,
+                RemoteDesktopClient.id == channel.client_id,
+            )
+        ).first()
+    if authorization_row is None:
+        return False
+    credential, client_status = authorization_row
     return bool(
-        client is not None
-        and client.status == "approved"
-        and credential is not None
+        client_status == "approved"
         and credential.client_id == channel.client_id
         and credential.revoked_at is None
         and int(credential.token_version) == int(channel.token_version)
