@@ -56,10 +56,12 @@ VIEWER_HEARTBEAT_SECONDS = max(10, int(os.getenv("LIVESTREAM_V2_VIEWER_HEARTBEAT
 VIEWER_LEASE_SECONDS = max(45, int(os.getenv("LIVESTREAM_V2_VIEWER_LEASE_SECONDS", "75")))
 VIEWER_STOP_GRACE_SECONDS = max(5, int(os.getenv("LIVESTREAM_V2_VIEWER_STOP_GRACE_SECONDS", "30")))
 VIEWER_SWEEP_SECONDS = max(2, int(os.getenv("LIVESTREAM_V2_VIEWER_SWEEP_SECONDS", "5")))
-# Keep the 5-second sweep while Livestream needs lifecycle decisions. An idle
-# database scan every five seconds prevents Neon from ever scaling to zero.
-# The idle fallback is deliberately > Neon's 5-minute default inactivity window.
-VIEWER_IDLE_SWEEP_SECONDS = max(600, int(os.getenv("LIVESTREAM_V2_VIEWER_IDLE_SWEEP_SECONDS", "900")))
+# Keep the 5-second sweep while Livestream needs lifecycle decisions. Empty
+# control planes are woken immediately by authenticated lifecycle events in
+# this single-worker deployment. The bounded hourly recovery scan protects
+# startup/missed-event recovery without waking an idle Neon compute 4x/hour.
+# Retain compatibility with explicitly configured idle intervals (>= 10 min).
+VIEWER_IDLE_SWEEP_SECONDS = max(600, int(os.getenv("LIVESTREAM_V2_VIEWER_IDLE_SWEEP_SECONDS", "3600")))
 MEDIA_STALE_SECONDS = max(15, int(os.getenv("LIVESTREAM_V2_MEDIA_STALE_SECONDS", "45")))
 COMMAND_MAX_ATTEMPTS = max(1, int(os.getenv("LIVESTREAM_V2_COMMAND_MAX_ATTEMPTS", "5")))
 MAX_HLS_FILE_BYTES = 64 * 1024 * 1024

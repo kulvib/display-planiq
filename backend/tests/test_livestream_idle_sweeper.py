@@ -5,6 +5,7 @@ unchanged; only empty/stopping background scans may sleep longer than 5 min.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import unittest
 from unittest.mock import patch
@@ -80,6 +81,12 @@ class IdleLivestreamSweeperTests(unittest.TestCase):
             livestream_v2.VIEWER_SWEEP_SECONDS,
             livestream_v2.VIEWER_IDLE_SWEEP_SECONDS,
         ]
+        # With the stock configuration, empty sweeps should wake Neon only
+        # once per hour; event wakeups still restore the active 5-second cadence.
+        configured_default = inspect.getsource(livestream_v2).split(
+            "VIEWER_IDLE_SWEEP_SECONDS = ", 1
+        )[1].split("\n", 1)[0]
+        self.assertIn('"3600"', configured_default)
         self.assertGreaterEqual(livestream_v2.VIEWER_IDLE_SWEEP_SECONDS, 600)
         observed_waits = []
         states = iter((False, True, False, False))

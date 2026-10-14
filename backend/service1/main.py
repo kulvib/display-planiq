@@ -10,8 +10,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-from sqlmodel import Session, select, text
-from sqlalchemy import or_
+from sqlmodel import Session, text
+from sqlalchemy import delete, or_
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
@@ -195,8 +195,13 @@ def cleanup_expired_refresh_tokens_once() -> int:
     )
     with Session(engine) as session:
         try:
-            rows = session.exec(
-                select(RefreshToken).where(
+            # One atomic DELETE .. RETURNING replaces SELECT-all + per-row
+            # ORM deletes. The same retention predicates apply, and the
+            # returned IDs are counted without logging or exposing tokens.
+            # RefreshToken has no ORM delete cascades or dependent FK rows.
+            deleted_ids = session.exec(
+                delete(RefreshToken)
+                .where(
                     or_(
                         RefreshToken.expires_at < cutoff,
                         RefreshToken.session_expires_at < cutoff,
@@ -206,13 +211,13 @@ def cleanup_expired_refresh_tokens_once() -> int:
                         ),
                     )
                 )
+                .returning(RefreshToken.id)
+                .execution_options(synchronize_session=False)
             ).all()
-            for row in rows:
-                session.delete(row)
-            if rows:
+            if deleted_ids:
                 session.commit()
-                logger.info("Refresh-token cleanup: slettede %s gamle rækker", len(rows))
-            return len(rows)
+                logger.info("Refresh-token cleanup: slettede %s gamle rækker", len(deleted_ids))
+            return len(deleted_ids)
         except Exception as exc:
             session.rollback()
             log_safe_exception(logger, exc, event="refresh_token_cleanup_failed")
