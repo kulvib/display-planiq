@@ -1016,7 +1016,7 @@ def claim_enrollment_token(
     )
 
     hostname = (data.hostname or "").strip()
-    name = (data.name or "").strip() or hostname or "Ny infoskærm"
+    name = (data.name or "").strip() or hostname or "Ny Display-klient"
     locality = (data.locality or "").strip() or None
     client = Client(
         name=name,

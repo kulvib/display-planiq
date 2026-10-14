@@ -317,7 +317,7 @@ unset ENROLLMENT_CODE FRESH_INSTALL_AUTHORIZATION
 
 
 
-Before the block above, set `CLIENTFLOW_CLIENT_NAME` explicitly to the physical client's intended backend name. `CLIENTFLOW_LOCALITY` is optional. The installer no longer allows a brand-new consuming claim to silently fall back to hostname/"Ny infoskærm"; the explicit name and locality are persisted as non-secret lifecycle metadata and must remain identical on crash/resume.
+Before the block above, set `CLIENTFLOW_CLIENT_NAME` explicitly to the physical client's intended backend name. `CLIENTFLOW_LOCALITY` is optional. The installer no longer allows a brand-new consuming claim to silently fall back to hostname/"Ny Display-klient"; the explicit name and locality are persisted as non-secret lifecycle metadata and must remain identical on crash/resume.
 
 Fresh install also performs a read-only NetworkManager/backend preflight **before** it reads the enrollment code or signed authorization from stdin. Ubuntu Desktop must have a running NetworkManager with at least one connected non-loopback device, and the configured backend `/health` endpoint must return canonical `{"status":"ok"}` over the same TLS trust path.
 

@@ -10,7 +10,7 @@ name: Prepare ClientFlow runtime-input transport
       base_runtime_inputs_url:
         description: Exact HTTPS URL for a previous transport used only to reuse still-locked runtime/bootstrap bytes
         required: true
-        default: https://github.com/kulvib/kulturskole-infoskaerm-v2/releases/download/runtime-inputs-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5-transport/clientflow-runtime-inputs-python-3.13.14-amd64-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5.tar
+        default: https://github.com/kulvib/display-planiq/releases/download/runtime-inputs-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5-transport/clientflow-runtime-inputs-python-3.13.14-amd64-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5.tar
         type: string
       base_runtime_inputs_sha256:
         description: SHA-256 of the previous transport (transport integrity only; inner bytes are reverified against current lock)

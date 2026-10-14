@@ -26,7 +26,7 @@ def test_public_client_metadata_is_non_secret_and_kiosk_readable(tmp_path: Path)
         layout,
         client_id=42,
         client_name="Viborg – foyer",
-        locality="Kulturskolen",
+        locality="Foyeren",
     )
 
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -34,7 +34,7 @@ def test_public_client_metadata_is_non_secret_and_kiosk_readable(tmp_path: Path)
         "schema_version": cli.PUBLIC_CLIENT_METADATA_SCHEMA,
         "client_id": 42,
         "name": "Viborg – foyer",
-        "locality": "Kulturskolen",
+        "locality": "Foyeren",
         "kiosk_user": "clientflow-kiosk",
     }
     assert stat.S_IMODE(path.stat().st_mode) == 0o644

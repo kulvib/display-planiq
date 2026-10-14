@@ -93,7 +93,7 @@ export default function HomePage() {
   }, [user]);
 
   const subtitle = !isAdmin && !isViewer && organizationName
-    ? `Administration af infoskærme for ${organizationName}`
+    ? `Administration af skærme for ${organizationName}`
     : PRODUCT_BRAND.homeSubtitle;
 
   return (

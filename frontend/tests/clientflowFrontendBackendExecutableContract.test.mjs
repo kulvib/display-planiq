@@ -104,7 +104,7 @@ const responseByOperation = {
   getClientLocalManagement: localManagementFixture(),
   requestCfadminPasswordChange: localManagementFixture({ action: "cfadmin_password", request_id: "system-command-password-1", status: "pending" }),
   requestLocalHostnameChange: localManagementFixture({ action: "hostname", request_id: "system-command-hostname-1", desired_hostname: "viborg2-client", desired_client_name: "Viborg2 Client", status: "pending", name: "Viborg2 Client" }),
-  updateClientKiosk: { id: 42, status: "approved", kiosk_url: "https://infoskaerm.example.test/client/42" },
+  updateClientKiosk: { id: 42, status: "approved", kiosk_url: "https://display.example.test/client/42" },
   updateClientLockdown: { id: 42, status: "approved", desktop_lockdown_enabled: true, desktop_lockdown_status: "pending" },
   clientActionReboot: { ok: true, command_id: "system-command-1", action: "reboot" },
   clientActionStopBrowser: { ok: true, pending_chrome_action: "stop" },
@@ -134,12 +134,12 @@ const invoke = {
   getClientLocalManagement: (api) => api.getClientLocalManagement(42),
   requestCfadminPasswordChange: (api) => api.requestCfadminPasswordChange(42, "Contract-Passphrase-42!"),
   requestLocalHostnameChange: (api) => api.requestLocalHostnameChange(42, "Viborg2 Client"),
-  updateClientKiosk: (api) => api.updateClient(42, { kiosk_url: "https://infoskaerm.example.test/client/42" }),
+  updateClientKiosk: (api) => api.updateClient(42, { kiosk_url: "https://display.example.test/client/42" }),
   updateClientLockdown: (api) => api.updateClient(42, { desktop_lockdown_enabled: true }),
   clientActionReboot: (api) => api.clientAction(42, "reboot"),
   clientActionStopBrowser: (api) => api.clientAction(42, "stop"),
   requestOsUpdate: (api) => api.requestOsUpdate(42),
-  approveClient: (api) => api.approveClient(42, 7, "https://infoskaerm.example.test/client/42"),
+  approveClient: (api) => api.approveClient(42, 7, "https://display.example.test/client/42"),
   getClientflowReleases: (api) => api.getClientflowReleases(),
   getClientflowDeployments: (api) => api.getClientflowDeployments(42),
   getActiveClientflowDeployment: (api) => api.getActiveClientflowDeployment(42),
@@ -251,13 +251,13 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
     await invoke.approveClient(api);
     assert.deepEqual(parsedBody(calls[0]), {
       organization_id: 7,
-      kiosk_url: "https://infoskaerm.example.test/client/42",
+      kiosk_url: "https://display.example.test/client/42",
     });
 
     currentOperation = "updateClientKiosk";
     calls.length = 0;
     await invoke.updateClientKiosk(api);
-    assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://infoskaerm.example.test/client/42" });
+    assert.deepEqual(parsedBody(calls[0]), { kiosk_url: "https://display.example.test/client/42" });
 
     currentOperation = "updateClientLockdown";
     calls.length = 0;

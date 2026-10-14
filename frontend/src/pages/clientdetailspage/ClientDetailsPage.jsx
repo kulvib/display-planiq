@@ -825,7 +825,7 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
   const theme = useTheme();
   const touchHandset = useMediaQuery("(hover: none) and (pointer: coarse) and (max-width: 1023.95px)");
   const compactMobile = isMobile || touchHandset;
-  const clientName = client?.name || client?.client_name || "Ukendt infoskærm";
+  const clientName = client?.name || client?.client_name || "Ukendt Display-klient";
   const organizationName = client?.organization_name || client?.organization?.name || "";
   const location = client?.locality || client?.location || "Ingen lokation";
   const powerEventLabel = formatPowerEventLabel(client);
