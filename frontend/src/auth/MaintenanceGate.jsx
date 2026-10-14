@@ -20,7 +20,7 @@ function MaintenanceScreen({ state, canStopImpersonation, onStopImpersonation, s
           <Alert severity="info">{state?.message || "PlanIQ Display er midlertidigt utilgængelig på grund af vedligeholdelse."}</Alert>
           {expected && <Typography>Forventet åbning: <strong>{expected}</strong></Typography>}
           <Typography sx={{ color: "rgba(226,232,240,0.72)" }}>
-            ClientFlow-driften på skærmene fortsætter. Siden kontrollerer automatisk, når brugeradgangen åbnes igen.
+            Skærmenes ClientFlow-drift fortsætter. Siden kontrollerer automatisk, når brugeradgangen åbnes igen.
           </Typography>
           {stopError && <Alert severity="error">{stopError}</Alert>}
           {canStopImpersonation && (
