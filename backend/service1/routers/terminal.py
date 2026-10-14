@@ -41,7 +41,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from ..auth import (
     get_current_superadmin_user,
@@ -51,6 +51,7 @@ from ..auth import (
 )
 from ..client_activity import end_activity_lease, maintain_activity_lease
 from ..db import engine, get_session
+from ..db_hotpath_telemetry import instrument_websocket_recheck
 from ..models import User
 from ..observability import log_safe_exception
 from ..http_ws_relay import close_relay, create_relay, get_relay, require_relay_scope
@@ -242,15 +243,23 @@ def _current_terminal_superadmin(browser: BrowserSession) -> Optional[User]:
     return current_user
 
 
+@instrument_websocket_recheck("terminal_ws_recheck")
 def _terminal_agent_connection_valid(conn: DomainClientConnection) -> bool:
     """Bounded revalidation for an already-established Terminal agent socket."""
     with Session(engine) as session:
-        client = session.get(TerminalClient, conn.client_id)
-        credential = session.get(TerminalCredential, conn.credential_id)
+        authorization_row = session.exec(
+            select(TerminalCredential, TerminalClient.status)
+            .join(TerminalClient, TerminalClient.id == TerminalCredential.client_id)
+            .where(
+                TerminalCredential.id == conn.credential_id,
+                TerminalClient.id == conn.client_id,
+            )
+        ).first()
+    if authorization_row is None:
+        return False
+    credential, client_status = authorization_row
     return bool(
-        client is not None
-        and client.status == "approved"
-        and credential is not None
+        client_status == "approved"
         and credential.client_id == conn.client_id
         and credential.revoked_at is None
         and int(credential.token_version) == int(conn.token_version)

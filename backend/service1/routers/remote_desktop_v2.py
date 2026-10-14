@@ -31,6 +31,7 @@ from starlette.responses import FileResponse
 from ..auth import get_access_token_session_binding, validate_browser_auth_session_binding, verify_ws_token
 from ..client_activity import end_activity_lease, maintain_activity_lease
 from ..db import engine
+from ..db_hotpath_telemetry import instrument_websocket_recheck
 from ..models import Client, User
 from ..http_ws_relay import close_relay, create_relay, get_relay, require_relay_scope
 from ..remote_desktop_v2 import (
@@ -312,6 +313,7 @@ def _remote_desktop_browser_auth_state(browser: BrowserSession) -> tuple[Optiona
         return user, "ok"
 
 
+@instrument_websocket_recheck("remote_desktop_ws_recheck")
 def _remote_desktop_agent_channel_valid(channel: AgentChannel) -> bool:
     """Bounded revalidation for an established RD agent channel."""
     with Session(engine) as session:
