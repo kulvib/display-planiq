@@ -80,3 +80,60 @@ def test_unmatched_traffic_does_not_flush_or_build_up_metrics() -> None:
     assert logs == []
     monitor.record("/api/livestream-agent/clients/23/presence", 200, metrics)
     assert logs == []
+
+
+def test_websocket_revalidation_only_uses_fixed_categories_and_keeps_http_accounting() -> None:
+    import pytest
+    clock = [0.0]
+    logs = []
+    monitor = HotpathDatabaseTelemetry(clock=lambda: clock[0], interval_seconds=900, emit=logs.append)
+    metrics = SimpleNamespace(statement_count=1, select_count=1, checkout_count=1, duration_ms=1.25)
+    monitor.record_websocket_recheck("terminal_ws_recheck", True, metrics)
+    monitor.record_websocket_recheck("remote_desktop_ws_recheck", False, metrics)
+    with pytest.raises(ValueError):
+        monitor.record_websocket_recheck("terminal_ws_recheck/secret-client-57", True, metrics)
+    clock[0] = 901.0
+    monitor.record("/api/terminal-auth/token", 200, metrics)
+    assert len(logs) == 1
+    summary = json.loads(logs[0])["categories"]
+    assert summary["terminal_ws_recheck"]["requests"] == 0
+    assert summary["terminal_ws_recheck"]["websocket_rechecks"] == 1
+    assert summary["terminal_ws_recheck"]["selects"] == 1
+    assert summary["remote_desktop_ws_recheck"]["failed_websocket_rechecks"] == 1
+    assert "terminal-auth" not in logs[0]
+    assert "client-57" not in logs[0]
+
+
+def test_websocket_recheck_wrapper_propagates_errors_and_counts_failed_checks(monkeypatch) -> None:
+    import pytest
+    import service1.db_hotpath_telemetry as telemetry
+    clock = [0.0]
+    logs = []
+    monitor = HotpathDatabaseTelemetry(clock=lambda: clock[0], interval_seconds=1, emit=logs.append)
+    monkeypatch.setattr(telemetry, "hotpath_database_telemetry", monitor)
+    calls = []
+    def begin():
+        calls.append("begin")
+        return SimpleNamespace(statement_count=0, select_count=0, checkout_count=0, duration_ms=0), "context-token"
+    def reset(token):
+        calls.append(("reset", token))
+
+    # The hook is tested without importing SQLModel; the SQLite integration
+    # suite independently verifies the actual SQLAlchemy metrics callbacks.
+    import sys
+    from types import ModuleType
+    db_stub = ModuleType("service1.db")
+    db_stub.begin_database_request_metrics = begin
+    db_stub.reset_database_request_metrics = reset
+    monkeypatch.setitem(sys.modules, "service1.db", db_stub)
+
+    @telemetry.instrument_websocket_recheck("terminal_ws_recheck")
+    def failing():
+        raise RuntimeError("revalidation_failure")
+
+    with pytest.raises(RuntimeError, match="revalidation_failure"):
+        failing()
+    assert calls == ["begin", ("reset", "context-token")]
+    clock[0] = 2
+    monitor.record_websocket_recheck("remote_desktop_ws_recheck", True, begin()[0])
+    assert json.loads(logs[0])["categories"]["terminal_ws_recheck"]["failed_websocket_rechecks"] == 1

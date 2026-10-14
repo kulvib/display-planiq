@@ -185,3 +185,38 @@ def test_rd_credential_token_login_is_one_select_and_still_validates_secret(doma
                 ),
             )
         assert exc.value.status_code == 401
+
+
+def test_rd_websocket_recheck_is_included_in_15_minute_db_telemetry(domain_database, monkeypatch):
+    import json
+    from service1 import db_hotpath_telemetry as telemetry
+    from service1.db import install_database_request_metrics
+
+    engine, *_ls, client_id, credential_id, _token = domain_database
+    install_database_request_metrics(engine)
+    clock = [0.0]
+    captured: list[str] = []
+    monitor = telemetry.HotpathDatabaseTelemetry(
+        clock=lambda: clock[0], interval_seconds=900, emit=captured.append
+    )
+    monkeypatch.setattr(telemetry, "hotpath_database_telemetry", monitor)
+    channel = rd_router.AgentChannel(
+        client_id=client_id, credential_id=credential_id, token_version=1, websocket=None
+    )
+    assert rd_router._remote_desktop_agent_channel_valid(channel)
+    clock[0] = 900.0
+    monitor.record_websocket_recheck(
+        "remote_desktop_ws_recheck", True,
+        type("EmptyMetrics", (), {
+            "statement_count": 0, "select_count": 0,
+            "checkout_count": 0, "duration_ms": 0.0,
+        })(),
+    )
+    assert len(captured) == 1
+    category = json.loads(captured[0])["categories"]["remote_desktop_ws_recheck"]
+    assert category["websocket_rechecks"] == 1
+    assert category["failed_websocket_rechecks"] == 0
+    assert category["statements"] == 1
+    assert category["selects"] == 1
+    assert category["checkouts"] == 1
+    assert str(credential_id) not in captured[0]
