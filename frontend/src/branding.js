@@ -8,11 +8,11 @@ export const PRODUCT_BRAND = {
   companyName: "PlanIQ",
   productName: "PlanIQ Display",
   productShortName: "Display",
-  productAreaName: "Infoskærm administration",
+  productAreaName: "Display-administration",
   browserTitle: "PlanIQ Display",
   loginHeadline: "Log ind",
   loginSubtitle: "Log ind for at styre skærme, kalender og drift.",
-  homeSubtitle: "Samlet drift, kalender og administration af infoskærme.",
+  homeSubtitle: "Samlet drift, kalender og administration af skærme.",
   navbarSubtitle: "Skærme · kalender · drift",
 
   // Worklog-kompatibel struktur. Nogle Worklog-baserede filer bruger

@@ -1,7 +1,7 @@
 {
   "name": "PlanIQ Display",
   "short_name": "Display",
-  "description": "PlanIQ Display - infoskærm administration",
+  "description": "PlanIQ Display – administration af digitale skærme",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#020617",

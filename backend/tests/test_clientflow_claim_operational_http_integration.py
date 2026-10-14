@@ -469,7 +469,7 @@ def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed
 
     # 5. Fresh V2 enrollment is not approval-eligible until the installed host
     # has authenticated a post-reboot readiness proof with its pending Status credential.
-    kiosk_url = "https://infoskaerm.example.test/client/42"
+    kiosk_url = "https://display.example.test/client/42"
     too_early = http.post(
         f"/api/clients/{client_id}/approve",
         json={"kiosk_url": kiosk_url},

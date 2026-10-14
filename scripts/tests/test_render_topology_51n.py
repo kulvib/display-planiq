@@ -47,9 +47,14 @@ def test_51n_domains_and_static_runtime_are_canonical_and_legacy_hosts_are_absen
     assert "name: planiq-display-v2-frontend" in RENDER
     assert re.search(r"(?m)^    runtime: static$", RENDER)
     assert "type: static" not in RENDER
-    assert "kulturskole-infosk-rm.onrender.com" not in RENDER
-    assert "infoskaerm-backend" not in RENDER
-    assert "infoskaerm-frontend" not in RENDER
+    # The blueprint must contain only the two canonical services; assertions
+    # about one known legacy label are insufficient to detect new aliases.
+    service_names = re.findall(r"(?m)^    name: ([^\n]+)$", RENDER)
+    assert service_names == ["planiq-display-v2-backend", "planiq-display-v2-frontend"]
+    # All configured public domains must use the approved PlanIQ Display hosts.
+    assert "onrender.com" not in RENDER
+    domains = re.findall(r"(?m)^      - ([^\n]+\.dk)$", RENDER)
+    assert domains == ["api.display.planiq.dk", "display.planiq.dk"]
 
 
 def test_51n_has_dedicated_fresh_auth_key_and_no_livestream_bootstrap_import_config():

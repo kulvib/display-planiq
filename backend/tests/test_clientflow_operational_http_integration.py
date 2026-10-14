@@ -309,7 +309,7 @@ def test_pending_approval_runtime_protocol_presence_reconnect_and_command_roundt
     pending = _token(http, "status")
     assert pending.status_code == 401
 
-    kiosk_url = "https://infoskaerm.example.test/client/42"
+    kiosk_url = "https://display.example.test/client/42"
     approved = http.post(
         f"/api/clients/{CLIENT_ID}/approve",
         json={"kiosk_url": kiosk_url},
@@ -663,7 +663,7 @@ def test_display_commissioning_uses_canonical_desired_state_and_real_apply_confi
 
     invalid = http.post(
         f"/api/clients/{CLIENT_ID}/approve",
-        json={"kiosk_url": "http://infoskaerm.example.test/client/4242"},
+        json={"kiosk_url": "http://display.example.test/client/4242"},
     )
     assert invalid.status_code == 400, invalid.text
     with Session(engine) as session:
@@ -671,7 +671,7 @@ def test_display_commissioning_uses_canonical_desired_state_and_real_apply_confi
         assert client is not None and client.status == "pending"
         assert session.get(DisplayDesiredConfiguration, CLIENT_ID) is None
 
-    kiosk_url = "https://infoskaerm.example.test/client/4242"
+    kiosk_url = "https://display.example.test/client/4242"
     approved = http.post(
         f"/api/clients/{CLIENT_ID}/approve",
         json={"kiosk_url": kiosk_url},
@@ -938,7 +938,7 @@ def test_kiosk_lockdown_frontend_api_backend_reconcile_agent_broker_and_observed
 ):
     http, engine = operational_http
 
-    kiosk_url = "https://infoskaerm.example.test/client/42"
+    kiosk_url = "https://display.example.test/client/42"
     approved = http.post(
         f"/api/clients/{CLIENT_ID}/approve",
         json={"kiosk_url": kiosk_url},

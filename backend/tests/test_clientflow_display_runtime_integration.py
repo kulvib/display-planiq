@@ -88,7 +88,7 @@ def test_display_configuration_starts_browser_and_survives_runtime_recreation(mo
         lambda self, url: navigated.append(url),
     )
 
-    kiosk_url = "https://infoskaerm.example.test/client/4242"
+    kiosk_url = "https://display.example.test/client/4242"
     runtime = runtime_module.DisplayRuntime()
     assert runtime.configuration == {}
     assert runtime.browser_requested is False

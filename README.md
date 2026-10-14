@@ -1,6 +1,6 @@
-# Kulturskole Infoskærm v2
+# PlanIQ Display
 
-Canonical source repository for PlanIQ Display / ClientFlow.
+Canonical source repository for **PlanIQ Display**, a general-purpose platform for digital screen management, and its ClientFlow client runtime.
 
 The repository is under active construction and review. The goal of the v2 baseline is to represent the currently validated architecture directly, without historical installer overlays or legacy control-plane paths.
 
