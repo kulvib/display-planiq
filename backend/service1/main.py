@@ -48,6 +48,7 @@ from .auth import (
     principal_is_client,
     verify_ws_token,
 )
+from .db_hotpath_telemetry import hotpath_database_telemetry
 from .db import (
     engine,
     begin_database_request_metrics,
@@ -489,6 +490,10 @@ async def request_observability_middleware(request: Request, call_next):
                 f'{db_metrics.checkout_count} checkouts"'
             )
             response.headers.setdefault("Server-Timing", server_timing)
+        # Existing SQLAlchemy events supply statement/checkout totals for the
+        # hot agent routes as well. Emit bounded, ID-free aggregates every 15m,
+        # avoiding per-request log writes or extra Neon queries.
+        hotpath_database_telemetry.record(request.url.path, response.status_code, db_metrics)
         return add_request_id_header(response, request_id)
     finally:
         reset_database_request_metrics(db_metrics_token)
