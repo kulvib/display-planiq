@@ -100,12 +100,18 @@ def authenticate_terminal_credential(
     client_secret: str,
 ) -> TerminalCredential:
     credential_id = _validate_credential_id(credential_id)
-    row = session.get(TerminalCredential, credential_id)
-    client = session.get(TerminalClient, client_id)
+    # A single persisted credential+lifecycle check, not two network round-trips.
+    # Keep validation (including revoked_at) per request; never cache authority.
+    authorization_row = session.exec(
+        select(TerminalCredential, TerminalClient.status)
+        .join(TerminalClient, TerminalClient.id == TerminalCredential.client_id)
+        .where(TerminalCredential.id == credential_id, TerminalClient.id == client_id)
+    ).first()
+    if authorization_row is None:
+        raise HTTPException(status_code=401, detail="Ugyldigt credential")
+    row, client_status = authorization_row
     if (
-        row is None
-        or client is None
-        or str(getattr(client, "status", "") or "").lower() != "approved"
+        str(client_status or "").lower() != "approved"
         or row.client_id != client_id
         or row.revoked_at is not None
     ):
@@ -201,12 +207,18 @@ def verify_terminal_agent_token(
     ):
         raise HTTPException(status_code=403, detail="Token tilhører et andet Terminal-domæne eller klient")
 
-    credential = session.get(TerminalCredential, credential_id)
-    client = session.get(TerminalClient, client_id)
+    # Revalidate persisted authority at the original cadence, with one SQL
+    # round-trip instead of independent credential/client SELECTs.
+    authorization_row = session.exec(
+        select(TerminalCredential, TerminalClient.status)
+        .join(TerminalClient, TerminalClient.id == TerminalCredential.client_id)
+        .where(TerminalCredential.id == credential_id, TerminalClient.id == client_id)
+    ).first()
+    if authorization_row is None:
+        raise HTTPException(status_code=401, detail="Terminal credential er tilbagekaldt eller forældet")
+    credential, client_status = authorization_row
     if (
-        credential is None
-        or client is None
-        or str(getattr(client, "status", "") or "").lower() != "approved"
+        str(client_status or "").lower() != "approved"
         or credential.client_id != client_id
         or credential.revoked_at is not None
         or int(credential.token_version) != int(claims.get("token_version", -1))
