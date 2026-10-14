@@ -48,6 +48,7 @@ class RateLimitExceeded(Exception):
 _memory_lock = threading.Lock()
 _memory_windows: dict[str, tuple[int, float]] = {}
 _memory_operations = 0
+_memory_next_expiry = float("inf")
 _redis_client = None
 
 
@@ -97,36 +98,49 @@ return {count, ttl}
 
 
 def _prune_memory_windows(now: float) -> None:
+    global _memory_next_expiry
+    # Expired keys may be reclaimed. Never evict a live lockout just because a
+    # different identifier generated traffic: that resets its failure count.
     expired = [key for key, (_, expires_at) in _memory_windows.items() if expires_at <= now]
     for key in expired:
         _memory_windows.pop(key, None)
-
-    overflow = len(_memory_windows) - RATE_LIMIT_MEMORY_MAX_KEYS + 1
-    if overflow > 0:
-        oldest = sorted(_memory_windows, key=lambda key: _memory_windows[key][1])[:overflow]
-        for key in oldest:
-            _memory_windows.pop(key, None)
+    _memory_next_expiry = min((expiry for _, expiry in _memory_windows.values()), default=float("inf"))
 
 
 def _memory_state(storage_key: str, window_seconds: int, *, increment: bool) -> RateLimitState:
-    global _memory_operations
+    global _memory_operations, _memory_next_expiry
     now = time.monotonic()
     with _memory_lock:
         _memory_operations += 1
-        if increment and (
-            len(_memory_windows) >= RATE_LIMIT_MEMORY_MAX_KEYS
-            or _memory_operations % 256 == 0
-        ):
+        if _memory_operations % 256 == 0:
             _prune_memory_windows(now)
 
-        count, expires_at = _memory_windows.get(storage_key, (0, now + window_seconds))
-        if expires_at <= now:
-            count, expires_at = 0, now + window_seconds
+        state = _memory_windows.get(storage_key)
+        if state is not None and state[1] <= now:
+            _memory_windows.pop(storage_key, None)
+            state = None
+
+        if state is None and len(_memory_windows) >= RATE_LIMIT_MEMORY_MAX_KEYS:
+            # Check for expiry only when the earliest possible window elapsed.
+            # Unknown-key floods cannot force an O(n) sweep on every request.
+            if now >= _memory_next_expiry:
+                _prune_memory_windows(now)
+            if len(_memory_windows) >= RATE_LIMIT_MEMORY_MAX_KEYS:
+                raise RateLimitExceeded(
+                    bucket="rate-limit-capacity",
+                    retry_after=(
+                        max(1, math.ceil(_memory_next_expiry - now))
+                        if math.isfinite(_memory_next_expiry)
+                        else window_seconds
+                    ),
+                    detail="For mange forespørgsler. Prøv igen senere.",
+                )
+
+        count, expires_at = state if state is not None else (0, now + window_seconds)
         if increment:
             count += 1
             _memory_windows[storage_key] = (count, expires_at)
-        elif count == 0:
-            _memory_windows.pop(storage_key, None)
+            _memory_next_expiry = min(_memory_next_expiry, expires_at)
         retry_after = max(1, math.ceil(expires_at - now))
         return RateLimitState(count=count, retry_after=retry_after)
 
@@ -266,7 +280,8 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded)
 
 def _reset_rate_limit_state_for_tests() -> None:
     """Test helper; never used by production code."""
-    global _memory_operations
+    global _memory_operations, _memory_next_expiry
     with _memory_lock:
         _memory_windows.clear()
         _memory_operations = 0
+        _memory_next_expiry = float("inf")
