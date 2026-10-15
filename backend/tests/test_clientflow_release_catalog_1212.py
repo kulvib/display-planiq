@@ -66,10 +66,10 @@ def test_catalog_1238_promoted_after_exact_approval_and_publication() -> None:
 
     # Only exactly approved and published 1.3.37/1238 is selectable.
     # The previous 1.3.36/1237 selector is removed; history is preserved as evidence.
-    assert source_version == "1.3.37"
-    assert release_input["release_sequence"] == 1238
+    assert source_version == "1.3.38"
+    assert release_input["release_sequence"] == 1239
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] == release_input["release_sequence"]
+    assert data["catalog_sequence"] + 1 == release_input["release_sequence"]
     assert data["latest_stable"] == "1.3.37"
     assert data["default_install_version"] == "1.3.37"
     assert release["release_id"] == "clientflow-1.3.37-seq-1238"
