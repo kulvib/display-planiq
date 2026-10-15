@@ -435,6 +435,7 @@ class ClientControlRoomListRead(ClientBase):
     # Read-only Display deadline, derived from the already-loaded status row.
     # List-page interpolation must never require a per-client read or DB tick.
     browser_countdown: Optional[dict[str, Any]] = None
+    calendar_daily_reboot: Optional[dict[str, Any]] = None
     display_power: Optional[str] = None
     pending_chrome_action: Optional[ChromeAction] = ChromeAction.NONE
     pending_reboot: Optional[bool] = False
@@ -491,6 +492,7 @@ class ClientRead(ClientBase):
     state: Optional[str] = "normal"
     last_boot_id: Optional[str] = None
     last_boot_at: Optional[datetime] = None
+    calendar_daily_reboot: Optional[dict[str, Any]] = None
     last_power_event: Optional[str] = None
     last_power_event_at: Optional[datetime] = None
     last_power_event_source: Optional[str] = None

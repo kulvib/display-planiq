@@ -213,6 +213,29 @@ HIDE_JS = r"""
   const ENABLE_AGGRESSIVE_HIDE = __ENABLE_AGGRESSIVE_HIDE__;
   const ENABLE_NATIVE_BLOCK = __ENABLE_NATIVE_BLOCK__;
 
+  // Hide the Chrome page's pointer after idle while preserving mouse/touch
+  // interaction. Idempotent across guard polls and refreshed navigations;
+  // applies even when cookie handling is off. Never touches the GTK local GUI.
+  if (document.documentElement && !window.__clientflowCursorIdleInstalled) {
+    window.__clientflowCursorIdleInstalled = true;
+    const root = document.documentElement;
+    const css = document.createElement('style');
+    css.id = 'clientflow-idle-cursor';
+    css.textContent = 'html[data-clientflow-cursor-idle="1"], html[data-clientflow-cursor-idle="1"] * { cursor: none !important; }';
+    (document.head || root).appendChild(css);
+    let timer = null;
+    const showPointer = (event) => {
+      if (event && event.isTrusted === false) return;
+      root.removeAttribute('data-clientflow-cursor-idle');
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => root.setAttribute('data-clientflow-cursor-idle', '1'), 2000);
+    };
+    for (const name of ['pointermove', 'pointerdown', 'keydown']) {
+      window.addEventListener(name, showPointer, {passive: true, capture: true});
+    }
+    showPointer();
+  }
+
   // v1.5.2:
   // Accept-mode må gerne forsøge at klikke cookie-knappen før readyState=complete,
   // fordi cookie-/consent-dialoger på nogle sites kan blokere eller forsinke complete.

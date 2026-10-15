@@ -468,6 +468,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         self.labels: dict[str, Gtk.Label] = {}
         self.copy_values: dict[str, str] = {}
         self.copy_ok: dict[str, Gtk.Label] = {}
+        self.copy_buttons: dict[str, Gtk.Button] = {}
         self.network_row_widgets: dict[str, tuple[Gtk.Widget, ...]] = {}
         self.calendar_labels: list[tuple[Gtk.Label, Gtk.Label, Gtk.Label, Gtk.Label]] = []
         self.calendar_column_widgets: list[list[Gtk.Label]] = [[], [], [], []]
@@ -711,6 +712,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         grid.attach(ok, ok_column, row, 1, 1)
         grid.attach(button, copy_column, row, 1, 1)
         self.copy_ok[key] = ok
+        self.copy_buttons[key] = button
+        button.set_visible(False)
         return ok, button
 
     def _build(self) -> None:
@@ -873,9 +876,19 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             self._update_calendar_columns()
         return True
 
+    @staticmethod
+    def _can_copy_value(value: str) -> bool:
+        text = str(value or "").strip()
+        return bool(text and text not in {"-", "–"} and not text.lower().startswith((
+            "afventer", "ikke tilsluttet", "ikke tilgængelig", "ukendt", "ingen "
+        )))
+
     def _copy(self, key: str) -> None:
-        value = str(self.copy_values.get(key) or "").strip()
-        if not value or value in {"-", "–"}:
+        # The rendered Gtk.Label is authoritative. A separate cache can become
+        # empty/stale even when a valid value is visible in this GTK window.
+        label = self.labels.get(key)
+        value = label.get_text().strip() if label is not None else ""
+        if not self._can_copy_value(value):
             self.error_label.set_text("Ingen værdi at kopiere.")
             return
         display = Gdk.Display.get_default()
@@ -935,6 +948,9 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             label.add_css_class(color_class)
         label.set_text(text)
         self.copy_values[key] = text
+        button = self.copy_buttons.get(key)
+        if button is not None:
+            button.set_visible(self._can_copy_value(text))
 
     @staticmethod
     def _service_display_state(state: str) -> tuple[str, str]:

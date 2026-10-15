@@ -7,6 +7,7 @@ from sqlalchemy.orm.attributes import set_committed_value
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from ..db import get_session
+from ..calendar_daily_reboot import daily_reboot_projection
 from ..audit import add_audit_log
 from ..client_health_policy import build_client_health_issues_for_principal
 from ..models import (
@@ -1297,6 +1298,15 @@ def _prepare_single_client_read_from_loaded_presence(
         presence,
         projection_commands=system_commands,
     )
+    _set_runtime_read_attr(
+        client, "calendar_daily_reboot",
+        daily_reboot_projection(
+            display_projection.get("calendar"),
+            boot_id=presence.status.boot_id,
+            boot_observed_at=getattr(client, "last_boot_at", None),
+            online=presence.status.is_online,
+        ),
+    )
     return client
 
 
@@ -1357,6 +1367,15 @@ def _prepare_clients_read(session, clients: List[Client]) -> List[Client]:
             client,
             presence,
             projection_commands=system_commands.get(client_id),
+        )
+        _set_runtime_read_attr(
+            client, "calendar_daily_reboot",
+            daily_reboot_projection(
+                display_projections[client_id].get("calendar"),
+                boot_id=presence.status.boot_id,
+                boot_observed_at=getattr(client, "last_boot_at", None),
+                online=presence.status.is_online,
+            ),
         )
     return clients
 
