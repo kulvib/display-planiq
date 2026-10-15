@@ -14,7 +14,7 @@ def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_1236_historical_evidence_is_retained_after_1238_promotion() -> None:
+def test_1236_historical_evidence_is_retained_after_1239_promotion() -> None:
     assert read("client/VERSION").strip() == "1.3.38"
     release = json.loads(read("client/release/release-input.json"))
     assert release["release_sequence"] == 1239
@@ -23,12 +23,12 @@ def test_1236_historical_evidence_is_retained_after_1238_promotion() -> None:
     assert release["architecture"] == "amd64"
 
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1238
-    assert catalog["latest_stable"] == "1.3.37"
-    assert catalog["default_install_version"] == "1.3.37"
+    assert catalog["catalog_sequence"] == 1239
+    assert catalog["latest_stable"] == "1.3.38"
+    assert catalog["default_install_version"] == "1.3.38"
     assert len(catalog["releases"]) == 1
     published = catalog["releases"][0]
-    assert published["release_id"] == "clientflow-1.3.37-seq-1238"
+    assert published["release_id"] == "clientflow-1.3.38-seq-1239"
     historical = read("CLIENTFLOW_1.3.35_1236_FRESH_INSTALL_CATALOG_PROMOTION.md")
     assert "94abdce02578a09d067397e7a2d9a9d86a0c20e696eb734a79ade8a483c713d4" in historical
     assert published["install_modes"] == ["fresh_install"]

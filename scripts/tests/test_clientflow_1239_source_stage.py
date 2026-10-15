@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_1239_source_identity_is_exactly_one_ahead_of_published_catalog():
+def test_1239_source_identity_matches_published_catalog_after_approval():
     version = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
@@ -20,18 +20,18 @@ def test_1239_source_identity_is_exactly_one_ahead_of_published_catalog():
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1238
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.37"
+    assert catalog["catalog_sequence"] == 1239
+    assert source["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert len(catalog["releases"]) == 1
     selected = catalog["releases"][0]
-    assert selected["release_id"] == "clientflow-1.3.37-seq-1238"
-    assert selected["release_sequence"] == 1238
+    assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
+    assert selected["release_sequence"] == 1239
     assert selected["installable"] is True
     assert selected["install_modes"] == ["fresh_install"]
     assert selected["update_allowed"] is False
     assert selected["rollback_allowed"] is False
-    assert not any(row["release_sequence"] == 1239 for row in catalog["releases"])
+    assert all(row["release_sequence"] != 1238 for row in catalog["releases"])
 
 
 def test_1239_source_stage_disclaims_publication_and_unauthorized_upgrades():
