@@ -65,6 +65,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearchSort.mjs";
 import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientdetailspage/browserCountdown.mjs";
+import { calendarRebootView } from "./clientdetailspage/calendarRebootStatus.mjs";
 
 /*
   ClientInfoPage.jsx
@@ -441,6 +442,10 @@ function isClientListEqual(a = [], b = []) {
       ca.status !== cb.status ||
       ca.approval_ready_at !== cb.approval_ready_at ||
       ca.approval_ready_boot_id !== cb.approval_ready_boot_id ||
+      ca.calendar_daily_reboot?.state !== cb.calendar_daily_reboot?.state ||
+      ca.calendar_daily_reboot?.source !== cb.calendar_daily_reboot?.source ||
+      ca.calendar_daily_reboot?.verified_at !== cb.calendar_daily_reboot?.verified_at ||
+      ca.calendar_daily_reboot?.last_boot_at !== cb.calendar_daily_reboot?.last_boot_at ||
       ca.state !== cb.state ||
       ca.pending_chrome_action !== cb.pending_chrome_action ||
       ca.chrome_status !== cb.chrome_status ||
@@ -478,6 +483,21 @@ function isClientListEqual(a = [], b = []) {
 // ---------------------------------------------------------------------------
 // Sub-komponenter
 // ---------------------------------------------------------------------------
+
+const CalendarRebootIndicator = memo(function CalendarRebootIndicator({ client }) {
+  const status = calendarRebootView(client?.calendar_daily_reboot);
+  return (
+    <Tooltip title={status.title}>
+      <Chip
+        size="small"
+        variant="outlined"
+        label={status.label}
+        color={status.color}
+        sx={{ mt: 0.5, height: 22, maxWidth: "100%", fontSize: "0.7rem" }}
+      />
+    </Tooltip>
+  );
+});
 
 const CopyIconButton = memo(function CopyIconButton({
   value,
@@ -1332,15 +1352,18 @@ export default function ClientInfoPage() {
           </TableCell>
         )}
         <TableCell align="center">
-          <Button
-            component={Link}
-            to={`/clients/${client.id}`}
-            variant="outlined"
-            size="small"
-            sx={{ textTransform: "none", whiteSpace: "nowrap" }}
-          >
-            Control Room
-          </Button>
+          <Stack spacing={0.4} alignItems="center">
+            <Button
+              component={Link}
+              to={`/clients/${client.id}`}
+              variant="outlined"
+              size="small"
+              sx={{ textTransform: "none", whiteSpace: "nowrap" }}
+            >
+              Control Room
+            </Button>
+            <CalendarRebootIndicator client={client} />
+          </Stack>
         </TableCell>
         {canManageClients && (
           <TableCell align="center">
@@ -1893,18 +1916,18 @@ export default function ClientInfoPage() {
                                   )}
                                 </TableCell>
                                 <TableCell align="center">
-                                  <Button
-                                    component={Link}
-                                    to={`/clients/${client.id}`}
-                                    variant="outlined"
-                                    size="small"
-                                    sx={{
-                                      textTransform: "none",
-                                      whiteSpace: "nowrap",
-                                    }}
-                                  >
-                                    Control Room
-                                  </Button>
+                                  <Stack spacing={0.4} alignItems="center">
+                                    <Button
+                                      component={Link}
+                                      to={`/clients/${client.id}`}
+                                      variant="outlined"
+                                      size="small"
+                                      sx={{ textTransform: "none", whiteSpace: "nowrap" }}
+                                    >
+                                      Control Room
+                                    </Button>
+                                    <CalendarRebootIndicator client={client} />
+                                  </Stack>
                                 </TableCell>
                                 {canManageClients && (
                                   <TableCell align="center">

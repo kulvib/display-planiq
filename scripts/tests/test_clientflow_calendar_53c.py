@@ -216,23 +216,27 @@ def test_calendar_first_on_is_baseline_off_is_enforced_and_wake_reboots(monkeypa
     monkeypatch.setattr(calendar_agent, "_save_scheduler_state", lambda state: actions.append(("save", dict(state))))
     monkeypatch.setattr(calendar_agent, "_request_calendar_reboot", lambda: actions.append(("reboot", None)))
 
+    now_epoch = 1_700_000_000.0
+    boot = [("boot-a", now_epoch - 86400)]
+    monkeypatch.setattr(calendar_agent, "_boot_evidence", lambda: boot[0])
     state = {"last_schedule_state": None, "last_wake_reboot_at": 0.0}
-    calendar_agent._apply_calendar_state("on", state=state, now_epoch=1000.0, initial=True)
+    calendar_agent._apply_calendar_state("on", state=state, now_epoch=now_epoch, initial=True)
     assert actions == []
 
-    calendar_agent._apply_calendar_state("off", state=state, now_epoch=1000.0, initial=True)
+    calendar_agent._apply_calendar_state("off", state=state, now_epoch=now_epoch, initial=True)
     assert actions == [("power", "off")]
     actions.clear()
 
     state = {"last_schedule_state": "off", "last_wake_reboot_at": 0.0}
-    calendar_agent._apply_calendar_state("on", state=state, now_epoch=1000.0)
-    assert actions[0] == ("power", "on")
-    assert actions[-1] == ("reboot", None)
-    assert state["last_wake_reboot_at"] == 1000.0
+    calendar_agent._apply_calendar_state("on", state=state, now_epoch=now_epoch)
+    assert [item[0] for item in actions] == ["save", "reboot"]
+    assert state["last_wake_reboot_at"] == now_epoch
+    assert state["last_wake_reboot_boot_id"] == "boot-a"
 
     actions.clear()
-    state = {"last_schedule_state": "off", "last_wake_reboot_at": 900.0}
-    calendar_agent._apply_calendar_state("on", state=state, now_epoch=1000.0)
+    # After a confirmed boot on the same local day, no second reboot happens.
+    boot[0] = ("boot-b", now_epoch + 2)
+    calendar_agent._apply_calendar_state("on", state=state, now_epoch=now_epoch + 60)
     assert actions == [("power", "on"), ("start_browser", {"source": "calendar"})]
 
 

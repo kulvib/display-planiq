@@ -9,6 +9,7 @@ import {
   useMediaQuery,
   Typography,
   Chip,
+  Tooltip,
   Stack,
   Button,
   IconButton,
@@ -16,6 +17,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import { calendarRebootView } from "./calendarRebootStatus.mjs";
 
 const ClientDetailsInfoSection = lazy(() => import("./ClientDetailsInfoSection"));
 const ClientDetailsActionsSection = lazy(() => import("./ClientDetailsActionsSection"));
@@ -829,6 +831,7 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
   const organizationName = client?.organization_name || client?.organization?.name || "";
   const location = client?.locality || client?.location || "Ingen lokation";
   const powerEventLabel = formatPowerEventLabel(client);
+  const dailyReboot = calendarRebootView(client?.calendar_daily_reboot);
 
   return (
     <Box
@@ -893,6 +896,9 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
         {powerEventLabel && (
           <DashboardChip dark label={powerEventLabel} color={powerEventColor(client)} />
         )}
+        <Tooltip title={dailyReboot.title}>
+          <span><DashboardChip dark label={dailyReboot.label} color={dailyReboot.color} /></span>
+        </Tooltip>
         <DashboardChip dark label={clientOnline ? (liveChromeStatus || "Browser ukendt") : "Browser offline"} color={clientOnline ? "info" : "default"} />
         {networkUnavailable && (
           <DashboardChip dark label={`Netværk: ${networkMessage || "diagnostik melder fejl"}`} color="error" />

@@ -34,6 +34,41 @@ WAKE_REBOOT_COOLDOWN_SECONDS = max(0.0, float(os.getenv("CLIENTFLOW_CALENDAR_WAK
 SCHEDULER_STATE_PATH = STATE_DIR / "scheduler-state.json"
 CALENDAR_REBOOT_SOCKET = os.getenv("CLIENTFLOW_CALENDAR_REBOOT_SOCKET", "/run/clientflow/calendar-reboot.sock")
 SCHEMA_VERSION = 1
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+PROC_STAT_PATH = Path("/proc/stat")
+
+
+def _boot_evidence() -> tuple[str | None, float | None]:
+    """Read Linux boot identity/time; unknown evidence must never trigger a reboot."""
+    try:
+        boot_id = BOOT_ID_PATH.read_text(encoding="ascii").strip()
+        boot_line = next(line for line in PROC_STAT_PATH.read_text(encoding="ascii").splitlines()
+                         if line.startswith("btime "))
+        boot_epoch = float(boot_line.split()[1])
+        if boot_id and 0 < boot_epoch <= time.time():
+            return boot_id, boot_epoch
+    except (OSError, ValueError, IndexError, StopIteration):
+        pass
+    return None, None
+
+
+def _local_day(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch).astimezone().date().isoformat()
+
+
+def _calendar_reboot_required(state: dict[str, Any], *, now_epoch: float, boot_epoch: float | None) -> bool:
+    """One reboot at most per local day, and never after any boot today."""
+    if boot_epoch is None or boot_epoch <= 0 or boot_epoch > now_epoch:
+        return False
+    today = _local_day(now_epoch)
+    if _local_day(boot_epoch) == today:
+        return False
+    if state.get("last_wake_reboot_day") == today:
+        return False
+    previous = float(state.get("last_wake_reboot_at") or 0)
+    if 0 < previous <= now_epoch and now_epoch - previous < WAKE_REBOOT_COOLDOWN_SECONDS:
+        return False
+    return not (0 < previous <= now_epoch and _local_day(previous) == today)
 
 
 class CalendarPlanError(RuntimeError):
@@ -271,6 +306,10 @@ def _load_scheduler_state() -> dict[str, Any]:
         "last_schedule_state": last,
         "last_schedule_applied_at": value.get("last_schedule_applied_at"),
         "last_wake_reboot_at": max(0.0, last_reboot),
+        "last_wake_reboot_day": str(value.get("last_wake_reboot_day") or "")[:10],
+        "last_wake_reboot_boot_id": str(value.get("last_wake_reboot_boot_id") or "")[:128],
+        "last_wake_reboot_error": str(value.get("last_wake_reboot_error") or "")[:100],
+        "post_reboot_ready_boot_id": str(value.get("post_reboot_ready_boot_id") or "")[:128],
     }
 
 
@@ -304,25 +343,46 @@ def _apply_calendar_state(
         # First known ON after activation/service initialization is a baseline,
         # not an OFF->ON calendar wake.  This avoids an approval-time reboot.
         return
-    with display_control_lock():
-        set_display_power("on")
-    last_reboot = float(state.get("last_wake_reboot_at") or 0.0)
-    if now_epoch - last_reboot < WAKE_REBOOT_COOLDOWN_SECONDS:
+    boot_id, boot_epoch = _boot_evidence()
+    if not _calendar_reboot_required(state, now_epoch=now_epoch, boot_epoch=boot_epoch):
+        # A reboot already occurred today, or its evidence is unavailable.
+        # Keep the display available rather than risking a reboot loop.
         with display_control_lock():
+            set_display_power("on")
             runtime_action("start_browser", payload={"source": "calendar"})
         return
-    # Commit the cooldown boundary before crossing the reboot boundary so a
-    # service restart cannot create a reboot loop.
+    # Persist the request before crossing the boot boundary. No browser or
+    # physical display wake until the following boot has been observed.
     state["last_wake_reboot_at"] = now_epoch
+    state["last_wake_reboot_day"] = _local_day(now_epoch)
+    state["last_wake_reboot_boot_id"] = boot_id
+    state["last_wake_reboot_error"] = ""
     _save_scheduler_state(state)
     try:
         _request_calendar_reboot()
     except (RpcError, OSError, RuntimeError, ValueError):
-        # Keep the display useful if the narrow reboot broker is unavailable.
+        state["last_wake_reboot_error"] = "reboot_request_failed"
+        _save_scheduler_state(state)
+        # Never retry the same day's reboot after an ambiguous request.
         with display_control_lock():
+            set_display_power("on")
             runtime_action("start_browser", payload={"source": "calendar"})
         raise
 
+
+
+def _needs_post_reboot_reconciliation(
+    scheduler: dict[str, Any], *, desired: str, previous: str | None,
+    now_epoch: float, current_boot_id: str | None,
+) -> bool:
+    """Restore the browser once after a reboot accepted before state was saved."""
+    if desired != "on" or previous != "on" or not current_boot_id:
+        return False
+    if scheduler.get("last_wake_reboot_day") != _local_day(now_epoch):
+        return False
+    previous_boot = scheduler.get("last_wake_reboot_boot_id")
+    return bool(previous_boot and current_boot_id != previous_boot and
+                current_boot_id != scheduler.get("post_reboot_ready_boot_id"))
 
 
 def _calendar_preview(plan: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
@@ -373,6 +433,20 @@ def _write_status(
     manual_override: bool = False,
 ) -> None:
     now = datetime.now().astimezone()
+    scheduler = _load_scheduler_state()
+    try:
+        scheduled_today = _entry_for_today(plan, now).get("status") == "on" if plan else None
+    except CalendarPlanError:
+        scheduled_today = None
+    daily_reboot = {
+        "schema_version": 1,
+        "day": now.date().isoformat(),
+        "scheduled_today": scheduled_today,
+        "request_day": scheduler.get("last_wake_reboot_day"),
+        "requested_at": scheduler.get("last_wake_reboot_at"),
+        "request_boot_id": scheduler.get("last_wake_reboot_boot_id"),
+        "error": scheduler.get("last_wake_reboot_error") or None,
+    }
     atomic_write_json(
         STATUS_PATH,
         {
@@ -385,6 +459,7 @@ def _write_status(
             "last_transition_at": last_transition_at,
             "updated_at": time.time(),
             "manual_override": bool(manual_override),
+            "daily_reboot": daily_reboot,
             "error": (error or "")[:500] or None,
         },
         mode=0o600,
@@ -492,6 +567,20 @@ def main() -> int:
                     _apply_calendar_state(desired, state=scheduler, now_epoch=time.time(), initial=True)
                     startup_calendar_state_enforced = True
                     changed = True
+                elif (
+                    not startup_calendar_state_enforced and
+                    _needs_post_reboot_reconciliation(
+                        scheduler, desired=desired, previous=last_schedule_state,
+                        now_epoch=time.time(), current_boot_id=_boot_evidence()[0],
+                    )
+                ):
+                    # The broker may have returned before systemd shut down,
+                    # so 'on' can be persisted before the reboot. Reconcile
+                    # the fresh boot exactly once, not on every service restart.
+                    _apply_calendar_state("on", state=scheduler, now_epoch=time.time())
+                    scheduler["post_reboot_ready_boot_id"] = _boot_evidence()[0]
+                    startup_calendar_state_enforced = True
+                    changed = True
                 elif desired != last_schedule_state:
                     _apply_calendar_state(desired, state=scheduler, now_epoch=time.time())
                     startup_calendar_state_enforced = True
@@ -505,6 +594,23 @@ def main() -> int:
                 _save_scheduler_state(scheduler)
                 last_transition_at = time.time()
                 logger.info("calendar_transition_applied", extra={"event": desired})
+
+            # A queued reboot may be rejected by systemd after the broker's
+            # --no-block response. Recover the kiosk after a bounded timeout,
+            # without issuing a second reboot for the same local day.
+            attempt_at = float(scheduler.get("last_wake_reboot_at") or 0)
+            requested_boot = scheduler.get("last_wake_reboot_boot_id")
+            current_boot, _ = _boot_evidence()
+            if (desired == "on" and not manual_override and
+                    scheduler.get("last_wake_reboot_day") == _local_day(time.time()) and
+                    requested_boot and current_boot == requested_boot and
+                    attempt_at > 0 and time.time() - attempt_at >= 120 and
+                    scheduler.get("last_wake_reboot_error") != "reboot_not_observed"):
+                scheduler["last_wake_reboot_error"] = "reboot_not_observed"
+                _save_scheduler_state(scheduler)
+                with display_control_lock():
+                    set_display_power("on")
+                    runtime_action("start_browser", payload={"source": "calendar"})
 
             _write_status(
                 state="running", plan=plan, desired=desired, last_fetch_at=last_fetch_at,

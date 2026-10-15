@@ -810,6 +810,9 @@ def test_calendar_backend_route_agent_transition_broker_and_observed_status_roun
     monkeypatch.setattr(calendar_agent, "SCHEDULER_STATE_PATH", calendar_dir / "scheduler-state.json")
     monkeypatch.setattr(calendar_agent, "WAKE_REBOOT_DELAY_SECONDS", 0.0)
     monkeypatch.setattr(calendar_agent, "display_control_lock", lambda: nullcontext())
+    calendar_now = 1_700_000_000.0
+    boot_evidence = [("before-calendar-wake", calendar_now - 86400)]
+    monkeypatch.setattr(calendar_agent, "_boot_evidence", lambda: boot_evidence[0])
 
     class _HttpCalendarTransport:
         credential = SimpleNamespace(client_id=CLIENT_ID)
@@ -872,13 +875,20 @@ def test_calendar_backend_route_agent_transition_broker_and_observed_status_roun
 
     # OFF uses the canonical Display power path. A real OFF->ON transition then
     # crosses the fixed-function Calendar reboot broker exactly once.
-    calendar_agent._apply_calendar_state("off", state=scheduler, now_epoch=1_100.0)
-    calendar_agent._apply_calendar_state("on", state=scheduler, now_epoch=2_000.0)
-    assert power_actions == ["off", "on"]
+    calendar_agent._apply_calendar_state("off", state=scheduler, now_epoch=calendar_now - 50)
+    calendar_agent._apply_calendar_state("on", state=scheduler, now_epoch=calendar_now)
+    # The browser/display must not start before the scheduled boot boundary.
+    assert power_actions == ["off"]
     assert runtime_actions == []
     assert reboot_commands == [
         ["/usr/bin/systemctl", "--no-block", "--check-inhibitors=no", "reboot"]
     ]
+    # The next boot restores the display and browser, without a second reboot.
+    boot_evidence[0] = ("after-calendar-wake", calendar_now + 5)
+    calendar_agent._apply_calendar_state("on", state=scheduler, now_epoch=calendar_now + 60)
+    assert power_actions == ["off", "on"]
+    assert runtime_actions == ["start_browser"]
+    assert len(reboot_commands) == 1
 
     calendar_agent._write_status(
         state="running",
