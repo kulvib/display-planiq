@@ -1,0 +1,31 @@
+# Pilot: Postgres and Display API on the same Render Starter instance.
+# Both stages use Debian bookworm, so their glibc/runtime libraries match.
+FROM python:3.13.16-slim-bookworm AS python-builder
+WORKDIR /build
+COPY backend/requirements.lock.txt /build/requirements.lock.txt
+RUN python -m pip install --upgrade pip==26.1.2 \
+ && python -m pip install --require-hashes --no-cache-dir -r /build/requirements.lock.txt
+
+FROM postgres:18.4-bookworm
+# Python 3.13 slim's shared-library dependencies; libpq already in postgres base.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libbz2-1.0 libffi8 libsqlite3-0 liblzma5 \
+    libreadline8 libncursesw6 libgdbm6 libgdbm-compat4 \
+    libexpat1 libssl3 libuuid1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system display_app \
+ && useradd --system --gid display_app --home /nonexistent --shell /usr/sbin/nologin display_app \
+ && usermod -aG display_app postgres
+COPY --from=python-builder /usr/local /usr/local
+WORKDIR /opt/display
+COPY backend/ ./backend/
+COPY client/ ./client/
+COPY scripts/ ./scripts/
+COPY SHA256SUMS.txt ./SHA256SUMS.txt
+RUN chmod 0755 /opt/display/backend/scripts/start_single_node.sh
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    PGDATA=/var/data/clientflow-release-artifacts/postgres/data \
+    CLIENTFLOW_RELEASE_ARTIFACT_DIR=/var/data/clientflow-release-artifacts/store \
+    ENVIRONMENT=production
+EXPOSE 10000
+ENTRYPOINT ["/opt/display/backend/scripts/start_single_node.sh"]
