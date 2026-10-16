@@ -1,0 +1,97 @@
+name: Display single-node PostgreSQL smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/single-node-smoke.yml"
+      - "backend/**"
+      - "client/**"
+      - "scripts/**"
+      - ".dockerignore"
+      - "render-single-node.yaml"
+
+jobs:
+  single-node-database-and-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build PostgreSQL plus Display backend image
+        run: docker build --file backend/Dockerfile.single-node --tag display-single-node:ci .
+      - name: Bootstrap database and API on a disposable persistent mount
+        shell: bash
+        run: |
+          set -euo pipefail
+          volume="$RUNNER_TEMP/display-single-node-volume"
+          mkdir -p "$volume"
+          echo "volume=$volume" >> "$GITHUB_ENV"
+          docker run -d --name display-single-node-ci \
+            -p 127.0.0.1:18000:10000 \
+            -v "$volume:/var/data/clientflow-release-artifacts" \
+            -e PORT=10000 -e ENVIRONMENT=production \
+            -e SECRET_KEY=ci-only-secret-key-with-at-least-32-characters \
+            -e JWT_ISSUER=planiq-display-api -e JWT_AUDIENCE=planiq-display \
+            display-single-node:ci
+          for attempt in $(seq 1 180); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:18000/health/db > /tmp/db-health.json; then
+              grep -q '"status"' /tmp/db-health.json
+              break
+            fi
+            if [[ "$attempt" -eq 180 ]]; then
+              docker logs display-single-node-ci
+              exit 1
+            fi
+            sleep 2
+          done
+          docker exec -u display_app display-single-node-ci \
+            psql -X -v ON_ERROR_STOP=1 -h /run/display-postgres -d display \
+            -c 'CREATE SCHEMA ci_persistence_marker'
+          docker exec -u display_app display-single-node-ci \
+            psql -X -v ON_ERROR_STOP=1 -h /run/display-postgres -d display \
+            -c 'CREATE TABLE ci_persistence_marker.proof(id INTEGER PRIMARY KEY)'
+          docker exec -u display_app display-single-node-ci \
+            psql -X -v ON_ERROR_STOP=1 -h /run/display-postgres -d display \
+            -c 'INSERT INTO ci_persistence_marker.proof VALUES (42)'
+          # Database intentionally binds only to the Unix socket; no TCP listener.
+          if docker exec -u display_app display-single-node-ci \
+            psql -X -h 127.0.0.1 -p 5432 -d display -tAc 'SELECT 1'; then
+            echo 'Local PostgreSQL TCP port unexpectedly reachable' >&2
+            exit 1
+          fi
+      - name: Restart and prove durable schema plus data
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker stop --time 90 display-single-node-ci
+          docker rm display-single-node-ci
+          docker run -d --name display-single-node-ci \
+            -p 127.0.0.1:18000:10000 \
+            -v "$volume:/var/data/clientflow-release-artifacts" \
+            -e PORT=10000 -e ENVIRONMENT=production \
+            -e SECRET_KEY=ci-only-secret-key-with-at-least-32-characters \
+            -e JWT_ISSUER=planiq-display-api -e JWT_AUDIENCE=planiq-display \
+            display-single-node:ci
+          for attempt in $(seq 1 180); do
+            if curl --fail --silent --max-time 2 http://127.0.0.1:18000/health/db >/tmp/db-health.json; then
+              break
+            fi
+            if [[ "$attempt" -eq 180 ]]; then
+              docker logs display-single-node-ci
+              exit 1
+            fi
+            sleep 2
+          done
+          marker="$(docker exec -u display_app display-single-node-ci \
+            psql -X -A -t -v ON_ERROR_STOP=1 -h /run/display-postgres -d display \
+            -c 'SELECT id FROM ci_persistence_marker.proof')"
+          test "$marker" = '42'
+          echo 'SINGLE_NODE_SMOKE_OK: schema preserved, no external PostgreSQL, persisted data survived restart'
+      - name: Print diagnostics on failure
+        if: failure()
+        run: docker logs display-single-node-ci || true
+      - name: Stop disposable service
+        if: always()
+        run: docker rm -f display-single-node-ci || true
