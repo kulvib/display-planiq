@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 libssl3 libuuid1 \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system display_app \
- && useradd --system --gid display_app --home /nonexistent --shell /usr/sbin/nologin display_app
+ && useradd --system --gid display_app --home /nonexistent --shell /usr/sbin/nologin display_app \
+ && usermod -aG display_app postgres
 COPY --from=python-builder /usr/local /usr/local
 WORKDIR /opt/display
 COPY backend/ ./backend/

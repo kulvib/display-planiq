@@ -16,6 +16,8 @@ WORKFLOW = (ROOT / '.github/workflows/single-node-smoke.yml').read_text(encoding
 def test_postgresql_kept_and_runtime_built_with_locked_dependencies():
     assert 'FROM postgres:18.4-bookworm' in DOCKERFILE
     assert 'FROM python:3.13.16-slim-bookworm' in DOCKERFILE
+    # PostgreSQL cannot chgrp its Unix socket to display_app unless it joins that group.
+    assert 'usermod -aG display_app postgres' in DOCKERFILE
     assert '--require-hashes --no-cache-dir' in DOCKERFILE
     assert 'COPY backend/' in DOCKERFILE
     assert 'ENTRYPOINT ["/opt/display/backend/scripts/start_single_node.sh"]' in DOCKERFILE
