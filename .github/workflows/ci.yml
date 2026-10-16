@@ -97,6 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m pytest -q \
+            --ignore=backend/tests/test_clientflow_fleet_capacity_ci.py \
             --ignore=backend/tests/test_clientflow_claim_operational_http_integration.py \
             --ignore=backend/tests/test_clientflow_display_runtime_integration.py \
             --ignore=backend/tests/test_clientflow_frontend_backend_openapi_contract.py \
@@ -125,6 +126,11 @@ jobs:
             --ignore=scripts/tests/test_clientflow_release_build_51k.py \
             --ignore=scripts/tests/test_clientflow_runtime_input_transport_51l.py \
             backend/tests scripts/tests
+
+      - name: Execute isolated 5 / 10 / 15 ClientFlow fleet load gate
+        # Uses only the disposable localhost PostgreSQL service. The test
+        # creates/drops its own random schema and refuses non-CI DB URLs.
+        run: python -m pytest -s -q backend/tests/test_clientflow_fleet_capacity_ci.py
 
       - name: Execute ClientFlow synthetic end-to-end operational gate
         run: |
