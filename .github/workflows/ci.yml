@@ -127,11 +127,6 @@ jobs:
             --ignore=scripts/tests/test_clientflow_runtime_input_transport_51l.py \
             backend/tests scripts/tests
 
-      - name: Execute isolated 5 / 10 / 15 ClientFlow fleet load gate
-        # Uses only the disposable localhost PostgreSQL service. The test
-        # creates/drops its own random schema and refuses non-CI DB URLs.
-        run: python -m pytest -s -q backend/tests/test_clientflow_fleet_capacity_ci.py
-
       - name: Execute ClientFlow synthetic end-to-end operational gate
         run: |
           python -m pytest -q \
@@ -141,6 +136,11 @@ jobs:
             backend/tests/test_clientflow_frontend_backend_openapi_contract.py \
             backend/tests/test_clientflow_operational_compatibility_gate.py \
             scripts/tests/test_clientflow_code_only_fresh_install.py
+
+      - name: Execute isolated 5 / 10 / 15 ClientFlow fleet load gate
+        # Uses only the disposable localhost PostgreSQL service. The test
+        # creates/drops its own random schema and refuses non-CI DB URLs.
+        run: python -m pytest -s -q backend/tests/test_clientflow_fleet_capacity_ci.py
 
       - name: Execute legacy 1.1.19 capability parity gate
         run: python scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope python
