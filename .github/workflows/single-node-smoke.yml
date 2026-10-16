@@ -46,6 +46,14 @@ jobs:
             fi
             sleep 2
           done
+          # Runtime regression: PostgreSQL must be permitted to own the socket's
+          # restricted group. The app role must be able to connect via peer auth.
+          docker exec display-single-node-ci sh -ceu '
+            id -nG postgres | tr " " "\n" | grep -qx display_app
+            socket=/run/display-postgres/.s.PGSQL.5432
+            test -S "$socket"
+            test "$(stat -c "%a:%G" "$socket")" = 770:display_app
+          '
           docker exec -u display_app display-single-node-ci \
             psql -X -v ON_ERROR_STOP=1 -h /run/display-postgres -d display \
             -c 'CREATE SCHEMA ci_persistence_marker'
