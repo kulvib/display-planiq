@@ -20,10 +20,10 @@ def _load_module():
     return module
 
 
-def _lock(tmp_path: Path, *, runtime: bytes = b"runtime", wheel: bytes = b"wheel", platform: bytes = b"new-platform", bootstrap: bytes = b"bootstrap"):
+def _lock(tmp_path: Path, *, runtime: bytes = b"runtime", wheel: bytes = b"wheel", platform: bytes = b"new-platform", bootstrap: bytes = b"bootstrap", wheel_name: str = "wheel.whl"):
     rows = {
         "python-runtime-amd64.tar": runtime,
-        "wheel.whl": wheel,
+        wheel_name: wheel,
     }
     lock = {
         "schema_version": 1,
@@ -59,7 +59,7 @@ def _lock(tmp_path: Path, *, runtime: bytes = b"runtime", wheel: bytes = b"wheel
     return path, {**rows, "chrome.deb": platform, "apt.deb": bootstrap}
 
 
-def _base_tar(tmp_path: Path, contents: dict[str, bytes], *, runtime_override: bytes | None = None) -> Path:
+def _base_tar(tmp_path: Path, contents: dict[str, bytes], *, runtime_override: bytes | None = None, wheel_name: str = "wheel.whl") -> Path:
     path = tmp_path / "base.tar"
     with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as tf:
         for directory in ("wheelhouse", "platform", "bootstrap"):
@@ -69,7 +69,7 @@ def _base_tar(tmp_path: Path, contents: dict[str, bytes], *, runtime_override: b
             tf.addfile(info)
         members = {
             "python-runtime-amd64.tar": runtime_override if runtime_override is not None else contents["python-runtime-amd64.tar"],
-            "wheelhouse/wheel.whl": contents["wheel.whl"],
+            f"wheelhouse/{wheel_name}": contents[wheel_name],
             "platform/old-chrome.deb": b"old-platform-is-not-reused",
             "bootstrap/apt.deb": contents["apt.deb"],
         }
@@ -141,6 +141,53 @@ def test_prepare_transport_builds_twice_and_publishes_verified_bytes(tmp_path: P
     assert {x["file"] for x in result["platform_artifacts"]} == {"chrome.deb"}
 
 
+def test_1239_base_with_current_pyjwt_is_reused_and_verified_without_replacement(tmp_path: Path, monkeypatch):
+    """A current locked wheel is reused, not silently dropped or fetched again."""
+    module = _load_module()
+    wheel_name = "pyjwt-2.15.1-py3-none-any.whl"
+    lock, contents = _lock(tmp_path, wheel_name=wheel_name)
+    base = _base_tar(tmp_path, contents, wheel_name=wheel_name)
+    fetched = []
+
+    def fetch_platform_only(url, target, *, expected_size, expected_sha256):
+        fetched.append(url)
+        assert url == "https://example.invalid/chrome.deb"
+        data = contents["chrome.deb"]
+        assert (len(data), hashlib.sha256(data).hexdigest()) == (expected_size, expected_sha256)
+        target.write_bytes(data)
+
+    monkeypatch.setattr(module, "_fetch_exact", fetch_platform_only)
+    output = tmp_path / "transport-1240.tar"
+    size, digest = module.prepare_transport(
+        base_archive=base,
+        lock_path=lock,
+        platform_urls={"chrome.deb": "https://example.invalid/chrome.deb"},
+        output=output,
+    )
+    assert fetched == ["https://example.invalid/chrome.deb"]
+    assert (size, digest) == (output.stat().st_size, hashlib.sha256(output.read_bytes()).hexdigest())
+    with tarfile.open(output, "r:") as tf:
+        files = {member.name for member in tf if member.isfile()}
+        assert f"wheelhouse/{wheel_name}" in files
+
+    # Even a wheel with the right locked filename must fail if its bytes differ.
+    bad_contents = dict(contents)
+    bad_contents[wheel_name] = b"broken"
+    bad_base = tmp_path / "bad-base.tar"
+    with tarfile.open(bad_base, "w", format=tarfile.USTAR_FORMAT) as tf:
+        import io
+        for name, data in (
+            ("python-runtime-amd64.tar", contents["python-runtime-amd64.tar"]),
+            (f"wheelhouse/{wheel_name}", bad_contents[wheel_name]),
+            ("bootstrap/apt.deb", contents["apt.deb"]),
+        ):
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            tf.addfile(member, io.BytesIO(data))
+    with pytest.raises(ValueError, match="size mismatch|SHA-256 mismatch"):
+        module.seed_reusable_inputs(bad_base, tmp_path / "rejected", lock)
+
+
 def test_github_workflow_is_manual_exact_source_no_replace_transport_only():
     workflow = (ROOT / ".github/workflows/runtime-input-transport.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow
@@ -160,10 +207,15 @@ def test_github_workflow_is_manual_exact_source_no_replace_transport_only():
     assert "--prerelease" in workflow
     assert "Transport only. Not release authority." in workflow
     assert "RUNTIME_INPUT_TRANSPORT_READY=PASS" in workflow
-    assert "runtime_artifact_url:" in workflow
-    assert "pyjwt-2.15.1-py3-none-any.whl" in workflow
-    assert '--drop-base-runtime "pyjwt-2.13.0-py3-none-any.whl"' in workflow
-    assert "runtime-inputs-1228-8525ecf5491a1dfb16cc6880302020e83dac74f5-transport" in workflow
+    # The 1239 base is already locked to PyJWT 2.15.1, so a stale 2.13.0
+    # replacement and a redundant PyJWT network fetch must not be performed.
+    assert "runtime_artifact_url:" not in workflow
+    assert "--runtime-url" not in workflow
+    assert "--drop-base-runtime" not in workflow
+    assert "if len(runtime_rows) != 1:" in workflow
+    assert "runtime-inputs-1239-abbd8d673a350b6beca5d9e58ddb02fa2edd1c08-transport" in workflow
+    assert "14c5fee3193b8a8c93559643afa5bf96de910ca64233e483628aafee643021fb" in workflow
+    assert "runtime-inputs-1228-" not in workflow
     forbidden = ["release-approve", "clientflow_release_catalog.json >", "latest_stable", "default_install_version="]
     for token in forbidden:
         assert token not in workflow
