@@ -1,32 +1,15 @@
-PlanIQ Display — Heidi1 acceptance follow-up (2026-10-17)
-Source of truth: user-provided display-planiq-main(20261017-112100).zip
-Suggested branch: fix/clientflow-heidi1-gtk4-clipboard-consent-flash
+PlanIQ Display — Heidi1 CI corrections (2026-10-17)
+SOURCE: original user-provided display-planiq-main(20261017-112100).zip
+OVERLAY: previously delivered PlanIQ-Display-Heidi1-clipboard-cookie-no-flash-CHANGED-ONLY.zip
 
-Change-only ZIP; extract at repository root on that branch.
-CHANGED FILES:
-- client/libexec/local-gui
-- client/runtime/clientflow_runtime/browser_guard.py
-- backend/tests/test_clientflow_1239_calendar_gui_acceptance.py
-- scripts/tests/test_clientflow_browser_guard_consent_no_flash.py (new)
-- scripts/tests/test_clientflow_physical_failure_fixes_1221.py
-- scripts/tests/test_clientflow_local_ux_legacy119.py
+Apply this small follow-up to the existing branch where the previous changed-only ZIP was already applied. Extract at repository root, replacing exactly these two files:
+- SHA256SUMS.txt
+- frontend/tests/displaySleepCountdownNonstale.test.mjs
 
-CHANGESET:
-1. GTK4 PyGObject clipboard API fix: set(value), not unavailable set_text().
-   Preserve clipboard read-back and gracefully report any binding errors.
-2. Prevent Browser Guard from deliberately exposing cookie consent overlays
-   on timed page reloads: do not remove guard CSS, force CSS-visible, or
-   scroll accept buttons into view while attempting the existing accept flow.
-   Existing fallback hide behavior remains. This does NOT prove unknown
-   third-party consent implementation works: test on Heidi1 with exact site.
-3. Harden execution and legacy source contracts to require the actual GTK4 API.
-   Do not weaken unrelated parity/security gates.
+CI fix 1: source checksum manifest records the exact bytes of all altered files from previous patch (plus this contract fix), and enrolls the new browser-guard test file. No test skip, no weakening of integrity checker.
+CI fix 2: frontend GTK clipboard source-contract test now requires PyGObject GTK4's clipboard.set(value) and rejects clipboard.set_text(value), matching actual GTK4/Wayland runtime. It still requires icon, async read-back, and verification.
 
-LOCAL VALIDATION:
-- Targeted suites run; full GitHub CI remains final gate.
-- Browser cookie flash must be retested physically on Heidi1.
+No runtime changes beyond the earlier patch. No modifications to frozen clientflow-1.3.38 bundle.
+GitHub CI remains final gate.
 
-RELEASE SAFETY:
-- Do not modify already approved/signed clientflow-1.3.38-seq-1239.tar.
-- Source change requires normal validated and approved release/update transport.
-- No change to Render/Neon database, no user secrets, no installer modification.
+If any source files changed on your branch after applying the previous patch, recompute SHA256SUMS from actual source rather than blindly overwriting with this file.

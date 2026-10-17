@@ -30,7 +30,8 @@ test("client list must never show a stale countdown string when the server deadl
 test("GTK kiosk copy buttons use a real themed icon and verify clipboard readback", () => {
   const gui = readFileSync(new URL("../../client/libexec/local-gui", import.meta.url), "utf8");
   assert.match(gui, /Gtk\.Button\.new_from_icon_name\("edit-copy-symbolic"\)/);
-  assert.match(gui, /clipboard\.set_text\(value\)/);
+  assert.match(gui, /clipboard\.set\(value\)/);
+  assert.doesNotMatch(gui, /clipboard\.set_text\(value\)/);
   assert.match(gui, /clipboard\.read_text_async\(None, on_read\)/);
   assert.match(gui, /actual = _clipboard\.read_text_finish\(result\)/);
   assert.match(gui, /if actual != value:/);
