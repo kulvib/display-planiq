@@ -342,12 +342,12 @@ def test_kiosk_url_match_allows_only_refresh_marker_query_delta() -> None:
     )
 
 
-def test_critical_services_proof_requires_every_unit_and_accept_cookie_mode(monkeypatch) -> None:
+def test_critical_services_proof_requires_every_unit_and_hide_only_mode(monkeypatch) -> None:
     Completed = namedtuple("Completed", "returncode stdout stderr")
 
     def good(command, **_kwargs):
         if "show" in command:
-            return Completed(0, "CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=accept CLIENTFLOW_BROWSER_GUARD_INTERVAL=2\n", "")
+            return Completed(0, "CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=hide CLIENTFLOW_BROWSER_GUARD_INTERVAL=2\n", "")
         return Completed(0, "active\n", "")
 
     monkeypatch.setattr(gate, "_run", good)
@@ -355,7 +355,7 @@ def test_critical_services_proof_requires_every_unit_and_accept_cookie_mode(monk
 
     def one_failed(command, **_kwargs):
         if "show" in command:
-            return Completed(0, "CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=accept\n", "")
+            return Completed(0, "CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=hide\n", "")
         if command[-1] == gate.CRITICAL_ACTIVE_UNITS[0]:
             return Completed(3, "inactive\n", "")
         return Completed(0, "active\n", "")

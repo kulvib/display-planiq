@@ -11,7 +11,7 @@ Rettet efter v1.1-log:
   * Vi skipper iframe-/worker-targets og policy.app.cookieinformation.com
   * Vi evaluerer kun i hovedsider af type "page"
   * Vi bruger små, hurtige Runtime.evaluate-kald
-  * Vi skjuler cookie overlay via CSS/DOM først; vi klikker ikke som primær handling
+  * Vi skjuler kun kendt consent UI via CSS før navigation, aldrig automatisk klik
   * Kort timeout pr. WebSocket-kald
 """
 
@@ -23,6 +23,9 @@ import time
 import urllib.request
 from pathlib import Path
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
+
+from .kiosk_consent import CONSENT_CSS
 
 try:
     import websockets
@@ -53,25 +56,14 @@ WS_TIMEOUT = float(os.environ.get("CLIENTFLOW_BROWSER_GUARD_WS_TIMEOUT", "4"))
 # Vent til siden er complete + lidt ekstra stabil tid, før CSS/DOM-regler kører.
 START_DELAY_SEC = int(os.environ.get("CLIENTFLOW_BROWSER_GUARD_START_DELAY_SEC", "1"))
 
-# Cookie-håndtering:
-#   off    = gør ingenting
-#   hide   = skjul kendte cookie/consent overlays
-#   accept = forsøg først at klikke "Accepter alle"; fallback til hide
-#
-# Backward compatibility:
-# Hvis CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE ikke er sat, bruges hide/off ud fra
-# den gamle CLIENTFLOW_BROWSER_GUARD_ENABLE_COOKIE_HIDE.
-ENABLE_COOKIE_HIDE = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_COOKIE_HIDE", "1").strip().lower() in ("1", "true", "yes", "y")
-COOKIE_MODE = os.environ.get("CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE", "").strip().lower()
-if COOKIE_MODE not in ("off", "hide", "accept"):
-    COOKIE_MODE = "hide" if ENABLE_COOKIE_HIDE else "off"
+# Kiosk consent UI is hidden, never auto-accepted. Explicit legacy "accept"
+# configuration maps to "hide" to prevent inadvertent tracking consent.
+COOKIE_MODE = os.environ.get("CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE", "hide").strip().lower()
+if COOKIE_MODE != "off":
+    COOKIE_MODE = "hide"
 
-ENABLE_AGGRESSIVE_HIDE = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_AGGRESSIVE_HIDE", "1").strip().lower() in ("1", "true", "yes", "y")
+VERSION = "1.7.0"
 
-# At override window.open/alert/confirm kan påvirke enkelte sites. Derfor default off.
-ENABLE_NATIVE_BLOCK = os.environ.get("CLIENTFLOW_BROWSER_GUARD_ENABLE_NATIVE_BLOCK", "1").strip().lower() in ("1", "true", "yes", "y")
-
-VERSION = "1.6.7"
 
 DEBUG_URL = f"http://{HOST}:{PORT}/json"
 
@@ -202,23 +194,27 @@ def is_main_page_target(tab: dict) -> bool:
 
 HIDE_JS = r"""
 (() => {
-  const VERSION = '1.6.7';
+  const VERSION = '1.7.0';
+  const COOKIE_MODE = '__COOKIE_MODE__';
+  const CONSENT_CSS = __CONSENT_CSS__;
+  const root = document.documentElement;
+  if (!root) return { version: VERSION, skipped: 'no-document' };
 
-  function safe(fn, fallback) {
-    try { return fn(); } catch (e) { return fallback; }
+  // A stylesheet is registered before first navigation by DisplayRuntime.
+  // The fallback also works if a Chrome document was navigated independently.
+  // CSS automatically covers later DOM additions; no broad scanning or
+  // DOM scanning is needed and no website-owned styles are changed.
+  if (COOKIE_MODE === 'hide' && !document.getElementById('clientflow-browser-guard-css')) {
+    const css = document.createElement('style');
+    css.id = 'clientflow-browser-guard-css';
+    css.textContent = CONSENT_CSS;
+    (document.head || root).appendChild(css);
   }
 
-  const START_DELAY_SEC = __START_DELAY_SEC__;
-  const COOKIE_MODE = '__COOKIE_MODE__';
-  const ENABLE_AGGRESSIVE_HIDE = __ENABLE_AGGRESSIVE_HIDE__;
-  const ENABLE_NATIVE_BLOCK = __ENABLE_NATIVE_BLOCK__;
-
-  // Hide the Chrome page's pointer after idle while preserving mouse/touch
-  // interaction. Idempotent across guard polls and refreshed navigations;
-  // applies even when cookie handling is off. Never touches the GTK local GUI.
-  if (document.documentElement && !window.__clientflowCursorIdleInstalled) {
+  // Only kiosk-owned pointer CSS is touched; native website dialogs,
+  // window.open, alert, confirm and prompt remain unmodified.
+  if (!window.__clientflowCursorIdleInstalled) {
     window.__clientflowCursorIdleInstalled = true;
-    const root = document.documentElement;
     const css = document.createElement('style');
     css.id = 'clientflow-idle-cursor';
     css.textContent = 'html[data-clientflow-cursor-idle="1"], html[data-clientflow-cursor-idle="1"] * { cursor: none !important; }';
@@ -236,641 +232,21 @@ HIDE_JS = r"""
     showPointer();
   }
 
-  // v1.5.2:
-  // Accept-mode må gerne forsøge at klikke cookie-knappen før readyState=complete,
-  // fordi cookie-/consent-dialoger på nogle sites kan blokere eller forsinke complete.
-  // Hide/CSS-regler venter stadig til complete, så vi ikke forstyrrer første load.
-  if (!document.body) {
-    return { version: VERSION, href: location.href, readyState: document.readyState, skipped: 'no-body', cookieMode: COOKIE_MODE };
-  }
-
-  if (window.__clientflowBrowserGuardHref !== location.href) {
-    window.__clientflowBrowserGuardHref = location.href;
-    window.__clientflowBrowserGuardStableAt = Date.now();
-    window.__clientflowBrowserGuardHideLoop = false;
-  }
-
-  window.__clientflowBrowserGuardStableAt = window.__clientflowBrowserGuardStableAt || Date.now();
-  const stableFor = Math.floor((Date.now() - window.__clientflowBrowserGuardStableAt) / 1000);
-  if (stableFor < START_DELAY_SEC) {
-    return { version: VERSION, href: location.href, readyState: document.readyState, skipped: 'start-delay', cookieMode: COOKIE_MODE, stableFor, startDelaySec: START_DELAY_SEC };
-  }
-
-  if (COOKIE_MODE === 'off') {
-    document.documentElement.setAttribute('data-clientflow-browser-guard', VERSION);
-    return { version: VERSION, href: location.href, readyState: document.readyState, skipped: 'cookie-mode-off', cookieMode: COOKIE_MODE, stableFor };
-  }
-
-  var acceptResult = null;
-
-  if (COOKIE_MODE === 'accept') {
-    acceptResult = tryAcceptCookies();
-    if (acceptResult && acceptResult.clicked) {
-      // v1.6.7: accept-mode means accept first, then enforce the visual hide
-      // fallback as soon as the page is complete.  This applies equally to
-      // GUI/backend/system starts, URL changes, reset-browser and timed refresh.
-      let hiddenAfterAccept = 0;
-      if (document.readyState === 'complete') {
-        ensureHideLoop();
-        hiddenAfterAccept = hideKnown();
-      } else {
-        restorePage();
-      }
-      return {
-        version: VERSION,
-        href: location.href,
-        readyState: document.readyState,
-        cookieMode: COOKIE_MODE,
-        accepted: true,
-        acceptResult,
-        stableFor,
-        hidden: hiddenAfterAccept,
-        overlay: document.querySelector('#coiOverlay') ? 'present' : null,
-        css: !!document.getElementById('clientflow-browser-guard-css')
-      };
-    }
-  }
-
-  if (document.readyState !== 'complete') {
-    return {
-      version: VERSION,
-      href: location.href,
-      readyState: document.readyState,
-      skipped: 'waiting-for-complete-after-accept-check',
-      cookieMode: COOKIE_MODE,
-      accepted: false,
-      acceptResult,
-      stableFor
-    };
-  }
-
-  function isVisible(el) {
-    return safe(() => {
-      if (!el) return false;
-      const s = getComputedStyle(el);
-      const r = el.getBoundingClientRect();
-      return s.display !== 'none' &&
-             s.visibility !== 'hidden' &&
-             s.opacity !== '0' &&
-             r.width > 10 &&
-             r.height > 10;
-    }, false);
-  }
-
-  function buttonText(el) {
-    return safe(() => [
-      el.innerText || '',
-      el.textContent || '',
-      el.getAttribute('aria-label') || '',
-      el.getAttribute('title') || '',
-      el.id || '',
-      el.className || '',
-      el.value || ''
-    ].join(' ').replace(/\s+/g, ' ').trim(), '');
-  }
-
-  function tryAcceptCookies() {
-    const successKey = '__clientflowCookieAcceptSuccess:' + location.href;
-    const attemptsKey = '__clientflowCookieAcceptAttempts:' + location.href;
-    window[attemptsKey] = (window[attemptsKey] || 0) + 1;
-
-    // v1.6.7: Once this exact URL has been accepted, keep the guard CSS/DOM
-    // protection intact. Removing it on every poll can briefly re-expose the
-    // consent overlay even though acceptance has already succeeded.
-    if (window[successKey]) {
-      return { clicked: true, method: 'already-accepted-this-url', alreadyAccepted: true, attempts: window[attemptsKey] };
-    }
-
-    // Keep both early-protection and guard CSS installed during consent checks.
-    // Removing it would visibly flash a cookie dialog on every refresh.
-    // Programmatic events below do not require revealing an overlay.
-
-    const rejectRe = /afvis|reject|decline|deny|kun nødvendige|only necessary|necessary only|nødvendige cookies|essential only|settings|indstillinger|tilpas|customize|manage|præferencer|preferences/i;
-
-    function robustClick(el) {
-      return safe(() => {
-        if (!el) return false;
-        // Do not change CSS, scroll or expose the cookie dialog to the kiosk.
-        // Sites that cannot consume synthetic events still get the hide fallback.
-
-        const opts = { bubbles: true, cancelable: true, view: window };
-        ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((type) => {
-          try {
-            const ev = type.startsWith('pointer')
-              ? new PointerEvent(type, { ...opts, pointerId: 1, pointerType: 'mouse', isPrimary: true })
-              : new MouseEvent(type, opts);
-            el.dispatchEvent(ev);
-          } catch (_) {
-            try { el.dispatchEvent(new MouseEvent(type, opts)); } catch (__) {}
-          }
-        });
-
-        try { el.click(); } catch (_) {}
-        return true;
-      }, false);
-    }
-
-    // Cookie Information API-forsøg. Forskellige versioner eksponerer forskellige metoder.
-    const apiResult = safe(() => {
-      const ci = window.CookieInformation || window.CookieConsent || null;
-      if (!ci) return null;
-
-      const methods = [
-        'submitAllCategories',
-        'acceptAllCategories',
-        'acceptAll',
-        'allowAll',
-        'submitConsent'
-      ];
-
-      for (const name of methods) {
-        if (typeof ci[name] === 'function') {
-          try {
-            ci[name]();
-            window[successKey] = true;
-            return { clicked: true, method: 'cookie-information-api', api: name, attempts: window[attemptsKey] };
-          } catch (_) {}
-        }
-      }
-
-      return { clicked: false, method: 'cookie-information-api', reason: 'no-known-api-methods', keys: Object.keys(ci).slice(0, 30) };
-    }, null);
-
-    if (apiResult && apiResult.clicked) return apiResult;
-
-    // Direkte Cookie Information / CMP selectors.
-    // Her kræver vi ikke isVisible, fordi gammel CSS kan have skjult overlayet.
-    const directAcceptSelectors = [
-      '#coiOverlay .coi-banner__accept',
-      '#coiConsentBanner .coi-banner__accept',
-      '#coi-banner-wrapper .coi-banner__accept',
-      '#coiOverlay button[aria-label*="accept" i]',
-      '#coiOverlay button[aria-label*="accepter" i]',
-      '#coiOverlay button[aria-label*="tillad" i]',
-      '#coiOverlay [data-consent="all"]',
-      '#coiOverlay [data-consent*="all" i]',
-      '#coiOverlay button.coi-banner__accept',
-      '#coi-banner-wrapper button.coi-banner__accept',
-      'button.coi-banner__accept',
-      'button[class*="coi"][class*="accept" i]',
-      '[id*="coi" i] button[class*="accept" i]',
-      '[id*="coi" i] [role="button"][class*="accept" i]',
-      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-      '#onetrust-accept-btn-handler',
-      '[data-testid*="accept" i]',
-      '[data-cy*="accept" i]',
-      '[aria-label*="Accepter alle" i]',
-      '[aria-label*="Accept all" i]',
-      '[aria-label*="Tillad alle" i]',
-      '[id*="accept-all" i]',
-      '[class*="accept-all" i]'
-    ];
-
-    for (const sel of directAcceptSelectors) {
-      const direct = safe(() => Array.from(document.querySelectorAll(sel)), [])
-        .filter((el) => !rejectRe.test(buttonText(el)));
-      if (direct.length > 0) {
-        const el = direct[0];
-        const text = buttonText(el);
-        if (robustClick(el)) {
-          window[successKey] = true;
-          return { clicked: true, method: 'direct-selector', selector: sel, text, attempts: window[attemptsKey], apiResult };
-        }
-      }
-    }
-
-    // Cookie Information overlay fallback: find accept/all-knap i roden.
-    const coiRoots = safe(() => Array.from(document.querySelectorAll(
-      '#coiOverlay, #coiConsentBanner, #coi-banner-wrapper, [id*="coi" i], [class*="coi-banner" i]'
-    )), []);
-
-    for (const root of coiRoots) {
-      const rootButtons = safe(() => Array.from(root.querySelectorAll('button, [role="button"], a, input[type="button"], input[type="submit"]')), [])
-        .map((el) => ({ el, text: buttonText(el) }))
-        .filter((x) => !rejectRe.test(x.text));
-
-      const preferred =
-        rootButtons.find((x) => /accepter alle|acceptér alle|accept all|tillad alle|godkend alle|alle cookies|all cookies/i.test(x.text)) ||
-        rootButtons.find((x) => /accept|accepter|acceptér|tillad|godkend|ok|okay/i.test(x.text)) ||
-        rootButtons[rootButtons.length - 1];
-
-      if (preferred && preferred.el && robustClick(preferred.el)) {
-        window[successKey] = true;
-        return {
-          clicked: true,
-          method: 'coi-root-fallback',
-          text: preferred.text,
-          buttonCount: rootButtons.length,
-          attempts: window[attemptsKey],
-          apiResult
-        };
-      }
-    }
-
-    // Generisk synlig tekst-match.
-    const strongAcceptRe = /^(accepter alle|accepter alle cookies|acceptér alle|acceptér alle cookies|accept all|accept all cookies|allow all|allow all cookies|tillad alle|tillad alle cookies|godkend alle|godkend alle cookies|agree to all|i accept all|i agree to all|alle cookies)$/i;
-    const mediumAcceptRe = /^(accepter|acceptér|accept|allow|tillad|godkend|ok|okay|enig|jeg accepterer|i agree|i accept|got it|forstået)$/i;
-    const looseAcceptRe = /\b(accepter alle|accepter alle cookies|acceptér alle|acceptér alle cookies|accept all|accept all cookies|allow all|allow all cookies|tillad alle|tillad alle cookies|godkend alle|godkend alle cookies|alle cookies)\b/i;
-
-    const selectors = [
-      'button',
-      'a[role="button"]',
-      '[role="button"]',
-      'input[type="button"]',
-      'input[type="submit"]',
-      '[data-testid*="accept" i]',
-      '[data-cy*="accept" i]',
-      '[id*="accept" i]',
-      '[class*="accept" i]',
-      '[id*="allow" i]',
-      '[class*="allow" i]',
-      '[aria-label*="accept" i]',
-      '[aria-label*="accepter" i]',
-      '[aria-label*="tillad" i]'
-    ];
-
-    function collectCandidateElements() {
-      const found = [];
-      const seen = new Set();
-
-      function add(el) {
-        if (!el || seen.has(el)) return;
-        seen.add(el);
-        found.push(el);
-      }
-
-      function walk(root, depth = 0) {
-        if (!root || depth > 4) return;
-        safe(() => Array.from(root.querySelectorAll(selectors.join(','))).forEach(add));
-        safe(() => {
-          Array.from(root.querySelectorAll('*')).forEach((el) => {
-            if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
-          });
-        });
-      }
-
-      walk(document);
-      return found;
-    }
-
-    const candidates = safe(() => collectCandidateElements(), [])
-      .filter(isVisible)
-      .map((el) => ({ el, text: buttonText(el) }))
-      .filter((x) => x.text && !rejectRe.test(x.text));
-
-    const rank = (x) => {
-      const t = x.text.trim();
-      if (strongAcceptRe.test(t)) return 100;
-      if (looseAcceptRe.test(t)) return 80;
-      if (mediumAcceptRe.test(t)) return 60;
-      if (/accept|accepter|acceptér|allow|tillad|godkend/i.test(t)) return 40;
-      return 0;
-    };
-
-    const best = candidates
-      .map((x) => ({ ...x, score: rank(x) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)[0];
-
-    if (!best) {
-      return {
-        clicked: false,
-        reason: 'no-accept-button',
-        attempts: window[attemptsKey],
-        apiResult,
-        candidates: candidates.slice(0, 8).map(x => x.text).filter(Boolean),
-        coiRoots: safe(() => Array.from(document.querySelectorAll('#coiOverlay, #coiConsentBanner, #coi-banner-wrapper, [id*="coi" i], [class*="coi" i]')).slice(0, 8).map(el => ({
-          tag: el.tagName,
-          id: el.id || '',
-          cls: String(el.className || '').slice(0, 120),
-          text: String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180)
-        })), [])
-      };
-    }
-
-    if (!robustClick(best.el)) {
-      return { clicked: false, reason: 'robust-click-failed', text: best.text, score: best.score, attempts: window[attemptsKey], apiResult };
-    }
-
-    window[successKey] = true;
-    return { clicked: true, method: 'text-rank', text: best.text, score: best.score, attempts: window[attemptsKey], apiResult };
-  }
-
-  function addCss() {
-    if (document.getElementById('clientflow-browser-guard-css')) return true;
-
-    const css = document.createElement('style');
-    css.id = 'clientflow-browser-guard-css';
-    css.textContent = `
-      #coiOverlay,
-      #coiConsentBanner,
-      #coi-banner-wrapper,
-      #coiPage-1,
-      #coiPage-2,
-      .coi-overlay,
-      .coi-banner__wrapper,
-      .coi-banner__page,
-      .coi-banner__summary,
-      [class*="coi-banner" i],
-      [id^="coi" i],
-      [class^="coi" i],
-      [class*=" coi" i],
-      #CybotCookiebotDialog,
-      #CybotCookiebotDialogBodyUnderlay,
-      #CookiebotWidget,
-      [id^="CybotCookiebot" i],
-      [class*="CybotCookiebot" i],
-      #usercentrics-root,
-      [data-testid="uc-app-container"],
-      [data-testid="uc-overlay"],
-      #onetrust-banner-sdk,
-      #onetrust-consent-sdk,
-      .didomi-popup-container,
-      .didomi-consent-popup,
-      .qc-cmp2-container,
-      .cc-window,
-      .cookie-banner,
-      .cookie-consent,
-      .cookie-box,
-      .cookie-notice,
-      .consent-banner,
-      .consent-modal,
-      .CookieConsent,
-      .cookiescript_injected,
-      iframe[src*="cookieinformation" i],
-      iframe[src*="cookiesharingiframe" i],
-      iframe[title*="cookie" i],
-      iframe[src*="policy.app.cookieinformation.com" i],
-      iframe[src*="cookiesharingiframe" i],
-      iframe[title*="cookie" i],
-      iframe[id*="cookie" i],
-      iframe[class*="cookie" i],
-      iframe[id*="coi" i],
-      iframe[class*="coi" i],
-      [data-clientflow-browser-guard-hidden] {
-        display: none !important;
-        visibility: hidden !important;
-        pointer-events: none !important;
-        opacity: 0 !important;
-      }
-
-      #tm-kiosk-bar,
-      #tm-kiosk-text {
-        pointer-events: none !important;
-        z-index: 2147483647 !important;
-      }
-
-      :fullscreen #tm-kiosk-bar,
-      :fullscreen #tm-kiosk-text,
-      :-webkit-full-screen #tm-kiosk-bar,
-      :-webkit-full-screen #tm-kiosk-text {
-        display: none !important;
-        visibility: hidden !important;
-        opacity: 0 !important;
-      }
-    `;
-
-    return safe(() => {
-      (document.head || document.documentElement).appendChild(css);
-      return true;
-    }, false);
-  }
-
-  function hide(el, reason) {
-    if (!el) return false;
-    if (el.id === 'tm-kiosk-bar' || el.id === 'tm-kiosk-text' || el.id === 'clientflow-browser-guard-css') return false;
-
-    safe(() => el.setAttribute('data-clientflow-browser-guard-hidden', reason || 'hidden'));
-    safe(() => el.style.setProperty('display', 'none', 'important'));
-    safe(() => el.style.setProperty('visibility', 'hidden', 'important'));
-    safe(() => el.style.setProperty('pointer-events', 'none', 'important'));
-    safe(() => el.style.setProperty('opacity', '0', 'important'));
-    return true;
-  }
-
-  function restorePage() {
-    safe(() => document.documentElement.style.setProperty('overflow', 'auto', 'important'));
-    safe(() => document.body && document.body.style.setProperty('overflow', 'auto', 'important'));
-    safe(() => document.documentElement.style.setProperty('pointer-events', 'auto', 'important'));
-    safe(() => document.body && document.body.style.setProperty('pointer-events', 'auto', 'important'));
-
-    ['noScroll','modal-open','no-scroll','noscroll','cookie-open','coi-banner-open','coi-modal-open'].forEach(c => {
-      safe(() => document.documentElement.classList.remove(c));
-      safe(() => document.body && document.body.classList.remove(c));
-    });
-  }
-
-  function hideKnown() {
-    let hidden = 0;
-    const selectors = [
-      '#coiOverlay',
-      '#coiConsentBanner',
-      '#coi-banner-wrapper',
-      '#coiPage-1',
-      '#coiPage-2',
-      '.coi-overlay',
-      '.coi-banner__wrapper',
-      '.coi-banner__page',
-      '.coi-banner__summary',
-      '[class*="coi-banner" i]',
-      '[id^="coi" i]',
-      '[class^="coi" i]',
-      '[class*=" coi" i]',
-      'iframe[src*="policy.app.cookieinformation.com" i]',
-      'iframe[src*="cookiesharingiframe" i]',
-      'iframe[title*="cookie" i]',
-      'iframe[id*="cookie" i]',
-      'iframe[class*="cookie" i]',
-      'iframe[id*="coi" i]',
-      'iframe[class*="coi" i]',
-      '#CybotCookiebotDialog',
-      '#CybotCookiebotDialogBodyUnderlay',
-      '#CookiebotWidget',
-      '[id^="CybotCookiebot" i]',
-      '[class*="CybotCookiebot" i]',
-      '#usercentrics-root',
-      '[data-testid="uc-app-container"]',
-      '[data-testid="uc-overlay"]',
-      '#onetrust-banner-sdk',
-      '#onetrust-consent-sdk',
-      '.didomi-popup-container',
-      '.didomi-consent-popup',
-      '.qc-cmp2-container',
-      '.cc-window',
-      '.cookie-banner',
-      '.cookie-consent',
-      '.cookie-box',
-      '.cookie-notice',
-      '.consent-banner',
-      '.consent-modal',
-      '.CookieConsent',
-      '.cookiescript_injected',
-      'iframe[src*="cookieinformation" i]',
-      'iframe[src*="cookiesharingiframe" i]',
-      'iframe[title*="cookie" i]'
-    ];
-
-    for (const sel of selectors) {
-      safe(() => document.querySelectorAll(sel).forEach(el => {
-        if (hide(el, 'selector:' + sel)) hidden++;
-      }));
-    }
-
-    // Aggressive heuristikker kan skjule legitime loading-containere på enkelte sites.
-    // Derfor er de slået fra som standard og kan aktiveres via env, hvis der er behov.
-    if (ENABLE_AGGRESSIVE_HIDE) {
-      const keywords = /cookie|cookies|samtykke|consent|privatliv|personoplysninger|persondata|gdpr|marketing|statistik|funktionelle|nødvendige|du bestemmer over dine data|powered by cookie information|samarbejdspartnere bruger teknologier/i;
-
-      const nodes = safe(() => Array.from(document.querySelectorAll('div,section,aside,dialog,form')), []);
-      for (const el of nodes) {
-        const meta = safe(() => [
-          el.id,
-          el.className,
-          el.getAttribute('role'),
-          el.getAttribute('aria-modal'),
-          el.getAttribute('aria-label'),
-          el.getAttribute('title'),
-          el.innerText || el.textContent || ''
-        ].join(' '), '');
-
-        if (keywords.test(meta)) {
-          if (hide(el, 'keyword')) hidden++;
-          continue;
-        }
-
-        const bigFixed = safe(() => {
-          const s = getComputedStyle(el);
-          const r = el.getBoundingClientRect();
-          const area = r.width * r.height;
-          const viewport = innerWidth * innerHeight;
-          const z = parseInt(s.zIndex || '0', 10) || 0;
-          return ['fixed','absolute','sticky'].includes(s.position) && z >= 50 && area > viewport * 0.2;
-        }, false);
-
-        if (bigFixed) {
-          if (hide(el, 'big-fixed')) hidden++;
-        }
-      }
-    }
-
-    restorePage();
-    return hidden;
-  }
-
-  function ensureHideLoop() {
-    addCss();
-    if (ENABLE_NATIVE_BLOCK) blockNative();
-
-    if (!window.__clientflowBrowserGuardHideLoop) {
-      window.__clientflowBrowserGuardHideLoop = true;
-      safe(() => {
-        new MutationObserver(() => {
-          addCss();
-          hideKnown();
-        }).observe(document.documentElement || document.body, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ['class','style','id','role','aria-modal','aria-label','src','title']
-        });
-      });
-      safe(() => setInterval(() => {
-        document.documentElement.setAttribute('data-clientflow-browser-guard', VERSION);
-        addCss();
-        hideKnown();
-      }, 500));
-    }
-  }
-
-  function blockNative() {
-    const noop = function(){};
-    const yes = function(){ return true; };
-    const nil = function(){ return null; };
-
-    safe(() => { window.alert = noop; });
-    safe(() => { window.confirm = yes; });
-    safe(() => { window.prompt = nil; });
-    safe(() => { window.print = noop; });
-    safe(() => {
-      window.open = function() {
-        return { closed: true, close(){}, focus(){}, blur(){}, postMessage(){}, location: { href: 'about:blank' } };
-      };
-    });
-  }
-
-  document.documentElement.setAttribute('data-clientflow-browser-guard', VERSION);
-  window.__clientflowBrowserGuardVersion = VERSION;
-
-  var acceptResult = null;
-
-  if (COOKIE_MODE === 'accept') {
-    acceptResult = tryAcceptCookies();
-    if (acceptResult && acceptResult.clicked) {
-      ensureHideLoop();
-      const hiddenAfterAccept = hideKnown();
-      return {
-        version: VERSION,
-        href: location.href,
-        readyState: document.readyState,
-        marker: document.documentElement.getAttribute('data-clientflow-browser-guard'),
-        cookieMode: COOKIE_MODE,
-        accepted: true,
-        acceptResult,
-        hidden: hiddenAfterAccept,
-        overlay: document.querySelector('#coiOverlay') ? 'present' : null,
-        css: !!document.getElementById('clientflow-browser-guard-css')
-      };
-    }
-
-    // v1.6.7: documented accept-mode falls back to hiding known consent UI
-    // whenever acceptance cannot be confirmed.  Never leave a blocking cookie
-    // notification on screen merely because this is a normal start/URL change.
-    ensureHideLoop();
-    const hiddenAfterFallback = hideKnown();
-    return {
-      version: VERSION,
-      href: location.href,
-      readyState: document.readyState,
-      marker: document.documentElement.getAttribute('data-clientflow-browser-guard'),
-      cookieMode: COOKIE_MODE,
-      accepted: false,
-      acceptResult,
-      hidden: hiddenAfterFallback,
-      overlay: document.querySelector('#coiOverlay') ? 'present' : null,
-      css: !!document.getElementById('clientflow-browser-guard-css')
-    };
-  }
-
-  ensureHideLoop();
-
-  const hidden = hideKnown();
-  const overlay = document.querySelector('#coiOverlay');
-
+  root.setAttribute('data-clientflow-browser-guard', VERSION);
   return {
     version: VERSION,
     href: location.href,
     readyState: document.readyState,
-    marker: document.documentElement.getAttribute('data-clientflow-browser-guard'),
+    marker: VERSION,
     cookieMode: COOKIE_MODE,
-    accepted: !!(acceptResult && acceptResult.clicked),
-    acceptResult,
-    hidden,
-    overlay: overlay ? {
-      display: getComputedStyle(overlay).display,
-      visibility: getComputedStyle(overlay).visibility,
-      opacity: getComputedStyle(overlay).opacity
-    } : null,
-    css: !!document.getElementById('clientflow-browser-guard-css')
+    css: !!document.getElementById('clientflow-browser-guard-css'),
   };
 })()
-""".replace("__START_DELAY_SEC__", str(START_DELAY_SEC)) \
-   .replace("__COOKIE_MODE__", COOKIE_MODE) \
-   .replace("__ENABLE_AGGRESSIVE_HIDE__", "true" if ENABLE_AGGRESSIVE_HIDE else "false") \
-   .replace("__ENABLE_NATIVE_BLOCK__", "true" if ENABLE_NATIVE_BLOCK else "false")
+""".replace("__COOKIE_MODE__", COOKIE_MODE).replace("__CONSENT_CSS__", json.dumps(CONSENT_CSS))
 
 COUNTDOWN_JS = r"""
 (() => {
-  const VERSION = '1.6.7';
+  const VERSION = '1.7.0';
   window.__clientflowBrowserGuardRefreshSec = __REFRESH_SEC__;
   window.__clientflowBrowserGuardStartDelaySec = __START_DELAY_SEC__;
 
@@ -992,9 +368,8 @@ COUNTDOWN_JS = r"""
 
     if (elapsed >= REFRESH_SEC) {
       window.__clientflowBrowserGuardStart = Date.now();
-      const url = new URL(location.href);
-      url.searchParams.set('_kiosk_refresh', Date.now().toString());
-      location.replace(url.toString());
+      // Reload the exact URL, including signed query params and fragment.
+      location.reload();
     }
 
     return { elapsed, hidden, bar: !!bar, text: !!txt };
@@ -1057,11 +432,70 @@ async def evaluate_js(tab, js: str, label: str):
         return {"href": url, "label": label, "error": str(e)}
 
 
-async def run_once(refresh_sec: int):
+
+async def watch_javascript_dialogs(tab: dict) -> None:
+    """Keep a CDP Page subscription alive and dismiss native browser dialogs.
+
+    Do not replace website-owned alert/confirm/prompt functions: that can alter
+    page scripts and silently approve dangerous actions. A beforeunload dialog
+    is accepted only to permit the configured kiosk navigation or refresh.
+    Never log a dialog's text, URL or its potentially sensitive prompt contents.
+    """
+    wsurl = str(tab.get("webSocketDebuggerUrl") or "")
+    if not wsurl:
+        return
+    try:
+        async with websockets.connect(
+            wsurl, max_size=1_000_000, open_timeout=WS_TIMEOUT, close_timeout=1
+        ) as ws:
+            await ws.send(json.dumps({"id": 1001, "method": "Page.enable"}))
+            async for raw in ws:
+                payload = json.loads(raw)
+                if payload.get("id") == 1001 and "error" in payload:
+                    raise RuntimeError("Chrome CDP Page.enable blev afvist")
+                if payload.get("method") != "Page.javascriptDialogOpening":
+                    continue
+                dialog_type = (payload.get("params") or {}).get("type")
+                if dialog_type not in {"alert", "confirm", "prompt", "beforeunload"}:
+                    continue
+                # Always dismiss alert/confirm/prompt; never accept a website
+                # operation. Only beforeunload is accepted, to enable reload.
+                await ws.send(json.dumps({
+                    "id": 1002,
+                    "method": "Page.handleJavaScriptDialog",
+                    "params": {"accept": dialog_type == "beforeunload"},
+                }))
+                log(f"Kiosk blokerede indbygget JavaScript-dialog: type={dialog_type}")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # The main loop will reconnect only while this target still exists.
+        log(f"JavaScript-dialogvagt blev afbrudt: {type(exc).__name__}")
+
+
+def update_dialog_monitors(tabs: list[dict], tasks: dict[str, asyncio.Task]) -> None:
+    """Maintain one event subscriber per main page, not a connection per poll."""
+    current: set[str] = set()
+    for tab in tabs:
+        target_id = str(tab.get("id") or "")
+        if not target_id or not tab.get("webSocketDebuggerUrl"):
+            continue
+        current.add(target_id)
+        existing = tasks.get(target_id)
+        if existing is None or existing.done():
+            tasks[target_id] = asyncio.create_task(watch_javascript_dialogs(tab))
+    for target_id in list(tasks):
+        if target_id not in current:
+            tasks.pop(target_id).cancel()
+
+
+async def run_once(refresh_sec: int, dialog_tasks: dict[str, asyncio.Task] | None = None):
     tab_payload = get_tabs()
     if tab_payload is None:
         return None
     tabs = [t for t in tab_payload if is_main_page_target(t)]
+    if dialog_tasks is not None:
+        update_dialog_monitors(tabs, dialog_tasks)
     results = []
 
     for tab in tabs:
@@ -1083,11 +517,12 @@ async def run_once(refresh_sec: int):
 
 async def _async_main():
     initial_refresh_sec = get_refresh_sec()
-    log(f"Starter v{VERSION}. DevTools={DEBUG_URL}, interval={INTERVAL}s, refresh={initial_refresh_sec}s, ws_timeout={WS_TIMEOUT}s, start_delay={START_DELAY_SEC}s, cookie_mode={COOKIE_MODE}, aggressive_hide={ENABLE_AGGRESSIVE_HIDE}, native_block={ENABLE_NATIVE_BLOCK}, authority=display_desired_configuration, config={CONFIG_PATH}")
+    log(f"Starter v{VERSION}. DevTools={DEBUG_URL}, interval={INTERVAL}s, refresh={initial_refresh_sec}s, ws_timeout={WS_TIMEOUT}s, start_delay={START_DELAY_SEC}s, cookie_mode={COOKIE_MODE}, policy=known_consent_css_only, authority=display_desired_configuration, config={CONFIG_PATH}")
 
     last_summary = 0.0
     last_error = ""
     last_refresh_sec = initial_refresh_sec
+    dialog_tasks: dict[str, asyncio.Task] = {}
 
     while True:
         try:
@@ -1095,13 +530,14 @@ async def _async_main():
             if refresh_sec != last_refresh_sec:
                 log(f"Browser refresh-interval ændret: {last_refresh_sec}s -> {refresh_sec}s")
                 last_refresh_sec = refresh_sec
-            run_result = await run_once(refresh_sec)
+            run_result = await run_once(refresh_sec, dialog_tasks)
             chrome_ready = run_result is not None
             results = run_result or []
 
             for r in results:
                 if isinstance(r, dict) and r.get("error"):
-                    msg = json.dumps(r, ensure_ascii=False)[:1400]
+                    # Avoid logging full kiosk URL/query/fragment (may carry tokens).
+                    msg = json.dumps({k: v for k, v in r.items() if k != "href"}, ensure_ascii=False)[:1400]
                     if msg != last_error:
                         log(f"FEJL evaluate: {msg}")
                         last_error = msg
@@ -1119,7 +555,7 @@ async def _async_main():
                             if isinstance(r, dict):
                                 log(
                                     "status "
-                                    f"url={r.get('href')} "
+                                    f"url_origin={urlsplit(str(r.get('href') or '')).scheme}://{urlsplit(str(r.get('href') or '')).netloc} "
                                     f"readyState={r.get('readyState')} "
                                     f"skipped={r.get('skipped')} "
                                     f"cookieMode={r.get('cookieMode')} "
