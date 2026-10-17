@@ -12,9 +12,9 @@ def read(path: str) -> str:
 
 def test_1334_1235_stage1_history_is_preserved_after_exact_release_promotion() -> None:
     # Preserve historical 1.3.34 evidence after exact 1.3.38 catalog promotion.
-    assert read("client/VERSION").strip() == "1.3.38"
+    assert read("client/VERSION").strip() == "1.3.39"
     release_input = json.loads(read("client/release/release-input.json"))
-    assert release_input["release_sequence"] == 1239
+    assert release_input["release_sequence"] == 1240
     historical_stage = read("CLIENTFLOW_1.3.34_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.md")
     assert "staged source identity only" in historical_stage
     assert "Not source-frozen" in historical_stage
