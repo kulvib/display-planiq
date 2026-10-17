@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 import websockets
 
+from .kiosk_consent import CONSENT_CSS
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
 from . import display_resolution
@@ -40,7 +41,20 @@ CHROME_XDG_DATA = CHROME_XDG_ROOT / "data"
 CHROME_BINARY = Path("/usr/bin/google-chrome-stable")
 CHROME_DEBUG_URL = os.getenv("CLIENTFLOW_CHROME_DEBUG_URL", "http://127.0.0.1:9222/json")
 CHROME_CDP_STARTUP_TIMEOUT_SECONDS = float(os.getenv("CLIENTFLOW_CHROME_CDP_STARTUP_TIMEOUT_SECONDS", "12"))
-EARLY_KIOSK_CSS = '/* ClientFlow Kiosk Protection v3.7.0 - CSS hard hide */\n\n/* Cookie Information / Consent Studio */\n#coiOverlay,\n#coiConsentBanner,\n#coi-banner-wrapper,\n#coiPage-1,\n#coiPage-2,\n.coi-overlay,\n.coi-banner__wrapper,\n.coi-banner__page,\n.coi-banner__summary,\n[class*="coi-banner" i],\n[id^="coi" i],\n[class^="coi" i],\n[class*=" coi" i],\niframe[src*="cookieinformation" i],\niframe[src*="consent.cookieinformation" i],\niframe[title*="cookie" i],\niframe[title*="consent" i],\niframe[name*="cookie" i],\niframe[id*="cookie" i],\niframe[class*="cookie" i],\n\n/* Cookiebot / Usercentrics Cookiebot */\n#CybotCookiebotDialog,\n#CybotCookiebotDialogBodyUnderlay,\n#CybotCookiebotDialogBody,\n#CookiebotWidget,\n#CookiebotWidgetUnderlay,\n.CybotCookiebotDialog,\n[id^="CybotCookiebot" i],\n[class*="CybotCookiebot" i],\niframe[src*="cookiebot" i],\n\n/* Usercentrics */\n#usercentrics-root,\n[data-testid="uc-app-container"],\n[data-testid="uc-overlay"],\n#uc-center-container,\n#uc-banner-centered,\n#uc-banner-modal,\n.uc-banner,\n.uc-overlay,\niframe[src*="usercentrics" i],\n\n/* OneTrust / Didomi / Quantcast */\n#onetrust-banner-sdk,\n#onetrust-consent-sdk,\n.ot-sdk-container,\n.ot-sdk-row,\n.didomi-popup-container,\n.didomi-consent-popup,\n.qc-cmp2-container,\n.qc-cmp2-summary-section,\n.cc-window,\niframe[src*="onetrust" i],\niframe[src*="didomi" i],\niframe[src*="quantcast" i],\n\n/* Generic cookie/consent roots */\n.cookie-banner,\n.cookie-consent,\n.cookie-box,\n.cookie-notice,\n.consent-banner,\n.consent-modal,\n.CookieConsent,\n.cookiescript_injected,\n[id*="cookie-banner" i],\n[id*="cookie-consent" i],\n[class*="cookie-banner" i],\n[class*="cookie-consent" i],\n[class*="consent-banner" i],\n[class*="consent-modal" i],\n\n/* ClientFlow JS markers */\n[data-clientflow-kiosk-hidden] {\n  display: none !important;\n  visibility: hidden !important;\n  pointer-events: none !important;\n  opacity: 0 !important;\n}\n\n/* Countdown bar */\n#tm-kiosk-bar,\n#tm-kiosk-text {\n  display: block !important;\n  pointer-events: none !important;\n  z-index: 2147483647 !important;\n}\n\n:fullscreen #tm-kiosk-bar,\n:fullscreen #tm-kiosk-text,\n:-webkit-full-screen #tm-kiosk-bar,\n:-webkit-full-screen #tm-kiosk-text {\n  display: none !important;\n  visibility: hidden !important;\n  opacity: 0 !important;\n}\n'
+# Registered with CDP before Page.navigate, so recognised consent UI never
+# paints even on the first load.  Countdown styles are deliberately separate.
+EARLY_KIOSK_CSS = CONSENT_CSS + """
+#tm-kiosk-bar, #tm-kiosk-text {
+  pointer-events: none !important;
+  z-index: 2147483647 !important;
+}
+:fullscreen #tm-kiosk-bar, :fullscreen #tm-kiosk-text,
+:-webkit-full-screen #tm-kiosk-bar, :-webkit-full-screen #tm-kiosk-text {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+"""
 CONTROL_GROUP_NAME = os.getenv("CLIENTFLOW_DISPLAY_CONTROL_GROUP", "clientflow-display-control")
 _ALLOWED_CONFIGURATION_KEYS = {"schema_version", "revision", "kiosk_url", "browser_refresh_interval_sec"}
 BOOT_START_COUNTDOWN_SECONDS = 10
@@ -172,7 +186,7 @@ class DisplayRuntime:
 
     def _start_browser_with_boot_policy(self) -> dict[str, Any]:
         if self.boot_start_pending:
-            self._clear_browser_profile(reason="system_start")
+            # Never discard website consent/session storage on a normal reboot.
             self._countdown("countdown", BOOT_START_COUNTDOWN_SECONDS, reason="system_start")
             # The expensive boot policy is per runtime instance, but the persistent
             # boot marker is a success marker.  If Chrome fails here, retries in this
@@ -270,7 +284,7 @@ class DisplayRuntime:
             if configuration["kiosk_url"]:
                 self.browser_requested = True
                 self.stop_browser(preserve_request=True, source="url_change")
-                self._clear_browser_profile(reason="configuration_change")
+                # Changing the page is not a request to erase cookie consent.
                 self._countdown("countdown", CONFIGURATION_START_COUNTDOWN_SECONDS, reason="configuration_change")
                 self.start_browser(source="url_change")
             else:
@@ -626,10 +640,9 @@ class DisplayRuntime:
         if self.browser and self.browser.poll() is None:
             return self.start_browser(source=source)
         self.browser_requested = True
-        # Product contract: explicit backend/local-GUI Start is a clean start.
-        # Calendar wake and internal runtime recovery preserve the profile.
+        # Manual Start may count down, but must preserve consent and website
+        # storage exactly like Calendar wake and runtime recovery.
         if source in {"backend", "gui"}:
-            self._clear_browser_profile(reason=f"{source}_start")
             self._countdown("countdown", MANUAL_START_COUNTDOWN_SECONDS, reason=f"{source}_start")
         return self.start_browser(source=source)
 

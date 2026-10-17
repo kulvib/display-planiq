@@ -72,7 +72,7 @@ def test_chrome_early_protection_uses_cdp_before_real_navigation():
 
 
 def test_chrome_early_protection_contains_legacy_hard_hide_surface():
-    source = (ROOT / "client/runtime/clientflow_runtime/display_runtime.py").read_text(encoding="utf-8")
+    source = (ROOT / "client/runtime/clientflow_runtime/kiosk_consent.py").read_text(encoding="utf-8")
     for selector in (
         "#coiOverlay",
         "#CybotCookiebotDialog",
@@ -80,8 +80,7 @@ def test_chrome_early_protection_contains_legacy_hard_hide_surface():
         "#usercentrics-root",
         "#onetrust-banner-sdk",
         ".qc-cmp2-container",
-        '[id*="cookie-consent" i]',
-        'iframe[src*="quantcast" i]',
+        "iframe[src*='policy.app.cookieinformation.com' i]",
     ):
         assert selector in source
 

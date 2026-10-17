@@ -257,7 +257,26 @@ def test_boot_countdown_is_once_per_real_boot(monkeypatch, tmp_path):
     assert runtime._boot_start_required() is True
 
 
-def test_backend_and_gui_start_clear_profile_and_count_down_ten_seconds(monkeypatch, tmp_path):
+def test_normal_system_boot_does_not_erase_consented_profile(monkeypatch, tmp_path):
+    state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
+    profile = state / "browser-profile"
+    profile.mkdir()
+    cookie = profile / "Cookies"
+    cookie.write_text("previous-website-consent", encoding="utf-8")
+    runtime = runtime_module.DisplayRuntime()
+    runtime.boot_start_pending = True
+    runtime.browser_requested = True
+    runtime.configuration = {"schema_version": 1, "revision": 1, "kiosk_url": "https://example.test"}
+    monkeypatch.setattr(runtime, "_countdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime, "start_browser", lambda **kwargs: {"started": True})
+    monkeypatch.setattr(runtime, "_boot_start_required", lambda: True)
+    monkeypatch.setattr(runtime, "_mark_browser_start_this_boot", lambda: None)
+    runtime._start_browser_with_boot_policy()
+    assert cookie.read_text(encoding="utf-8") == "previous-website-consent"
+    assert runtime.boot_start_pending is False
+
+
+def test_backend_and_gui_start_preserve_profile_and_count_down_ten_seconds(monkeypatch, tmp_path):
     state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
     profile = state / "browser-profile"
     profile.mkdir()
@@ -271,15 +290,14 @@ def test_backend_and_gui_start_clear_profile_and_count_down_ten_seconds(monkeypa
 
     result = runtime.request_start_browser(source="backend")
     assert result["started"] is True
-    assert not profile.exists()
+    assert (profile / "Cookies").read_text(encoding="utf-8") == "session"
     assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
 
-    profile.mkdir()
-    (profile / "Cookies").write_text("session", encoding="utf-8")
+    seen.clear()
     seen.clear()
     result = runtime.request_start_browser(source="gui")
     assert result["started"] is True
-    assert not profile.exists()
+    assert (profile / "Cookies").read_text(encoding="utf-8") == "session"
     assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
 
 
@@ -299,7 +317,7 @@ def test_calendar_wake_preserves_profile_without_start_countdown(monkeypatch, tm
     assert cookie.read_text(encoding="utf-8") == "preserve-me"
 
 
-def test_url_change_clears_profile_and_counts_down_ten_seconds(monkeypatch, tmp_path):
+def test_url_change_preserves_profile_and_counts_down_ten_seconds(monkeypatch, tmp_path):
     state, _run = _configure_runtime_paths(monkeypatch, tmp_path)
     profile = state / "browser-profile"
     profile.mkdir()
@@ -314,7 +332,7 @@ def test_url_change_clears_profile_and_counts_down_ten_seconds(monkeypatch, tmp_
     monkeypatch.setattr(runtime, "_countdown", lambda step, seconds, **kwargs: seen.append((step, {"seconds": seconds, **kwargs})))
 
     runtime.apply_configuration({"schema_version": 1, "revision": 2, "kiosk_url": "https://new.example.test"})
-    assert not profile.exists()
+    assert (profile / "Cookies").read_text(encoding="utf-8") == "old-url-session"
     assert any(name == "countdown" and details["seconds"] == 10 for name, details in seen)
 
 

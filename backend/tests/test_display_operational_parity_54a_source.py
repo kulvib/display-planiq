@@ -49,9 +49,9 @@ def test_browser_guard_uses_dynamic_display_configuration_and_loopback_devtools(
     assert '"--remote-debugging-port=9222"' in runtime
     assert "IPAddressDeny=any" in service
     assert "IPAddressAllow=localhost" in service
-    assert "Environment=CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=accept" in service
-    assert "Environment=CLIENTFLOW_BROWSER_GUARD_ENABLE_AGGRESSIVE_HIDE=1" in service
-    assert "Environment=CLIENTFLOW_BROWSER_GUARD_ENABLE_NATIVE_BLOCK=1" in service
+    assert "Environment=CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=hide" in service
+    assert "Environment=CLIENTFLOW_BROWSER_GUARD_ENABLE_AGGRESSIVE_HIDE=0" in service
+    assert "Environment=CLIENTFLOW_BROWSER_GUARD_ENABLE_NATIVE_BLOCK=0" in service
     assert "Environment=CLIENTFLOW_BROWSER_GUARD_START_DELAY_SEC=0" in service
     assert "Environment=CLIENTFLOW_BROWSER_GUARD_REFRESH_SEC=900" in service
     assert "SupplementaryGroups=clientflow-display-control" in service
@@ -60,15 +60,12 @@ def test_browser_guard_uses_dynamic_display_configuration_and_loopback_devtools(
     assert 'browser_refresh_interval_sec' in frontend
     assert '0 = slået fra. Ellers 60–86400 sekunder.' in frontend
 
-    # Accept-mode is a single canonical policy for every Chrome start source:
-    # accept first, then hide known consent UI once complete; failed acceptance
-    # also falls back to hide instead of leaving a blocking notification behind.
-    assert 'VERSION = "1.6.7"' in guard
-    assert "const IS_KIOSK_REFRESH" not in guard
-    assert "if (document.readyState === 'complete')" in guard
-    assert "hiddenAfterAccept = hideKnown();" in guard
-    assert "const hiddenAfterAccept = hideKnown();" in guard
-    assert "const hiddenAfterFallback = hideKnown();" in guard
+    # Hide-only mode must not consent, scan arbitrary DOM or override JS APIs.
+    assert 'VERSION = "1.7.0"' in guard
+    assert "tryAcceptCookies" not in guard
+    assert "function blockNative" not in guard
+    assert "new MutationObserver(" not in guard
+    assert "location.reload();" in guard
 
 
 def test_display_resolution_is_real_command_result_flow() -> None:

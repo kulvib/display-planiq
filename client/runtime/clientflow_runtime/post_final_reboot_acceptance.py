@@ -19,6 +19,7 @@ import stat
 import subprocess
 from urllib.parse import parse_qsl, urlsplit
 
+from .kiosk_consent import CONSENT_SELECTORS
 from .atomic import atomic_write_json
 from .config import DomainCredential
 from .constants import Domain
@@ -76,20 +77,7 @@ CRITICAL_ACTIVE_UNITS = (
 
 _BROWSER_GUARD_PROBE_JS = r"""
 (() => {
-  const selectors = [
-    '#coiOverlay', '#coiConsentBanner', '#CybotCookiebotDialog',
-    '#CybotCookiebotDialogBodyUnderlay', '#CookiebotWidget',
-    '#usercentrics-root', '[data-testid="uc-app-container"]',
-    '[data-testid="uc-overlay"]', '#onetrust-banner-sdk',
-    '#onetrust-consent-sdk', '.didomi-popup-container',
-    '.didomi-consent-popup', '.qc-cmp2-container', '.cc-window',
-    '.cookie-banner', '.cookie-consent', '.cookie-box', '.cookie-notice',
-    '.consent-banner', '.consent-modal', '.CookieConsent',
-    '.cookiescript_injected', '[id*="cookie-banner" i]',
-    '[id*="cookie-consent" i]', '[class*="cookie-banner" i]',
-    '[class*="cookie-consent" i]', '[class*="consent-banner" i]',
-    '[class*="consent-modal" i]'
-  ];
+  const selectors = __CONSENT_SELECTORS__;
   const visible = [];
   for (const selector of selectors) {
     for (const el of document.querySelectorAll(selector)) {
@@ -111,7 +99,7 @@ _BROWSER_GUARD_PROBE_JS = r"""
     visibleConsent: [...new Set(visible)]
   };
 })()
-"""
+""".replace("__CONSENT_SELECTORS__", json.dumps(CONSENT_SELECTORS))
 
 
 class PostFinalRebootAcceptanceError(RuntimeError):
@@ -363,8 +351,8 @@ def _verify_critical_services() -> None:
         str(SYSTEMCTL), "show", "clientflow-browser-guard.service",
         "--property=Environment", "--value",
     ], timeout=5.0)
-    if environment.returncode != 0 or "CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=accept" not in environment.stdout.split():
-        raise PostFinalRebootAcceptanceError("Browser Guard cookie-mode er ikke verificeret som accept")
+    if environment.returncode != 0 or "CLIENTFLOW_BROWSER_GUARD_COOKIE_MODE=hide" not in environment.stdout.split():
+        raise PostFinalRebootAcceptanceError("Browser Guard cookie-mode er ikke verificeret som hide")
 
 
 def _verify_backend_approved() -> None:
