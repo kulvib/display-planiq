@@ -341,43 +341,17 @@ HIDE_JS = r"""
       return { clicked: true, method: 'already-accepted-this-url', alreadyAccepted: true, attempts: window[attemptsKey] };
     }
 
-    // Fjern eventuel gammel guard-CSS kun mens et nyt accept-forsøg kræver,
-    // at en tidligere skjult cookie-knap gøres synlig og klikbar.
-    safe(() => {
-      const oldCss = document.getElementById('clientflow-browser-guard-css');
-      if (oldCss) oldCss.remove();
-    });
-    restorePage();
+    // Keep both early-protection and guard CSS installed during consent checks.
+    // Removing it would visibly flash a cookie dialog on every refresh.
+    // Programmatic events below do not require revealing an overlay.
 
     const rejectRe = /afvis|reject|decline|deny|kun nødvendige|only necessary|necessary only|nødvendige cookies|essential only|settings|indstillinger|tilpas|customize|manage|præferencer|preferences/i;
-
-    function forceShowForClick(el) {
-      safe(() => {
-        let node = el;
-        let depth = 0;
-        while (node && node.nodeType === 1 && depth < 8) {
-          const id = node.id || '';
-          const cls = String(node.className || '');
-          if (/coi|cookie|consent|banner|overlay/i.test(id + ' ' + cls)) {
-            node.style.setProperty('display', 'block', 'important');
-            node.style.setProperty('visibility', 'visible', 'important');
-            node.style.setProperty('opacity', '1', 'important');
-            node.style.setProperty('pointer-events', 'auto', 'important');
-          }
-          node = node.parentElement;
-          depth += 1;
-        }
-        el.style.setProperty('visibility', 'visible', 'important');
-        el.style.setProperty('opacity', '1', 'important');
-        el.style.setProperty('pointer-events', 'auto', 'important');
-      });
-    }
 
     function robustClick(el) {
       return safe(() => {
         if (!el) return false;
-        forceShowForClick(el);
-        try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (_) {}
+        // Do not change CSS, scroll or expose the cookie dialog to the kiosk.
+        // Sites that cannot consume synthetic events still get the hide fallback.
 
         const opts = { bubbles: true, cancelable: true, view: window };
         ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((type) => {

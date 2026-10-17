@@ -169,7 +169,8 @@ def test_gui_matches_deployed_1_1_19_visible_structure_and_order():
     # reliably in GTK4/Wayland instead of the font-dependent legacy glyph.
     assert 'button = Gtk.Button.new_from_icon_name("edit-copy-symbolic")' in source
     assert 'button.connect("clicked", lambda _button, selected=key: self._copy(selected))' in source
-    assert 'clipboard.set_text(value)' in source
+    assert 'clipboard.set(value)' in source
+    assert 'clipboard.set_text(value)' not in source
     assert 'clipboard.read_text_async(None, on_read)' in source
     assert 'actual = _clipboard.read_text_finish(result)' in source
     assert 'if actual != value:' in source
