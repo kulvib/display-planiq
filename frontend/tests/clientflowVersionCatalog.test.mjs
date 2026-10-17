@@ -48,3 +48,12 @@ test("canonical deployment events have Danish audit labels", () => {
   assert.match(auditSource, /ClientFlow-deployment annulleret/);
   assert.match(auditSource, /ClientFlow-version bestilt \(historisk\)/);
 });
+
+test("Control Room always requires an explicit reason before any ClientFlow deployment", () => {
+  assert.match(infoSource, /setUpdateReasonDialogOpen\(true\)/);
+  assert.match(infoSource, /buildClientflowUpdateRequest\(\{/);
+  assert.match(infoSource, /await executeClientFlowUpdate\(\{ confirmDowngrade: isDowngrade, reason \}\)/);
+  assert.match(infoSource, /disabled=\{!updateReason\.trim\(\) \|\| starting \|\| inProgress\}/);
+  assert.match(infoSource, /Bekræft ClientFlow-opdatering/);
+  assert.doesNotMatch(infoSource, /executeClientFlowUpdate\(\);/);
+});
