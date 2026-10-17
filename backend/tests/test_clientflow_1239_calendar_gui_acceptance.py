@@ -103,7 +103,9 @@ class FakeClipboard:
     def __init__(self):
         self.value = ""
 
-    def set_text(self, value):
+    # This fake models the real PyGObject GTK4 binding on Ubuntu 26.04:
+    # GdkWaylandClipboard has set(value), not set_text(value).
+    def set(self, value):
         self.value = value
 
     def read_text_async(self, _cancellable, callback):
@@ -168,6 +170,26 @@ def test_copy_controls_use_visible_gtk_value_and_hide_placeholders():
     assert window.copy_buttons["active_ip"].visible
     window._copy("active_ip")
     assert clipboard.value == "192.168.126.180"
+
+
+def test_copy_control_does_not_require_unavailable_gdk_set_text():
+    window, clipboard = _gtk_copy_window()
+    assert not hasattr(clipboard, "set_text")
+    window._set("active_ip", "192.168.126.180")
+    window._copy("active_ip")
+    assert clipboard.value == "192.168.126.180"
+    assert window.copy_ok["active_ip"].get_text() == ""
+    assert window.error_label.get_text() == ""
+
+
+def test_copy_control_reports_clipboard_failure_without_crashing():
+    window, clipboard = _gtk_copy_window()
+    window._set("active_ip", "192.168.126.180")
+    def unavailable(_value):
+        raise TypeError("clipboard backend unavailable")
+    clipboard.set = unavailable
+    window._copy("active_ip")
+    assert "Kopiering fejlede:" in window.error_label.get_text()
 
 
 def test_post_boot_browser_reconciliation_runs_exactly_once_per_new_boot():

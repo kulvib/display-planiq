@@ -897,11 +897,11 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             return
         clipboard = display.get_clipboard()
         ok = self.copy_ok.get(key)
-        # GTK4/Wayland is asynchronous: a set_text call alone does not prove
-        # another application can read the clipboard. Verify the new payload.
+        # PyGObject's Gdk4 Clipboard exposes set(value), not set_text().
+        # Verify the actual clipboard contents asynchronously on Wayland.
         try:
-            clipboard.set_text(value)
-        except (GLib.Error, RuntimeError) as exc:
+            clipboard.set(value)
+        except (GLib.Error, RuntimeError, AttributeError, TypeError) as exc:
             self.error_label.set_text(f"Kopiering fejlede: {exc}")
             return
         if ok is not None:
@@ -910,7 +910,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         def on_read(_clipboard: Gdk.Clipboard, result: object) -> None:
             try:
                 actual = _clipboard.read_text_finish(result)
-            except (GLib.Error, RuntimeError):
+            except (GLib.Error, RuntimeError, AttributeError, TypeError):
                 actual = None
             if actual != value:
                 self.error_label.set_text("Kunne ikke verificere udklipsholderen.")
@@ -926,7 +926,12 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     return False
                 GLib.timeout_add(1500, clear)
 
-        clipboard.read_text_async(None, on_read)
+        try:
+            clipboard.read_text_async(None, on_read)
+        except (GLib.Error, RuntimeError, AttributeError, TypeError) as exc:
+            self.error_label.set_text(f"Kopiering fejlede: {exc}")
+            if ok is not None:
+                ok.set_text("")
 
     @staticmethod
     def _color_class(color: str | None) -> str | None:

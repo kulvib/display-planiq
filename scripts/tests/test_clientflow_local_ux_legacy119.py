@@ -72,7 +72,8 @@ def test_local_gui_preserves_legacy119_sections_copy_and_safe_actions() -> None:
         assert field in source
 
     assert 'PUBLIC_CLIENT_PATH' in source
-    assert 'clipboard.set_text(value)' in source
+    assert 'clipboard.set(value)' in source
+    assert 'clipboard.set_text(value)' not in source
     assert 'clipboard.read_text_async(None, on_read)' in source
     assert 'actual = _clipboard.read_text_finish(result)' in source
     assert 'if actual != value:' in source
