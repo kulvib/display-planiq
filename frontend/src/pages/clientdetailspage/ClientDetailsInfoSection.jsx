@@ -33,6 +33,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import { buildClientflowUpdateRequest } from "./clientflowUpdateRequest.mjs";
 import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
@@ -182,8 +183,8 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const [feedbackVisible, setFeedbackVisible] = React.useState(false);
   const [releaseCatalog, setReleaseCatalog] = React.useState(null);
   const [selectedVersion, setSelectedVersion] = React.useState("latest");
-  const [downgradeDialogOpen, setDowngradeDialogOpen] = React.useState(false);
-  const [downgradeReason, setDowngradeReason] = React.useState("");
+  const [updateReasonDialogOpen, setUpdateReasonDialogOpen] = React.useState(false);
+  const [updateReason, setUpdateReason] = React.useState("");
 
   const state = normalizeClientflowDeploymentState(deployment?.state);
   const meta = getClientflowDeploymentStepMeta(state);
@@ -241,11 +242,12 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     setFeedbackVisible(true);
     setStarting(true);
     try {
-      const created = await requestClientflowDeployment(clientId, {
+      const options = buildClientflowUpdateRequest({
         targetVersion: resolvedSelectedVersion,
         confirmDowngrade,
         reason,
       });
+      const created = await requestClientflowDeployment(clientId, options);
       onDeploymentChange?.(created || null);
       setPolling(CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(created?.state)));
       showSnackbar?.({ message: `ClientFlow-deployment til v${created?.target_version || resolvedSelectedVersion} er autoriseret`, severity: "success" });
@@ -276,19 +278,18 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const startClientFlowUpdate = (event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    if (isDowngrade || (!installedVersion && selectedVersion !== "latest")) {
-      setDowngradeDialogOpen(true);
-      return;
-    }
-    executeClientFlowUpdate();
+    if (disabled) return;
+    // Backend requires an auditable reason for every authorized update,
+    // not only for a downgrade. Never submit without explicit confirmation.
+    setUpdateReasonDialogOpen(true);
   };
 
-  const confirmClientFlowDowngrade = async () => {
-    const reason = downgradeReason.trim();
-    if (!reason) return;
-    setDowngradeDialogOpen(false);
-    await executeClientFlowUpdate({ confirmDowngrade: true, reason });
-    setDowngradeReason("");
+  const confirmClientFlowUpdate = async () => {
+    const reason = updateReason.trim();
+    if (!reason || reason.length > 500) return;
+    setUpdateReasonDialogOpen(false);
+    setUpdateReason("");
+    await executeClientFlowUpdate({ confirmDowngrade: isDowngrade, reason });
   };
 
   const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected;
@@ -370,17 +371,20 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
           {error && <Typography variant="body2" sx={{ mt: 0.75, color: "#f87171", fontWeight: 700 }}>Fejl: {error}</Typography>}
         </Box>
       )}
-      <Dialog open={downgradeDialogOpen} onClose={() => setDowngradeDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Bekræft ClientFlow-nedgradering</DialogTitle>
+      <Dialog open={updateReasonDialogOpen} onClose={() => setUpdateReasonDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{isDowngrade ? "Bekræft ClientFlow-nedgradering" : "Bekræft ClientFlow-opdatering"}</DialogTitle>
         <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            Du er ved at ændre ClientFlow fra {installedVersion ? `v${installedVersion}` : "en ukendt version"} til v{resolvedSelectedVersion}. Nedgraderingen logges som en kritisk administratorhandling.
+          <Alert severity={isDowngrade ? "warning" : "info"} sx={{ mb: 2 }}>
+            Du er ved at ændre ClientFlow fra {installedVersion ? `v${installedVersion}` : "en ukendt version"} til v{resolvedSelectedVersion}.
+            {isDowngrade ? " Nedgraderingen logges som en kritisk administratorhandling." : " Angiv en begrundelse, før deploymenten kan autoriseres."}
           </Alert>
-          <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={downgradeReason} onChange={(event) => setDowngradeReason(event.target.value)} helperText={`${downgradeReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />
+          <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={updateReason} onChange={(event) => setUpdateReason(event.target.value)} helperText={`${updateReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDowngradeDialogOpen(false)}>Annuller</Button>
-          <Button color="warning" variant="contained" disabled={!downgradeReason.trim()} onClick={confirmClientFlowDowngrade}>Bekræft nedgradering</Button>
+          <Button onClick={() => setUpdateReasonDialogOpen(false)}>Annuller</Button>
+          <Button color={isDowngrade ? "warning" : "primary"} variant="contained" disabled={!updateReason.trim() || starting || inProgress} onClick={confirmClientFlowUpdate}>
+            {isDowngrade ? "Bekræft nedgradering" : "Bestil ClientFlow-opdatering"}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
