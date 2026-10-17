@@ -24,6 +24,7 @@ from ..clientflow_deployments import (
     cancel_deployment,
     create_authorized_deployment,
 )
+from ..clientflow_pilot_1240 import ClientFlowPilotDenied, PILOT_FLAG, require_pilot_1240
 from ..clientflow_releases import (
     ClientFlowArtifactUnavailable,
     ClientFlowCatalogError,
@@ -238,6 +239,20 @@ def create_clientflow_deployment(
     except ClientFlowCatalogError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Defense-in-depth: catalog eligibility is not a per-client permission.
+    # Deny all requests except the explicitly switched-on 1240/Viborg1 pilot.
+    try:
+        require_pilot_1240(
+            client_id=client_id,
+            current_version=current_version,
+            release=release,
+            reason=body.reason,
+            pre_first_activation_repair=body.pre_first_activation_repair,
+            confirm_downgrade=body.confirm_downgrade,
+        )
+    except ClientFlowPilotDenied as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     target_version = str(release["version"])
     _require_version_change(target_version, current_version)
     if repair_binding is not None:
@@ -268,6 +283,26 @@ def create_clientflow_deployment(
         # the race where both producers could pass their preliminary guard.
         lock_system_client(session, int(client.id))
         _require_deployable_client(session, client)
+        # Revalidate after the per-client serialization lock, including the
+        # fresh canonical Status version and the immutable bundle identity.
+        locked_version = _canonical_runtime_version(session, client)
+        try:
+            validate_release_compatibility(
+                release, current_version=locked_version, ubuntu_version=client.ubuntu_version
+            )
+            require_pilot_1240(
+                client_id=int(client.id),
+                current_version=locked_version,
+                release=release,
+                reason=reason,
+                pre_first_activation_repair=repair_binding is not None,
+                confirm_downgrade=body.confirm_downgrade,
+                artifact=artifact,
+            )
+        except (ClientFlowCatalogError, ClientFlowPilotDenied) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if locked_version != current_version:
+            raise HTTPException(status_code=409, detail="Klientens aktive release ændrede sig under autorisation")
         deployment = create_authorized_deployment(
             session,
             client_id=int(client.id),
@@ -303,6 +338,9 @@ def create_clientflow_deployment(
                 "bundle_size": deployment.bundle_size,
                 "release_approval_reference": deployment.release_approval_reference,
                 "allow_downgrade": deployment.allow_downgrade,
+                "pilot_client_id": 1,
+                "pilot_source_version": "1.3.38",
+                "pilot_authorization_flag": PILOT_FLAG,
                 "pre_first_activation_repair": repair_binding is not None,
                 "repair_from_release_id": repair_binding.get("release_id") if repair_binding else None,
                 "repair_from_release_sequence": repair_binding.get("release_sequence") if repair_binding else None,

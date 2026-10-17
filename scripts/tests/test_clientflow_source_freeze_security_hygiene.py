@@ -94,17 +94,26 @@ def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1239
+    assert catalog["catalog_sequence"] == 1240
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
     selected = catalog["releases"][0]
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["rollback_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]
     assert "min_current_version" not in selected
+    pilot = catalog["releases"][1]
+    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["release_sequence"] == 1240
+    assert pilot["status"] == "supported"
+    assert pilot["installable"] is False
+    assert pilot["update_allowed"] is True
+    assert pilot["rollback_allowed"] is False
+    assert pilot["install_modes"] == ["in_place_update"]
+    assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
     assert all(item.get("release_sequence") != 1228 for item in catalog["releases"])
 
     stage = (ROOT / "CLIENTFLOW_1.3.34_1235_PHYSICAL_ACCEPTANCE_BLOCKERS_STAGE1.md").read_text(encoding="utf-8")

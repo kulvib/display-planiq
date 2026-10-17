@@ -13,7 +13,7 @@ def _json(path: str):
     return json.loads((ROOT / path).read_text(encoding="utf-8"))
 
 
-def test_source_stage_exact_identity_while_published_1239_is_unchanged():
+def test_exact_1240_pilot_promotion_preserves_1239_fresh_install_default():
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.39"
     source = _json("client/release/release-input.json")
     assert source == {
@@ -24,31 +24,37 @@ def test_source_stage_exact_identity_while_published_1239_is_unchanged():
         "runtime_python": "3.13.14",
     }
     catalog = _json("backend/service1/clientflow_release_catalog.json")
-    assert catalog["catalog_sequence"] == 1239
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1240
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
-    assert len(catalog["releases"]) == 1
-    release, = catalog["releases"]
-    assert release["release_id"] == "clientflow-1.3.38-seq-1239"
-    assert release["install_modes"] == ["fresh_install"]
-    assert release["update_allowed"] is False
-    assert release["rollback_allowed"] is False
-    assert release["installable"] is True
-    assert all(row["release_sequence"] != 1240 for row in catalog["releases"])
+    assert len(catalog["releases"]) == 2
+    old, pilot = catalog["releases"]
+    assert old["release_id"] == "clientflow-1.3.38-seq-1239"
+    assert old["install_modes"] == ["fresh_install"]
+    assert old["update_allowed"] is False and old["rollback_allowed"] is False
+    assert old["installable"] is True
+    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["install_modes"] == ["in_place_update"]
+    assert pilot["installable"] is False
+    assert pilot["status"] == "supported"
+    assert pilot["update_allowed"] is True and pilot["rollback_allowed"] is False
+    assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
 
 
-def test_no_update_and_no_rollback_from_unpublished_source_stage():
+def test_new_pilot_selector_does_not_authorize_downgrade_or_fleet_update(monkeypatch):
     from service1.clientflow_releases import (
-        ClientFlowCatalogError,
-        load_catalog,
-        resolve_release,
-        resolve_fresh_install_release,
+        ClientFlowCatalogError, load_catalog, resolve_release, resolve_fresh_install_release,
     )
+    from service1.clientflow_pilot_1240 import ClientFlowPilotDenied, require_pilot_1240
+
     load_catalog.cache_clear()
     assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
-    with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
-        resolve_release("1.3.39")
+    release = resolve_release("1.3.39")
+    monkeypatch.delenv("CLIENTFLOW_1240_PILOT_CLIENT_ID", raising=False)
+    with pytest.raises(ClientFlowPilotDenied):
+        require_pilot_1240(client_id=1, current_version="1.3.38", release=release,
+            reason="physical test", pre_first_activation_repair=False, confirm_downgrade=False)
     with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):
         resolve_release("1.3.38")
     for implicit in ("", "latest", "stable"):

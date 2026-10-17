@@ -20,10 +20,10 @@ def test_1239_source_identity_matches_published_catalog_after_approval():
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1239
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1240
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 1
+    assert len(catalog["releases"]) == 2
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["release_sequence"] == 1239
@@ -31,6 +31,15 @@ def test_1239_source_identity_matches_published_catalog_after_approval():
     assert selected["install_modes"] == ["fresh_install"]
     assert selected["update_allowed"] is False
     assert selected["rollback_allowed"] is False
+    pilot = catalog["releases"][1]
+    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["release_sequence"] == 1240
+    assert pilot["status"] == "supported"
+    assert pilot["installable"] is False
+    assert pilot["update_allowed"] is True
+    assert pilot["rollback_allowed"] is False
+    assert pilot["install_modes"] == ["in_place_update"]
+    assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
     assert all(row["release_sequence"] != 1238 for row in catalog["releases"])
 
 
