@@ -17,11 +17,11 @@ def test_exact_promotion_preserves_no_update_no_rollback_and_historical_evidence
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.39"
     assert source["release_sequence"] == 1240
-    assert catalog["catalog_sequence"] == 1239
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1240
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
-    assert len(catalog["releases"]) == 1
+    assert len(catalog["releases"]) == 2
     release = catalog["releases"][0]
     assert release["release_id"] == release["revision"] == RELEASE
     assert release["version"] == release["client_version"] == "1.3.38"
@@ -33,6 +33,15 @@ def test_exact_promotion_preserves_no_update_no_rollback_and_historical_evidence
     assert "min_current_version" not in release
     assert all(key not in release for key in ("bundle_sha256", "bundle_size", "approval_reference", "source_commit"))
     assert release["ubuntu_compatibility"]["display_stack"] == "wayland"
+    pilot = catalog["releases"][1]
+    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["release_sequence"] == 1240
+    assert pilot["status"] == "supported"
+    assert pilot["installable"] is False
+    assert pilot["update_allowed"] is True
+    assert pilot["rollback_allowed"] is False
+    assert pilot["install_modes"] == ["in_place_update"]
+    assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
     assert (ROOT / "CLIENTFLOW_1.3.37_1238_FRESH_INSTALL_CATALOG_PROMOTION.md").is_file()
 
 

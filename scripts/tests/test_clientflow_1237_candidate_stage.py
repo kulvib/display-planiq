@@ -21,9 +21,9 @@ def test_source_1237_is_promoted_only_after_immutable_publication() -> None:
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1239
+    assert catalog["catalog_sequence"] == 1240
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 1
+    assert len(catalog["releases"]) == 2
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["release_sequence"] == 1239
@@ -31,6 +31,15 @@ def test_source_1237_is_promoted_only_after_immutable_publication() -> None:
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["rollback_allowed"] is False
+    pilot = catalog["releases"][1]
+    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["release_sequence"] == 1240
+    assert pilot["status"] == "supported"
+    assert pilot["installable"] is False
+    assert pilot["update_allowed"] is True
+    assert pilot["rollback_allowed"] is False
+    assert pilot["install_modes"] == ["in_place_update"]
+    assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
     assert not any(x["release_sequence"] in {1236, 1237} for x in catalog["releases"])
     assert "3d44274f79d0df899963edef4c93ada153f31d77d62692dbf3bb6a1c9799c856" in (ROOT / "CLIENTFLOW_1.3.36_1237_FRESH_INSTALL_CATALOG_PROMOTION.md").read_text(encoding="utf-8")
 

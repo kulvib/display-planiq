@@ -1,14 +1,14 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1239,
+  "catalog_sequence": 1240,
   "latest_stable": "1.3.38",
   "default_install_version": "1.3.38",
   "retention_policy": {
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-10-15T14:24:59Z",
+  "created_at": "2026-10-17T14:56:20Z",
   "releases": [
     {
       "version": "1.3.38",
@@ -44,6 +44,42 @@
         "fresh_install"
       ],
       "block_reason": "ClientFlow 1.3.38 er kun frigivet til fresh install; in-place update og rollback er ikke fysisk verificeret fra en autentisk ældre ClientFlow-baseline."
+    },
+    {
+      "version": "1.3.39",
+      "client_version": "1.3.39",
+      "release_sequence": 1240,
+      "revision": "clientflow-1.3.39-seq-1240",
+      "status": "supported",
+      "installable": false,
+      "update_allowed": true,
+      "rollback_allowed": false,
+      "requires_explicit_downgrade": false,
+      "requires_reboot": true,
+      "ubuntu_compatibility": {
+        "policy": "ubuntu-desktop-lts-minimum",
+        "minimum_lts_version": "26.04",
+        "maximum_certified_version": "26.04",
+        "certified_versions": [
+          "26.04"
+        ],
+        "architecture": "amd64",
+        "desktop": "gnome",
+        "display_stack": "wayland",
+        "requires_platform_preflight": true
+      },
+      "notes": [
+        "Approved immutable ClientFlow 1.3.39/1240 transport is already stored on Render. SHA-256 40fb64e3e8e38686f4b03ee8f66afc81fe7a03247ed723d8a6ce636aebbcb798; size 223498240; source commit 820e605d2e30f8dfea2914d81a1c6ee87053b334; exact-source CI, independent reproducible builds, Ubuntu 26.04 runtime gate, manual approval and independent release-store postflight passed.",
+        "Pilot ONLY: in-place update from exactly 1.3.38 to 1.3.39; backend must additionally enforce CLIENTFLOW_1240_PILOT_CLIENT_ID=1, exact client id 1, online canonical status, reason, no repair/downgrade and exact approved artifact digest. Default is disabled.",
+        "ClientFlow 1.3.38 stays the only fresh-install target. Remote rollback to 1.3.38 is not authorized; local automatic recovery is distinct. No automatic fleet rollout."
+      ],
+      "release_id": "clientflow-1.3.39-seq-1240",
+      "artifact_type": "runtime_release",
+      "install_modes": [
+        "in_place_update"
+      ],
+      "min_current_version": "1.3.38",
+      "max_current_version": "1.3.38"
     }
   ]
 }
