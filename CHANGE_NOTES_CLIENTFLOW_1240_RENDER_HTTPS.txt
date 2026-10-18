@@ -1,0 +1,65 @@
+PlanIQ Display / ClientFlow 1.3.39 seq 1240 — Render HTTPS DPoP fix
+Base repository ZIP: display-planiq-main(20261018-090324).zip
+Base commit (ZIP metadata): 1acfc96a6b59eeeb47908f98813fee750650ac91
+Suggested branch: fix/clientflow-1240-render-https-dpop
+
+SCOPE
+- Pin external HTTPS/WSS scheme only when the HTTP Host header is exactly
+  DISPLAY_PUBLIC_HTTPS_HOST (or that hostname with port 443).
+- Do not consume or trust client-supplied X-Forwarded-* headers.
+- Configure single-node Docker entrypoint default to api.display.planiq.dk.
+- Restore Starlette redirect scheme and the strict existing DPoP htu comparison.
+- Preserve unchanged DPoP signature, key binding, htm, ath, iat and replay gates.
+- Do not change release catalog or immutable ClientFlow 1.3.39/1240 TAR.
+
+FILES
+backend/scripts/start_single_node.sh
+backend/service1/main.py
+backend/service1/public_https_scheme.py
+backend/tests/test_public_https_scheme.py
+SHA256SUMS.txt (full index updated for these changes and this note)
+
+CI FOLLOW-UP (2026-10-18)
+- The original test used fastapi.testclient.TestClient. The CI-pinned Starlette
+  requires optional httpx2 for that import, so test collection failed.
+- Replace only the test transport with a pure standard-library ASGI harness,
+  like the existing in-process ASGI integration tests in the repository.
+- Retains HTTP redirect, DPoP htu, WSS, proxy-header spoofing and configuration tests.
+- No addition to dependency locks; no modification of production behavior.
+
+VALIDATION PERFORMED LOCALLY
+- pytest backend/tests/test_public_https_scheme.py
+- pytest scripts/tests/test_single_node_architecture_contract.py
+- Total 19 passing tests (including existing architecture contracts)
+- Python compileall for changed Python files: passed
+- bash -n backend/scripts/start_single_node.sh: passed
+- Full GitHub CI, Docker smoke, Ruff and deployment: NOT run locally; CI is final gate.
+
+RELEASE / DEPLOYMENT RULES
+1. Apply this ZIP only to the EXACT current main shown above; if main moved,
+   rebase/review before applying. Never use an older ZIP as source of truth.
+2. Open PR, require all CI jobs green before merge.
+3. Deploy Render display-backend only; ensure Live commit matches merged main.
+4. From Viborg1, check HTTPS GET /health/ now returns a 307 with Location:
+   https://api.display.planiq.dk/health (or a direct HTTPS 200).
+5. Observe updater logs for disappearance of DPoP 401 htu error, verify only the
+   already-authorized deployment can advance; DO NOT order it a second time.
+6. After backend deploy, recheck current deployment ID/state and ClientFlow
+   installed version before any reboot or system command.
+7. Restore safe state if checks fail; do not weaken DPoP or enable wildcard
+   --forwarded-allow-ips=*. The pilot remains limited to client_id=1.
+
+ARCHITECTURE NOTE
+Render terminates TLS at its edge and forwards HTTP over its internal network.
+This patch pins the public URL scheme to the known canonical API host instead
+of broadly trusting arbitrary proxy headers. On other deployments, set
+DISPLAY_PUBLIC_HTTPS_HOST to that deployment's public API DNS hostname.
+
+APPLYING THIS FOLLOW-UP
+- This is a full replacement for the earlier HTTPS/DPoP change-only ZIP.
+- On a PR branch that already applied the prior ZIP, overwrite the matching
+  files with the new ones and commit (do not create a second PR).
+- The sole runtime changes remain the originally reviewed startup and scheme
+  restoration; this CI follow-up changes only tests, notes, and checksums.
+- Leave the existing authorized pilot deployment untouched until CI green,
+  merge and Render Live; never issue a second deployment order.

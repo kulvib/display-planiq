@@ -60,6 +60,7 @@ from .branding import PRODUCT_NAME
 from .schema_readiness import check_schema_readiness
 from .release_identity import ReleaseIdentityUnavailable, build_release_identity
 from .rate_limit import RateLimitExceeded, rate_limit_exception_handler
+from .public_https_scheme import PinnedPublicHttpsScheme
 from .season_service import (
     maintain_current_and_next_seasons,
     seconds_until_next_daily_maintenance,
@@ -756,3 +757,11 @@ def read_root():
 @app.get("/ping")
 def ping():
     return {"message": "pong"}
+
+
+# Render terminates public TLS before the single-node Uvicorn HTTP port.
+# Pin only the configured public Host; do not trust spoofable forwarded headers.
+# Added last so it corrects the ASGI scheme before all other middleware/routes.
+_public_https_host = os.getenv("DISPLAY_PUBLIC_HTTPS_HOST", "").strip()
+if _public_https_host:
+    app.add_middleware(PinnedPublicHttpsScheme, public_hostname=_public_https_host)
