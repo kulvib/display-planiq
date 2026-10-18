@@ -63,7 +63,7 @@ def test_active_kiosk_recurring_policy_applies_and_verifies_critical_values(monk
     def fake_run(command, **_kwargs):
         calls.append(command)
         if "gsettings" in " ".join(command):
-            op, schema, key = command[-4], command[-3], command[-2]
+            schema, key = command[-3], command[-2]
             # Set has four trailing tokens; get has three.
             if command[-4] == "set":
                 state[(schema, key)] = command[-1]
