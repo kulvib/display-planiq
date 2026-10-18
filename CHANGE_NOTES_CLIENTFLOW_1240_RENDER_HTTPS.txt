@@ -19,6 +19,14 @@ backend/service1/public_https_scheme.py
 backend/tests/test_public_https_scheme.py
 SHA256SUMS.txt (full index updated for these changes and this note)
 
+CI FOLLOW-UP (2026-10-18)
+- The original test used fastapi.testclient.TestClient. The CI-pinned Starlette
+  requires optional httpx2 for that import, so test collection failed.
+- Replace only the test transport with a pure standard-library ASGI harness,
+  like the existing in-process ASGI integration tests in the repository.
+- Retains HTTP redirect, DPoP htu, WSS, proxy-header spoofing and configuration tests.
+- No addition to dependency locks; no modification of production behavior.
+
 VALIDATION PERFORMED LOCALLY
 - pytest backend/tests/test_public_https_scheme.py
 - pytest scripts/tests/test_single_node_architecture_contract.py
@@ -46,3 +54,12 @@ Render terminates TLS at its edge and forwards HTTP over its internal network.
 This patch pins the public URL scheme to the known canonical API host instead
 of broadly trusting arbitrary proxy headers. On other deployments, set
 DISPLAY_PUBLIC_HTTPS_HOST to that deployment's public API DNS hostname.
+
+APPLYING THIS FOLLOW-UP
+- This is a full replacement for the earlier HTTPS/DPoP change-only ZIP.
+- On a PR branch that already applied the prior ZIP, overwrite the matching
+  files with the new ones and commit (do not create a second PR).
+- The sole runtime changes remain the originally reviewed startup and scheme
+  restoration; this CI follow-up changes only tests, notes, and checksums.
+- Leave the existing authorized pilot deployment untouched until CI green,
+  merge and Render Live; never issue a second deployment order.
