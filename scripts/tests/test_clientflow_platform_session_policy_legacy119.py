@@ -145,7 +145,9 @@ def test_kiosk_session_policy_source_contains_audio_and_gnome_baseline():
     assert "clientflow-kiosk" in source
     enforce_source = source[source.index("def enforce(") : source.index("def main()") ]
     assert "cfadmin" not in enforce_source
-    assert "OnUnitActiveSec=5min" in timer
+    assert "OnBootSec=30s" in timer
+    assert "OnUnitActiveSec=1min" in timer
+    assert "AccuracySec=10s" in timer
     assert "Persistent=true" in timer
     assert "WantedBy=clientflow.target" in timer
     assert "clientflow-kiosk-session-policy.timer" in target

@@ -101,11 +101,21 @@ def test_guard_uses_fixed_user_switch_for_both_desktop_and_audio_commands(monkey
         lambda self: True if str(self) in {"/run/user/1001/bus", "/run/user/1001/pipewire-0"} else original_exists(self),
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(
-        policy,
-        "_run",
-        lambda cmd, **_: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
-    )
+    observed: dict[tuple[str, str], str] = {}
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if str(policy.GSETTINGS) in cmd:
+            index = cmd.index(str(policy.GSETTINGS))
+            operation = cmd[index + 1]
+            schema, key = cmd[index + 2 : index + 4]
+            if operation == "set":
+                observed[(schema, key)] = cmd[index + 4]
+            elif operation == "get":
+                return subprocess.CompletedProcess(cmd, 0, observed.get((schema, key), "") + "\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(policy, "_run", fake_run)
     policy._apply_gsettings(record, lockdown_quicksettings=True, use_setpriv=True)
     policy._apply_audio(record, use_setpriv=True)
 

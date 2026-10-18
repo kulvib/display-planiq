@@ -2,9 +2,9 @@
 Description=ClientFlow recurring kiosk quick-settings timer
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
-AccuracySec=30s
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=10s
 Persistent=true
 Unit=clientflow-kiosk-session-policy.service
 

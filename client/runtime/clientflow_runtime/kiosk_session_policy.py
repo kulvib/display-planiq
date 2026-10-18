@@ -23,6 +23,23 @@ NMCLI = Path("/usr/bin/nmcli")
 RFKILL = Path("/usr/sbin/rfkill")
 POWERPROFILESCTL = Path("/usr/bin/powerprofilesctl")
 WPCTL = Path("/usr/bin/wpctl")
+# All values needed to keep a Wayland information screen on and free of
+# desktop notifications; the optional kiosk lockdown is not the authority.
+CRITICAL_KIOSK_SETTINGS = frozenset({
+    ("org.gnome.desktop.session", "idle-delay"),
+    ("org.gnome.desktop.screensaver", "lock-enabled"),
+    ("org.gnome.desktop.screensaver", "idle-activation-enabled"),
+    ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend"),
+    ("org.gnome.desktop.lockdown", "disable-lock-screen"),
+    ("org.gnome.settings-daemon.plugins.power", "idle-dim"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-timeout"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-timeout"),
+    ("org.gnome.settings-daemon.plugins.power", "power-button-action"),
+    ("org.gnome.desktop.notifications", "show-banners"),
+    ("org.gnome.desktop.notifications", "show-in-lock-screen"),
+})
 
 
 class KioskSessionPolicyError(RuntimeError):
@@ -137,8 +154,10 @@ def _apply_gsettings(
     runtime_dir = Path(f"/run/user/{record.pw_uid}")
     bus = runtime_dir / "bus"
     if not bus.exists():
-        print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: session bus ikke klar", flush=True)
-        return
+        # An active local kiosk Wayland session without its D-Bus is not a
+        # successfully protected kiosk. Let the unit fail and retry on timer;
+        # never report success while screen-lock/notification policy is absent.
+        raise KioskSessionPolicyError("Aktiv kiosk-session mangler D-Bus; GNOME baseline ikke anvendt")
     # Notification banners are never part of the optional lockdown toggle.
     # They are a permanent kiosk-session baseline: Ubuntu/GNOME must not place
     # desktop banners over ClientFlow content. The recurring session policy and
@@ -156,6 +175,20 @@ def _apply_gsettings(
         ("org.gnome.desktop.interface", "color-scheme", "'default'"),
         ("org.gnome.desktop.notifications", "show-banners", "false"),
         ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
+        # These are mandatory for a permanently visible information screen.
+        # The one-shot platform preparation is insufficient after GNOME/session
+        # drift, and the optional lockdown feature must not own these values.
+        ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
+        ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
+        ("org.gnome.desktop.screensaver", "idle-activation-enabled", "false"),
+        ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),
+        ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
+        ("org.gnome.settings-daemon.plugins.power", "idle-dim", "false"),
+        ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"),
+        ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-timeout", "0"),
+        ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"),
+        ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-timeout", "0"),
+        ("org.gnome.settings-daemon.plugins.power", "power-button-action", "'nothing'"),
     ]
     if ACTIVE_BRAND_WALLPAPER.is_file():
         uri = ACTIVE_BRAND_WALLPAPER.as_uri()
@@ -173,6 +206,16 @@ def _apply_gsettings(
         print("CLIENTFLOW_KIOSK_SESSION_POLICY_OPTIONAL: PlanIQ Display wallpaper mangler", flush=True)
     for schema, key, value in settings:
         _run(_user_command(record, [str(GSETTINGS), "set", schema, key, value], use_setpriv=use_setpriv))
+
+    # GNOME can acknowledge a write without changing a dconf-locked key.
+    # Verify the canonical always-awake/never-lock values after applying them.
+    # Only the kiosk user's active D-Bus is inspected, never cfadmin.
+    for schema, key, expected in settings:
+        if (schema, key) not in CRITICAL_KIOSK_SETTINGS:
+            continue
+        result = _run(_user_command(record, [str(GSETTINGS), "get", schema, key], use_setpriv=use_setpriv))
+        if result.stdout.strip() != expected:
+            raise KioskSessionPolicyError(f"GNOME kiosk baseline drift: {schema}/{key}")
 
 
 def _apply_audio(record: pwd.struct_passwd, *, use_setpriv: bool = False) -> None:
