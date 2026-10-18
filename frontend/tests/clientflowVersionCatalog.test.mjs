@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "../src/pages/clientdetailspage/clientflowCatalogOptions.mjs";
 
 const infoSource = fs.readFileSync(
   new URL("../src/pages/clientdetailspage/ClientDetailsInfoSection.jsx", import.meta.url),
@@ -13,8 +14,9 @@ const auditSource = fs.readFileSync(
 );
 
 test("Control Room only selects stable or supported ClientFlow releases", () => {
-  assert.match(infoSource, /\["stable", "supported"\]/);
-  assert.match(infoSource, /release\?\.update_allowed === true/);
+  const optionSource = fs.readFileSync(new URL("../src/pages/clientdetailspage/clientflowCatalogOptions.mjs", import.meta.url), "utf8");
+  assert.match(optionSource, /\["stable", "supported"\]/);
+  assert.match(optionSource, /release\.update_allowed === true/);
   assert.match(infoSource, /Seneste stabile/);
   assert.match(infoSource, /Bekræft ClientFlow-nedgradering/);
   assert.match(infoSource, /Begrundelse/);
@@ -56,4 +58,40 @@ test("Control Room always requires an explicit reason before any ClientFlow depl
   assert.match(infoSource, /disabled=\{!updateReason\.trim\(\) \|\| starting \|\| inProgress\}/);
   assert.match(infoSource, /Bekræft ClientFlow-opdatering/);
   assert.doesNotMatch(infoSource, /executeClientFlowUpdate\(\);/);
+});
+
+
+test("Control Room actually fetches the protected release catalog and fails closed on errors", () => {
+  assert.match(infoSource, /const fetchCatalog = async \(\) => \{/);
+  assert.match(infoSource, /normalizeClientflowReleaseCatalog\(await getClientflowReleases\(\)\)/);
+  assert.match(infoSource, /if \(!cancelled\) setReleaseCatalog\(catalog\)/);
+  assert.match(infoSource, /setReleaseCatalog\(null\)/);
+  assert.match(infoSource, /setCatalogError\(err\?\.message/);
+  assert.match(infoSource, /return \(\) => \{ cancelled = true; \}/);
+  assert.match(infoSource, /\[clientId, catalogRetryKey\]/);
+  assert.match(infoSource, /setCatalogRetryKey\(\(previous\) => previous \+ 1\)/);
+  assert.match(infoSource, /!releaseCatalog \|\| !selectedRelease/);
+});
+
+test("supported 1.3.39 update pilot is selectable while fresh-install-only and blocked versions are not", () => {
+  const valid = normalizeClientflowReleaseCatalog({
+    latest_stable: "1.3.38",
+    releases: [
+      { version: "1.3.38", status: "stable", update_allowed: false, install_modes: ["fresh_install"] },
+      { version: "1.3.39", status: "supported", update_allowed: true, install_modes: ["in_place_update"], installable: false },
+      { version: "1.3.40", status: "blocked", update_allowed: true, install_modes: ["in_place_update"] },
+      { version: "1.3.41", status: "supported", update_allowed: true, install_modes: ["fresh_install"] },
+      { version: "1.3.42", status: "supported", update_allowed: false, install_modes: ["in_place_update"] },
+    ],
+  });
+  assert.deepEqual(selectableClientflowUpdateReleases(valid).map((release) => release.version), ["1.3.39"]);
+  assert.deepEqual(selectableClientflowUpdateReleases(null), []);
+  assert.deepEqual(selectableClientflowUpdateReleases({ releases: null }), []);
+});
+
+test("malformed or missing release catalog must be rejected, not interpreted as an empty success", () => {
+  for (const invalid of [undefined, null, [], {}, { latest_stable: "1.3.38", releases: null },
+    { latest_stable: "", releases: [] }]) {
+    assert.throws(() => normalizeClientflowReleaseCatalog(invalid), /ugyldigt format/);
+  }
 });
