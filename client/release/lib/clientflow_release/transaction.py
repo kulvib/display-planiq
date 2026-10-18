@@ -42,6 +42,34 @@ class TransactionError(RuntimeError):
     pass
 
 
+class CommandExecutionError(TransactionError):
+    """A failed host command; expose only non-secret metadata in durable history."""
+
+    def __init__(self, command: list[str], returncode: int, output: str) -> None:
+        self.program = Path(command[0]).name
+        self.returncode = returncode
+        # Do not change the existing local exception diagnostics. The durable
+        # release history below never stores the untrusted command output.
+        super().__init__(
+            f"Kommando fejlede ({returncode}): {' '.join(command)}\n{output[-4000:]}"
+        )
+
+
+def _safe_failure_details(exc: Exception, step: str) -> dict[str, Any]:
+    """Bounded, credential-free diagnostics for root-owned release history."""
+    details: dict[str, Any] = {
+        "step": step,
+        "error_type": type(exc).__name__,
+    }
+    if isinstance(exc, CommandExecutionError):
+        details["program"] = exc.program
+        details["exit_code"] = exc.returncode
+    elif isinstance(exc, subprocess.TimeoutExpired):
+        details["program"] = Path(str(exc.cmd[0])).name if isinstance(exc.cmd, (list, tuple)) else "unknown"
+        details["timeout_seconds"] = exc.timeout
+    return details
+
+
 @dataclass(frozen=True, slots=True)
 class Layout:
     root: Path = Path("/")
@@ -748,7 +776,7 @@ def _run(command: list[str], *, timeout: int = 180, check: bool = True) -> subpr
         env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
     )
     if check and result.returncode != 0:
-        raise TransactionError(f"Kommando fejlede ({result.returncode}): {' '.join(command)}\n{result.stdout[-4000:]}")
+        raise CommandExecutionError(command, result.returncode, result.stdout)
     return result
 
 
@@ -1101,6 +1129,7 @@ def _activate_release(
     _disable_power_lifecycle_reporters(layout)
     if previous is not None:
         _retire_preserved_first_activation_gui_before_update(layout)
+    activation_step = "apply_definitions"
     try:
         if previous is None:
             # Backend approval has been re-proved before _activate_release is entered.
@@ -1111,9 +1140,13 @@ def _activate_release(
         # cannot know whether the previous process died before or after the unit
         # swap. The immutable staged release makes this operation idempotent.
         _apply_definitions(layout, release_root)
+        activation_step = "switch_active"
         _switch_active(layout, release_id)
+        activation_step = "systemd_prepare"
         _systemd_prepare(layout)
+        activation_step = "start_target"
         _start_target(layout)
+        activation_step = "health_check"
         manifest = json.loads((release_root / "release-manifest.json").read_text())
         _health_check(layout, release_id, timeout=int(manifest["activation"]["health_timeout_seconds"]))
 
@@ -1122,6 +1155,7 @@ def _activate_release(
         # successful health boundary first while activation_intent still binds
         # the exact release/approval/previous state.  Only then may boot wiring
         # become persistent.
+        activation_step = "commit_health_boundary"
         intent["health_verified_at"] = _now()
         _append_history(
             state,
@@ -1131,7 +1165,9 @@ def _activate_release(
             release_approval_reference=release_approval_reference,
         )
         save_state(layout, state)
+        activation_step = "enable_power_reporters"
         _enable_power_lifecycle_reporters(layout)
+        activation_step = "enable_target"
         _enable_target(layout)
         if previous is None:
             # First activation is the lifecycle boundary that opens update auth.
@@ -1159,15 +1195,23 @@ def _activate_release(
             # A failed first activation must immediately return the preserved GUI
             # to status-only pending mode; never leave an authorization marker.
             _remove_first_activation_gui_handoff(layout)
-        _quiesce_runtime(layout)
-        _disable_power_lifecycle_reporters(layout)
+        activation_failure = _safe_failure_details(activation_error, activation_step)
+        rollback_step = "quiesce_runtime"
         try:
+            _quiesce_runtime(layout)
+            rollback_step = "disable_power_reporters"
+            _disable_power_lifecycle_reporters(layout)
+            rollback_step = "apply_definitions"
             if previous:
                 previous_root = layout.releases / previous
                 _apply_definitions(layout, previous_root)
+                rollback_step = "switch_active"
                 _switch_active(layout, previous)
+                rollback_step = "systemd_prepare"
                 _systemd_prepare(layout)
+                rollback_step = "start_target"
                 _start_target(layout)
+                rollback_step = "health_check"
                 _health_check(layout, previous, timeout=120)
                 _append_history(
                     state,
@@ -1175,8 +1219,11 @@ def _activate_release(
                     failed_release_id=release_id,
                     restored_release_id=previous,
                 )
+                rollback_step = "commit_rollback_health_boundary"
                 save_state(layout, state)
+                rollback_step = "enable_power_reporters"
                 _enable_power_lifecycle_reporters(layout)
+                rollback_step = "enable_target"
                 _enable_target(layout)
             else:
                 _restore_pending_first_activation(layout, release_root)
@@ -1187,6 +1234,8 @@ def _activate_release(
                 release_id=release_id,
                 previous_release_id=previous,
                 error=type(rollback_error).__name__,
+                activation_failure=activation_failure,
+                rollback_failure=_safe_failure_details(rollback_error, rollback_step),
             )
             save_state(layout, state)
             raise TransactionError("Aktivering og automatisk rollback fejlede") from rollback_error
@@ -1199,6 +1248,7 @@ def _activate_release(
             failed_release_id=release_id,
             restored_release_id=previous,
             error=type(activation_error).__name__,
+            activation_failure=activation_failure,
         )
         save_state(layout, state)
         raise TransactionError("Aktivering fejlede; tidligere release blev automatisk gendannet") from activation_error
@@ -1240,6 +1290,137 @@ def activate_release(
                     "Fresh first activation kræver et backend-approved client proof før lokal mutation"
                 ) from exc
         return _activate_release(layout, state, release_id, canonical_reference)
+
+
+
+def recover_failed_update(
+    *,
+    expected_failed_release_id: str,
+    expected_release_approval_reference: str,
+    expected_previous_release_id: str,
+    layout: Layout = Layout(),
+) -> dict[str, Any]:
+    """Resume only an audited, failed in-place automatic rollback.
+
+    The backend must separately retain its original deployment history. This
+    local operation never authorizes a new update and never activates the
+    failed target. It also supports explicit root-only repair after the
+    backend has already recorded a terminal recovery_failed outcome.
+    """
+    failed = _validate_release_id(expected_failed_release_id)
+    previous = _validate_release_id(expected_previous_release_id)
+    approval = _validate_approval(expected_release_approval_reference)
+    if failed == previous:
+        raise TransactionError("Recovery kræver to forskellige release-ID'er")
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Lokal update-recovery kræver root")
+
+    with TransactionLock(layout):
+        state = load_state(layout)
+        intent = state.get("activation_intent")
+        if not isinstance(intent, dict) or any((
+            intent.get("release_id") != failed,
+            intent.get("previous_release_id") != previous,
+            intent.get("release_approval_reference") != approval,
+            state.get("active_release_id") != previous,
+            state.get("staged_release_id") != failed,
+            state.get("previous_release_id") is not None,
+        )):
+            raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
+        if not isinstance(state.get("installed"), dict) or not {previous, failed}.issubset(state["installed"]):
+            raise TransactionError("Recovery kræver begge installerede releases")
+        if _read_active_release_id(layout) not in {previous, failed}:
+            raise TransactionError("Recovery afvist: active symlink matcher ikke activation-intent")
+
+        history = state.get("history") or []
+        anchors = [index for index, event in enumerate(history)
+                   if isinstance(event, dict)
+                   and event.get("event") == "activation_intent_committed"
+                   and event.get("release_id") == failed
+                   and event.get("previous_release_id") == previous
+                   and event.get("release_approval_reference") == approval]
+        if not anchors or not any(
+            isinstance(event, dict)
+            and event.get("event") == "automatic_rollback_failed"
+            and event.get("release_id") == failed
+            and event.get("previous_release_id") == previous
+            for event in history[anchors[-1] + 1:]
+        ):
+            raise TransactionError("Recovery kræver dokumenteret fejl efter præcis activation-intent")
+
+        previous_root = layout.releases / previous
+        manifest = load_secure_json(
+            previous_root / "release-manifest.json", max_bytes=8 * 1024 * 1024,
+            forbidden_mode_bits=0o022,
+        )
+        record = state["installed"][previous]
+        if (not isinstance(record, dict)
+                or manifest.get("release_id") != previous
+                or record.get("manifest_sha256") != _manifest_digest(manifest)):
+            raise TransactionError("Recovery afvist: tidligere release provenance matcher ikke")
+        _validate_prepared_release_tree(previous_root, manifest)
+
+        recovery_step = "disable_target"
+        try:
+            # Keep reboot fail-closed until the previous release is verified.
+            _disable_target(layout)
+            recovery_step = "quiesce_runtime"
+            _quiesce_runtime(layout)
+            recovery_step = "disable_power_reporters"
+            _disable_power_lifecycle_reporters(layout)
+            recovery_step = "apply_definitions"
+            _apply_definitions(layout, previous_root)
+            recovery_step = "switch_active"
+            _switch_active(layout, previous)
+            recovery_step = "systemd_prepare"
+            _systemd_prepare(layout)
+            recovery_step = "start_target"
+            _start_target(layout)
+            recovery_step = "health_check"
+            _health_check(layout, previous, timeout=120)
+            _append_history(
+                state, "rollback_health_verified", failed_release_id=failed,
+                restored_release_id=previous, resumed_after_recovery_failure=True,
+            )
+            recovery_step = "commit_health_boundary"
+            save_state(layout, state)
+            recovery_step = "enable_power_reporters"
+            _enable_power_lifecycle_reporters(layout)
+            recovery_step = "enable_target"
+            _enable_target(layout)
+        except Exception as exc:
+            cleanup_failure = None
+            # Even a partial recovery must not leave an unverified target
+            # enabled across the next boot.
+            try:
+                _disable_target(layout)
+                _quiesce_runtime(layout)
+                _disable_power_lifecycle_reporters(layout)
+            except Exception as cleanup_exc:
+                cleanup_failure = _safe_failure_details(cleanup_exc, "fail_closed_cleanup")
+            _append_history(
+                state, "automatic_rollback_failed", release_id=failed,
+                previous_release_id=previous, resumed_recovery=True,
+                rollback_failure=_safe_failure_details(exc, recovery_step),
+                **({"cleanup_failure": cleanup_failure} if cleanup_failure else {}),
+            )
+            save_state(layout, state)
+            raise TransactionError("Genoptaget lokal rollback fejlede; activation-intent er bevaret") from exc
+
+        # Prepare the durable commit on a distinct copy. If the atomic save
+        # fails, the in-memory state must not be mistaken for a committed
+        # recovery, and the original activation intent remains on disk.
+        committed = dict(state)
+        committed["history"] = list(state["history"])
+        committed["active_release_id"] = previous
+        committed["previous_release_id"] = None
+        committed["activation_intent"] = None
+        _append_history(
+            committed, "automatic_rollback_completed", failed_release_id=failed,
+            restored_release_id=previous, resumed_after_recovery_failure=True,
+        )
+        save_state(layout, committed)
+        return {"status": "rolled_back", "release_id": failed, "restored_release_id": previous}
 
 
 def rollback_release(

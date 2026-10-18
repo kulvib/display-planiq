@@ -285,7 +285,12 @@ def _controller(
         ):
             path = release_root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("operational-update-chain\n", encoding="utf-8")
+            path.write_text(
+                (REPO_ROOT / "client/systemd/clientflow-update-controller.service").read_text(encoding="utf-8")
+                if relative == "client-runtime/systemd/clientflow-update-controller.service"
+                else "operational-update-chain\n",
+                encoding="utf-8",
+            )
             path.chmod(0o444)
         local_state["installed"][snapshot.target_release_id] = _local_record(snapshot, manifest)
         local_state["highest_release_sequence"] = snapshot.target_release_sequence

@@ -21,7 +21,7 @@ import uuid
 
 from .constants import INSTALL_MODE_UPDATE
 from .filesystem import atomic_write_json, ensure_real_directory, fsync_directory, load_secure_json
-from .transaction import Layout, TransactionError, activate_release, stage_bundle, status
+from .transaction import Layout, TransactionError, activate_release, recover_failed_update, stage_bundle, status
 from .updater_config import UpdaterConfig
 from .updater_state import DeploymentSnapshot
 from .updater_transport import UpdaterTransport, UpdaterTransportError
@@ -508,6 +508,40 @@ def _assert_target_controller_support(layout: Layout, snapshot: DeploymentSnapsh
                 f"Target release har ugyldig update-controller support: {relative}"
             )
 
+    # The target's unit will become the managed definition after activation.
+    # A previous physical update failed because ProtectHome=yes concealed the
+    # kiosk home from the privileged setfacl step in both activation/rollback.
+    # Reject that incompatible target *before* backend activation authorization.
+    controller_unit = release_root / required[0]
+    try:
+        text = controller_unit.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise UpdateControllerError("Target controller unit kan ikke indlæses") from exc
+    directives: dict[str, list[str]] = {}
+    section = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line
+            continue
+        if section != "[Service]" or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        directives.setdefault(name, []).append(value.strip())
+    if (
+        directives.get("User") != ["root"]
+        or directives.get("ProtectHome") != ["tmpfs"]
+        or directives.get("BindPaths") != ["/home/clientflow-kiosk"]
+        or "BindReadOnlyPaths" in directives
+        or "InaccessiblePaths" in directives
+        or "ReadOnlyPaths" in directives
+    ):
+        raise UpdateControllerError(
+            "Target controller unit mangler den verificerede, afgrænsede kiosk-home sandkasse"
+        )
+
 
 def _assert_local_staged(layout: Layout, snapshot: DeploymentSnapshot, local_state: dict[str, Any]) -> None:
     installed = local_state.get("installed") or {}
@@ -596,6 +630,7 @@ class UpdateController:
         stage_func: Callable[..., dict[str, Any]] = stage_bundle,
         activate_func: Callable[..., dict[str, Any]] = activate_release,
         status_func: Callable[..., dict[str, Any]] = status,
+        recovery_func: Callable[..., dict[str, Any]] = recover_failed_update,
     ) -> None:
         self.config = config
         self.transport = transport or UpdateControllerTransport(config)
@@ -606,6 +641,7 @@ class UpdateController:
         self.stage_func = stage_func
         self.activate_func = activate_func
         self.status_func = status_func
+        self.recovery_func = recovery_func
 
     @staticmethod
     def _deployment_state(deployment: dict[str, Any]) -> str:
@@ -853,6 +889,42 @@ class UpdateController:
             "release_id": snapshot.target_release_id,
         }
 
+    def _resume_failed_local_rollback(
+        self, snapshot: DeploymentSnapshot, local_state: dict[str, Any],
+    ) -> LocalActivationOutcome | None:
+        """One bounded recovery attempt before reporting an active backend failure.
+
+        Never recover a different release/deployment or re-activate the failed
+        target. The transaction API takes the canonical release lock and checks
+        the durable approval and failure event again before any mutation.
+        """
+        intent = local_state.get("activation_intent")
+        if not isinstance(intent, dict) or (
+            intent.get("release_id") != snapshot.target_release_id
+            or intent.get("release_approval_reference") != snapshot.release_approval_reference
+        ):
+            return None
+        previous = intent.get("previous_release_id")
+        if not isinstance(previous, str) or not previous:
+            return None  # first activation follows its separate pending recovery
+        try:
+            self.recovery_func(
+                expected_failed_release_id=snapshot.target_release_id,
+                expected_release_approval_reference=snapshot.release_approval_reference,
+                expected_previous_release_id=previous,
+                layout=self.layout,
+            )
+        except TransactionError:
+            return None  # preserve fail-closed terminal outcome and local evidence
+        repaired = self.status_func(self.layout)
+        outcome = _local_activation_outcome(
+            self.layout, snapshot, repaired,
+            history_anchor=self.controller_state.history_anchor,
+        )
+        if outcome is None or outcome.state != "rolled_back" or outcome.previous_release_id != previous:
+            raise UpdateControllerError("Recovery returnerede uden eksakt rollback-outcome")
+        return outcome
+
     def _activate_or_reconcile(self, snapshot: DeploymentSnapshot, backend_state: str) -> dict[str, Any]:
         local_state = self.status_func(self.layout)
         phase = self.controller_state.phase
@@ -878,6 +950,10 @@ class UpdateController:
                 LocalActivationOutcome("rolled_back", self.controller_state.previous_release_id),
             )
         if phase == "recovery_failed":
+            outcome = self._resume_failed_local_rollback(snapshot, local_state)
+            if outcome is not None:
+                self.controller_state.mark_outcome(outcome)
+                return self._report_rollback(snapshot, outcome)
             return self._report_recovery_failed(snapshot)
         if phase != "activation_authorized":
             raise UpdateControllerError(
@@ -897,6 +973,10 @@ class UpdateController:
             if outcome.state == "rolled_back":
                 return self._report_rollback(snapshot, outcome)
             if outcome.state == "recovery_failed":
+                recovered = self._resume_failed_local_rollback(snapshot, local_state)
+                if recovered is not None:
+                    self.controller_state.mark_outcome(recovered)
+                    return self._report_rollback(snapshot, recovered)
                 return self._report_recovery_failed(snapshot)
             raise UpdateControllerError("Ukendt lokal activation outcome")
 
@@ -927,6 +1007,10 @@ class UpdateController:
             if outcome.state == "rolled_back":
                 return self._report_rollback(snapshot, outcome)
             if outcome.state == "recovery_failed":
+                recovered = self._resume_failed_local_rollback(snapshot, recovered_state)
+                if recovered is not None:
+                    self.controller_state.mark_outcome(recovered)
+                    return self._report_rollback(snapshot, recovered)
                 return self._report_recovery_failed(snapshot)
             if outcome.state == "succeeded":
                 return self._report_success(snapshot, outcome)

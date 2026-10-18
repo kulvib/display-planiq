@@ -52,6 +52,7 @@ from .transaction import (
     install_stable_updater_host,
     install_staged_definitions,
     rollback_release,
+    recover_failed_update,
     stage_bundle,
     status,
 )
@@ -1251,6 +1252,10 @@ def transaction_main(argv: list[str] | None = None) -> int:
     rollback.add_argument("--release-id")
     rollback.add_argument("--expected-release-approval-reference", required=True)
     rollback.add_argument("--reason", required=True)
+    recover = sub.add_parser("recover-failed-update")
+    recover.add_argument("--expected-failed-release-id", required=True)
+    recover.add_argument("--expected-previous-release-id", required=True)
+    recover.add_argument("--expected-release-approval-reference", required=True)
     sub.add_parser("status")
     args = parser.parse_args(argv)
     if args.operation == "stage":
@@ -1273,6 +1278,12 @@ def transaction_main(argv: list[str] | None = None) -> int:
             release_id=args.release_id,
             expected_release_approval_reference=args.expected_release_approval_reference,
             reason=args.reason,
+        )
+    elif args.operation == "recover-failed-update":
+        result = recover_failed_update(
+            expected_failed_release_id=args.expected_failed_release_id,
+            expected_previous_release_id=args.expected_previous_release_id,
+            expected_release_approval_reference=args.expected_release_approval_reference,
         )
     else:
         result = status()

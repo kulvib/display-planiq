@@ -230,7 +230,12 @@ def _controller_fixture(
         ):
             required = release_root / relative
             required.parent.mkdir(parents=True, exist_ok=True)
-            required.write_text("controller-support\n", encoding="utf-8")
+            required.write_text(
+                (REPO_ROOT / "client/systemd/clientflow-update-controller.service").read_text(encoding="utf-8")
+                if relative == "client-runtime/systemd/clientflow-update-controller.service"
+                else "controller-support\n",
+                encoding="utf-8",
+            )
             required.chmod(0o444)
         local_state["installed"][snapshot.target_release_id] = _record(snapshot, manifest)
         local_state["highest_release_sequence"] = snapshot.target_release_sequence
@@ -526,3 +531,157 @@ def test_controller_idle_bootstrap_does_not_issue_second_active_deployment_reque
 
         assert result == {"status": "idle", "deployment_id": None, "release_id": None}
         assert controller.controller_state.phase == "idle"
+
+
+def test_controller_recovers_exact_failed_local_rollback_before_reporting_backend_failure():
+    """A recoverable 1240-style failure must report rolled_back, never succeeded."""
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        controller, transport, snapshot, actions, local_state = _controller_fixture(Path(raw_tmp))
+        previous = local_state["active_release_id"]
+
+        def fail_activation(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+            actions.append("local_activate")
+            local_state["activation_intent"] = {
+                "release_id": release_id,
+                "previous_release_id": previous,
+                "release_approval_reference": expected_release_approval_reference,
+            }
+            local_state["history"].append({
+                "event": "automatic_rollback_failed",
+                "release_id": release_id,
+                "previous_release_id": previous,
+            })
+            raise TransactionError("Aktivering og automatisk rollback fejlede")
+
+        def resume(*, expected_failed_release_id, expected_previous_release_id,
+                   expected_release_approval_reference, layout):
+            assert expected_failed_release_id == snapshot.target_release_id
+            assert expected_previous_release_id == previous
+            assert expected_release_approval_reference == snapshot.release_approval_reference
+            assert layout == controller.layout
+            actions.append("local_recover_rollback")
+            local_state["activation_intent"] = None
+            local_state["history"].append({
+                "event": "automatic_rollback_completed",
+                "failed_release_id": snapshot.target_release_id,
+                "restored_release_id": previous,
+            })
+            return {"status": "rolled_back", "restored_release_id": previous}
+
+        controller.activate_func = fail_activation
+        controller.recovery_func = resume
+        result = controller.run_once()
+        assert result["status"] == "rolled_back"
+        assert transport.deployment["state"] == "rolled_back"
+        assert controller.controller_state.phase == "rolled_back"
+        assert actions == [
+            "local_stage", "staged", "activation_start", "local_activate",
+            "local_recover_rollback", "rollback_started", "rolled_back",
+        ]
+        assert "succeeded" not in actions
+        assert "recovery_failed" not in actions
+
+
+def test_controller_failed_retry_keeps_terminal_recovery_failed_and_pending_intent():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        controller, transport, snapshot, actions, local_state = _controller_fixture(Path(raw_tmp))
+        previous = local_state["active_release_id"]
+
+        def fail_activation(release_id, *, expected_release_approval_reference, layout):
+            local_state["activation_intent"] = {
+                "release_id": release_id,
+                "previous_release_id": previous,
+                "release_approval_reference": expected_release_approval_reference,
+            }
+            local_state["history"].append({
+                "event": "automatic_rollback_failed",
+                "release_id": release_id,
+                "previous_release_id": previous,
+            })
+            raise TransactionError("activation failure")
+
+        def fail_recovery(**_kwargs):
+            actions.append("local_recovery_attempt")
+            raise TransactionError("recovery health check failed")
+
+        controller.activate_func = fail_activation
+        controller.recovery_func = fail_recovery
+        result = controller.run_once()
+        assert result["status"] == "recovery_failed"
+        assert controller.controller_state.phase == "recovery_failed"
+        assert transport.deployment["state"] == "recovery_failed"
+        assert local_state["activation_intent"] is not None
+        assert actions[-2:] == ["local_recovery_attempt", "recovery_failed"]
+        assert "succeeded" not in actions
+
+
+def test_controller_restart_retries_pending_recovery_before_reporting_backend_terminal():
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        controller, transport, snapshot, actions, local_state = _controller_fixture(Path(raw_tmp))
+        controller.controller_state.bind(snapshot)
+        controller._stage_verified(snapshot)
+        deployment = controller._report_staged(snapshot)
+        assert deployment and deployment["state"] == "staged"
+        deployment = controller._authorize_activation(snapshot)
+        assert deployment and deployment["state"] == "activating"
+        previous = local_state["active_release_id"]
+        local_state["activation_intent"] = {
+            "release_id": snapshot.target_release_id,
+            "previous_release_id": previous,
+            "release_approval_reference": snapshot.release_approval_reference,
+        }
+        local_state["history"].append({
+            "event": "automatic_rollback_failed",
+            "release_id": snapshot.target_release_id,
+            "previous_release_id": previous,
+        })
+        from clientflow_release.update_controller import LocalActivationOutcome
+        controller.controller_state.mark_outcome(LocalActivationOutcome("recovery_failed"))
+
+        def resume(**_kwargs):
+            actions.append("resume_after_restart")
+            local_state["activation_intent"] = None
+            local_state["history"].append({
+                "event": "automatic_rollback_completed",
+                "failed_release_id": snapshot.target_release_id,
+                "restored_release_id": previous,
+            })
+            return {"status": "rolled_back", "restored_release_id": previous}
+
+        controller.recovery_func = resume
+        controller.activate_func = lambda *_args, **_kwargs: pytest.fail("must not reactivate failed target")
+        result = controller.run_once()
+        assert result["status"] == "rolled_back"
+        assert controller.controller_state.phase == "rolled_back"
+        assert transport.deployment["state"] == "rolled_back"
+        assert actions[-3:] == ["resume_after_restart", "rollback_started", "rolled_back"]
+
+
+@pytest.mark.parametrize("directive", [
+    "ProtectHome=yes", "BindPaths=/home", "BindPaths=/home/other-user",
+])
+def test_controller_rejects_target_with_incompatible_home_isolation_before_backend_gate(directive):
+    with tempfile.TemporaryDirectory() as raw_tmp:
+        controller, transport, snapshot, actions, _local_state = _controller_fixture(Path(raw_tmp))
+        original_stage = controller.stage_func
+
+        def stage_unsafe(*args, **kwargs):
+            result = original_stage(*args, **kwargs)
+            unit = controller.layout.releases / snapshot.target_release_id / (
+                "client-runtime/systemd/clientflow-update-controller.service"
+            )
+            text = unit.read_text(encoding="utf-8")
+            if directive.startswith("ProtectHome"):
+                text = text.replace("ProtectHome=tmpfs", directive)
+            else:
+                text = text.replace("BindPaths=/home/clientflow-kiosk", directive)
+            unit.chmod(0o644)
+            unit.write_text(text, encoding="utf-8")
+            unit.chmod(0o444)
+            return result
+
+        controller.stage_func = stage_unsafe
+        with pytest.raises(UpdateControllerError, match="kiosk-home sandkasse"):
+            controller.run_once()
+        assert transport.deployment["state"] == "verified"
+        assert actions == ["local_stage"]
