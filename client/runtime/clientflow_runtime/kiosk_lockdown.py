@@ -77,17 +77,30 @@ KIOSK_NOTIFICATION_BASELINE = (
     ("org.gnome.desktop.notifications", "show-banners", "false"),
     ("org.gnome.desktop.notifications", "show-in-lock-screen", "false"),
 )
+# Always-on display contract. These are kiosk safety properties, not optional
+# application lockdown. In particular, rolling back optional lockdown must not
+# reset idle-delay to GNOME's five-minute default or enable the screen lock.
+KIOSK_DISPLAY_AWAKE_BASELINE = (
+    ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
+    ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
+    ("org.gnome.desktop.screensaver", "idle-activation-enabled", "false"),
+    ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),
+    ("org.gnome.desktop.lockdown", "disable-lock-screen", "true"),
+    ("org.gnome.settings-daemon.plugins.power", "idle-dim", "false"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type", "'nothing'"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-timeout", "0"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type", "'nothing'"),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-timeout", "0"),
+    ("org.gnome.settings-daemon.plugins.power", "power-button-action", "'nothing'"),
+)
 ENFORCED_GSETTINGS = (
     *KIOSK_COMMAND_LINE_BASELINE,
     *KIOSK_NOTIFICATION_BASELINE,
+    *KIOSK_DISPLAY_AWAKE_BASELINE,
 )
 OPTIONAL_GSETTINGS = (
-    # Command-line/terminal escape belongs to the always-on kiosk baseline and
-    # must never be reset when optional lockdown is disabled. ENFORCED_GSETTINGS
-    # still verifies those keys while lockdown is active.
-    ("org.gnome.desktop.session", "idle-delay", "uint32 0"),
-    ("org.gnome.desktop.screensaver", "lock-enabled", "false"),
-    ("org.gnome.desktop.screensaver", "ubuntu-lock-on-suspend", "false"),
+    # Only optional desktop presentation belongs here. Resetting these is safe;
+    # do not place display-power or screen-lock keys in this list.
     ("org.gnome.shell", "favorite-apps", "[]"),
     ("org.gnome.settings-daemon.plugins.color", "night-light-enabled", "false"),
     ("org.gnome.desktop.interface", "color-scheme", "'default'"),
@@ -496,6 +509,10 @@ def _apply_gsettings(kiosk_user: str, record, enabled: bool) -> None:
         _run([*base, "set", schema, key, value], required=False)
     for schema, key, value in KIOSK_NOTIFICATION_BASELINE:
         _run([*base, "set", schema, key, value], required=False)
+    # This is not tied to the optional lockdown toggle. Always restore screen
+    # blanking/locking/power settings; never reset them to GNOME defaults.
+    for schema, key, value in KIOSK_DISPLAY_AWAKE_BASELINE:
+        _run([*base, "set", schema, key, value])
 
 
 def _set_quick_guard_running(enabled: bool) -> None:
