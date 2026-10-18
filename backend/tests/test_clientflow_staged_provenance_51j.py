@@ -168,7 +168,12 @@ def test_51j_stage_source_has_no_hash_then_reopen_bundle_contract():
 def test_51j_activation_and_rollback_cli_use_expected_artifact_approval_semantics():
     cli = (ROOT / "client/release/lib/clientflow_release/cli.py").read_text(encoding="utf-8")
     transaction_source = (ROOT / "client/release/lib/clientflow_release/transaction.py").read_text(encoding="utf-8")
-    assert cli.count('add_argument("--expected-release-approval-reference", required=True)') == 4
+    # Both public and root-owned activation/rollback parsers require approval.
+    # Failed-update recovery is a third root-owned, approval-gated operation.
+    assert cli.count('add_argument("--expected-release-approval-reference", required=True)') == 5
+    for operation in ("activate", "rollback", "recover"):
+        assert f'{operation}.add_argument("--expected-release-approval-reference", required=True)' in cli
+    assert 'recover = sub.add_parser("recover-failed-update")' in cli
     assert 'activate.add_argument("--approval-reference"' not in cli
     assert 'rollback.add_argument("--approval-reference"' not in cli
     rollback_source = transaction_source.split("def rollback_release(", 1)[1].split("\ndef status", 1)[0]

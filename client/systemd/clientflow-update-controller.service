@@ -23,7 +23,11 @@ TimeoutStartSec=30min
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ProtectHome=yes
+# The root-owned release transaction provisions ACLs inside the canonical kiosk
+# home on both activation and rollback. Hide other users' homes and expose only
+# this dedicated home; ProtectHome=yes makes even root ACL provisioning fail.
+ProtectHome=tmpfs
+BindPaths=/home/clientflow-kiosk
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
