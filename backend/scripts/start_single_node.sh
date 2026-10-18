@@ -48,6 +48,11 @@ export HLS_BASE_DIR=/tmp/display-hls
 export PYTHONPATH=/opt/display/backend
 export ENVIRONMENT="${ENVIRONMENT:-production}"
 
+# Render terminates HTTPS at its edge and forwards HTTP to this container.
+# Correct URL scheme only for the pinned canonical Host, without trusting
+# arbitrary X-Forwarded-* headers or setting forwarded-allow-ips="*".
+export DISPLAY_PUBLIC_HTTPS_HOST="${DISPLAY_PUBLIC_HTTPS_HOST:-api.display.planiq.dk}"
+
 fresh_cluster=0
 if [[ ! -f "$PGDATA/PG_VERSION" ]]; then
   # Never reset an apparently existing/corrupt cluster silently.
