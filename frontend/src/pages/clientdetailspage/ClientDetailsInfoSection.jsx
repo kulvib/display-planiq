@@ -34,6 +34,7 @@ import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { buildClientflowUpdateRequest } from "./clientflowUpdateRequest.mjs";
+import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "./clientflowCatalogOptions.mjs";
 import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
@@ -182,6 +183,9 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const [cancelling, setCancelling] = React.useState(false);
   const [feedbackVisible, setFeedbackVisible] = React.useState(false);
   const [releaseCatalog, setReleaseCatalog] = React.useState(null);
+  const [catalogLoading, setCatalogLoading] = React.useState(false);
+  const [catalogError, setCatalogError] = React.useState("");
+  const [catalogRetryKey, setCatalogRetryKey] = React.useState(0);
   const [selectedVersion, setSelectedVersion] = React.useState("latest");
   const [updateReasonDialogOpen, setUpdateReasonDialogOpen] = React.useState(false);
   const [updateReason, setUpdateReason] = React.useState("");
@@ -194,9 +198,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const installedVersion = clientVersion;
   const latestVersion = releaseCatalog?.latest_stable || null;
   const selectableReleases = React.useMemo(
-    () => (releaseCatalog?.releases || []).filter((release) =>
-      ["stable", "supported"].includes(String(release?.status || "")) && release?.update_allowed === true
-    ),
+    () => selectableClientflowUpdateReleases(releaseCatalog),
     [releaseCatalog],
   );
   const resolvedSelectedVersion = selectedVersion === "latest" ? latestVersion : selectedVersion;
@@ -216,6 +218,35 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const error = deployment?.failure_message || deployment?.failure_code || null;
   const showPanel = Boolean(deployment) && (inProgress || feedbackVisible);
   const canCancel = CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES.has(state);
+
+  // The update selector is deliberately fail-closed: it must receive an
+  // authenticated, current catalog before it offers any deployment target.
+  // Ignore late responses when switching clients, retrying or unmounting.
+  React.useEffect(() => {
+    let cancelled = false;
+    setReleaseCatalog(null);
+    setSelectedVersion("latest");
+    setCatalogError("");
+    setCatalogLoading(Boolean(clientId));
+
+    if (!clientId) return () => { cancelled = true; };
+
+    const fetchCatalog = async () => {
+      try {
+        const catalog = normalizeClientflowReleaseCatalog(await getClientflowReleases());
+        if (!cancelled) setReleaseCatalog(catalog);
+      } catch (err) {
+        if (!cancelled) {
+          setReleaseCatalog(null);
+          setCatalogError(err?.message || "Ugyldigt svar fra ClientFlow-versionskataloget");
+        }
+      } finally {
+        if (!cancelled) setCatalogLoading(false);
+      }
+    };
+    void fetchCatalog();
+    return () => { cancelled = true; };
+  }, [clientId, catalogRetryKey]);
 
   React.useEffect(() => {
     const latestState = normalizeClientflowDeploymentState(deployment?.state);
@@ -314,7 +345,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
           </Stack>
         </Box>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
-          <TextField select size="small" label="Målversion" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || !releaseCatalog} sx={{ minWidth: { xs: "100%", sm: 220 } }}>
+          <TextField select size="small" label="Målversion" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || catalogLoading || !releaseCatalog} sx={{ minWidth: { xs: "100%", sm: 220 } }}>
             <MenuItem value="latest">Seneste stabile{latestVersion ? ` (v${latestVersion})` : ""}</MenuItem>
             {selectableReleases.filter((release) => release.version !== latestVersion).map((release) => (
               <MenuItem key={release.version} value={release.version}>v{release.version} · {release.status === "supported" ? "understøttet" : release.status}</MenuItem>
@@ -330,6 +361,19 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
           </Button>
         </Stack>
       </Stack>
+      {catalogLoading && (
+        <Typography variant="caption" sx={{ color: MUTED, mt: 1 }}>Henter godkendte ClientFlow-versioner…</Typography>
+      )}
+      {catalogError && (
+        <Alert severity="error" sx={{ mt: 1 }} action={
+          <Button color="inherit" size="small" onClick={() => setCatalogRetryKey((previous) => previous + 1)}>Prøv igen</Button>
+        }>
+          Kunne ikke hente ClientFlow-versionskataloget: {catalogError}
+        </Alert>
+      )}
+      {!catalogLoading && !catalogError && releaseCatalog && selectableReleases.length === 0 && (
+        <Alert severity="info" sx={{ mt: 1 }}>Ingen ClientFlow-versioner er godkendt til opdatering.</Alert>
+      )}
       {selectedReleaseRequiresReboot && !showPanel && (
         <Alert severity="info" sx={{ mt: 1 }}>
           v{resolvedSelectedVersion} kræver én kontrolleret genstart efter grøn ClientFlow-activation, før reboot/reconnect-gaten er afsluttet.
