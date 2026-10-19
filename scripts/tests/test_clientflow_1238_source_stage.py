@@ -9,9 +9,9 @@ def test_source_identity_promoted_only_after_exact_release_approval():
     version = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
-    assert version == "1.3.39"
+    assert version == "1.3.40"
     assert source == {
-        "schema_version": 1, "release_sequence": 1240,
+        "schema_version": 1, "release_sequence": 1241,
         "minimum_ubuntu_lts": "26.04", "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
@@ -24,7 +24,7 @@ def test_source_identity_promoted_only_after_exact_release_approval():
     assert approved["installable"] is True
     assert approved["update_allowed"] is False
     assert approved["rollback_allowed"] is False
-    assert source["release_sequence"] == catalog["catalog_sequence"]
+    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
     pilot = catalog["releases"][1]
     assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
     assert pilot["release_sequence"] == 1240
