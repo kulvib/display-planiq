@@ -2662,6 +2662,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "State", value: client?.state, status: true },
         { label: "Sidst set", value: formatDiagnosticDate(client?.presence?.status?.reported_at) },
         { label: "Chrome status", value: client?.chrome_status, status: true, wide: true },
+        { label: "Fuldskærm", value: client?.browser_fullscreen === "fullscreen" ? "Ja" : client?.browser_fullscreen === "windowed" ? "Nej" : "Ukendt", level: client?.browser_fullscreen === "fullscreen" ? "ok" : client?.browser_fullscreen === "windowed" ? "warn" : "neutral" },
         { label: "Netværk", value: networkMessage, level: networkLevel, wide: true },
         { label: "Display", value: `${displaySummary} · ${statusText(client?.display_resolution_current_output)}`, level: getStatusLevel(client?.display_resolution_status) },
         { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
@@ -2778,6 +2779,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       columns: 2,
       rows: [
         { label: "Chrome status", value: client?.chrome_status, status: true, wide: true },
+        { label: "Fuldskærm", value: client?.browser_fullscreen === "fullscreen" ? "Ja" : client?.browser_fullscreen === "windowed" ? "Nej" : "Ukendt", level: client?.browser_fullscreen === "fullscreen" ? "ok" : client?.browser_fullscreen === "windowed" ? "warn" : "neutral" },
         { label: "Chrome step", value: client?.chrome_step, copy: true },
         { label: "Chrome farve", value: client?.chrome_color, status: true },
         { label: "Chrome opdateret", value: formatDiagnosticDate(client?.chrome_last_updated) },

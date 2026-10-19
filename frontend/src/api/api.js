@@ -680,6 +680,7 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
       return normalizeChromeStatusPayload({
         presence: full.presence ?? null,
         chrome_status: full.chrome_status ?? null,
+        browser_fullscreen: full.browser_fullscreen ?? "unknown",
         chrome_color: full.chrome_color ?? null,
         chrome_last_updated: full.chrome_last_updated ?? null,
         chrome_step: full.chrome_step ?? null,

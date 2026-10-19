@@ -14,12 +14,14 @@ import stat
 import subprocess
 import time
 import asyncio
+from concurrent.futures import Future, ThreadPoolExecutor
 import urllib.request
 from typing import Any
 from urllib.parse import urlsplit
 
 import websockets
 
+from .browser_fullscreen import probe_browser_fullscreen
 from .kiosk_consent import CONSENT_CSS
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
@@ -92,6 +94,13 @@ class DisplayRuntime:
         self.next_gui_start_attempt = 0.0
         self.next_resolution_probe = 0.0
         self.boot_start_pending = False
+        self.browser_fullscreen = "unknown"
+        self.browser_fullscreen_at: float | None = None
+        self.browser_fullscreen_pid: int | None = None
+        self.next_fullscreen_probe = 0.0
+        self.fullscreen_future: Future[str] | None = None
+        self.fullscreen_future_pid: int | None = None
+        self._last_status_payload: dict[str, Any] = {}
         self.display_power = self._load_display_power()
         self.shared_group_gid: int | None = None
 
@@ -144,10 +153,59 @@ class DisplayRuntime:
             "browser_pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
             "browser_requested": bool(self.browser_requested),
             "display_power": self.display_power,
+            "browser_fullscreen": (
+                self.browser_fullscreen
+                if state == "running" and self.browser and self.browser.poll() is None
+                and self.browser.pid == self.browser_fullscreen_pid else "unknown"
+            ),
+            "browser_fullscreen_updated_at": (
+                self.browser_fullscreen_at
+                if state == "running" and self.browser and self.browser.poll() is None
+                and self.browser.pid == self.browser_fullscreen_pid else None
+            ),
             "updated_at": time.time(),
             **details,
         }
+        self._last_status_payload = payload
         atomic_write_shared_json(STATUS_PATH, payload, mode=0o640, group_gid=self.shared_group_gid)
+
+    def _poll_browser_fullscreen(self, executor: ThreadPoolExecutor) -> None:
+        """Read CDP off-thread; never block the runtime's control socket."""
+        live_pid = self.browser.pid if self.browser and self.browser.poll() is None else None
+        future = self.fullscreen_future
+        if future is not None and future.done():
+            try:
+                measured = future.result()
+            except Exception:
+                measured = "unknown"
+            probe_pid = self.fullscreen_future_pid
+            self.fullscreen_future = None
+            self.fullscreen_future_pid = None
+            current = self._last_status_payload
+            if (
+                live_pid is not None and live_pid == probe_pid
+                and current.get("state") == "running" and current.get("browser_pid") == live_pid
+            ):
+                self.browser_fullscreen = measured if measured in {"fullscreen", "windowed"} else "unknown"
+                self.browser_fullscreen_at = time.time()
+                self.browser_fullscreen_pid = live_pid
+                # Preserve the last Chrome event and countdown timestamp.
+                updated = {
+                    **current,
+                    "browser_fullscreen": self.browser_fullscreen,
+                    "browser_fullscreen_updated_at": self.browser_fullscreen_at,
+                }
+                self._last_status_payload = updated
+                atomic_write_shared_json(STATUS_PATH, updated, mode=0o640, group_gid=self.shared_group_gid)
+        if (
+            self.fullscreen_future is None
+            and live_pid is not None
+            and self._last_status_payload.get("state") == "running"
+            and time.monotonic() >= self.next_fullscreen_probe
+        ):
+            self.next_fullscreen_probe = time.monotonic() + 10.0
+            self.fullscreen_future_pid = live_pid
+            self.fullscreen_future = executor.submit(probe_browser_fullscreen)
 
     @staticmethod
     def _boot_id() -> str | None:
@@ -1107,8 +1165,10 @@ class DisplayRuntime:
                 self.logger.exception("browser_start_waiting_for_session")
         else:
             self._status("stopped")
+        fullscreen_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-fullscreen")
         try:
             while True:
+                self._poll_browser_fullscreen(fullscreen_executor)
                 if self.browser and self.browser.poll() is not None:
                     code = self.browser.returncode
                     self.browser = None
@@ -1173,6 +1233,7 @@ class DisplayRuntime:
         except KeyboardInterrupt:
             return 0
         finally:
+            fullscreen_executor.shutdown(wait=False, cancel_futures=True)
             self.stop_local_gui()
             self.stop_browser(preserve_request=True)
             server.close()

@@ -66,6 +66,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearchSort.mjs";
 import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientdetailspage/browserCountdown.mjs";
 import { calendarRebootView } from "./clientdetailspage/calendarRebootStatus.mjs";
+import { browserFullscreenLabel } from "../utils/browserFullscreen.mjs";
 
 /*
   ClientInfoPage.jsx
@@ -449,6 +450,7 @@ function isClientListEqual(a = [], b = []) {
       ca.state !== cb.state ||
       ca.pending_chrome_action !== cb.pending_chrome_action ||
       ca.chrome_status !== cb.chrome_status ||
+      ca.browser_fullscreen !== cb.browser_fullscreen ||
       ca.browser_countdown?.ends_at !== cb.browser_countdown?.ends_at ||
       ca.browser_countdown?.step !== cb.browser_countdown?.step ||
       ca.browser_countdown?.reason !== cb.browser_countdown?.reason ||
@@ -587,36 +589,45 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
         ? "info"
         : "success";
   const label = `${onlineText} / ${stateText} / ${browserStatus}`;
+  const fullscreenLabel = browserFullscreenLabel(isOnline ? client?.browser_fullscreen : "unknown");
 
   return (
-    <Tooltip title={browserStatus} placement="top" arrow>
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+      <Tooltip title={browserStatus} placement="top" arrow>
+        <Chip
+          size="small"
+          label={label}
+          sx={compactDarkChipSx(tone, {
+            minWidth: 104,
+            maxWidth: 360,
+            "& .MuiChip-label": {
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            },
+            // Let operators actually read the countdown on portrait/landscape
+            // touch devices; leave the desktop status-chip geometry untouched.
+            "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+              height: "auto",
+              maxWidth: "100%",
+              "& .MuiChip-label": {
+                whiteSpace: "normal",
+                overflowWrap: "anywhere",
+                textOverflow: "clip",
+                lineHeight: 1.3,
+                py: 0.65,
+              },
+            },
+          })}
+        />
+      </Tooltip>
       <Chip
         size="small"
-        label={label}
-        sx={compactDarkChipSx(tone, {
-          minWidth: 104,
-          maxWidth: 360,
-          "& .MuiChip-label": {
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          },
-          // Let operators actually read the countdown on portrait/landscape
-          // touch devices; leave the desktop status-chip geometry untouched.
-          "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
-            height: "auto",
-            maxWidth: "100%",
-            "& .MuiChip-label": {
-              whiteSpace: "normal",
-              overflowWrap: "anywhere",
-              textOverflow: "clip",
-              lineHeight: 1.3,
-              py: 0.65,
-            },
-          },
-        })}
+        label={fullscreenLabel}
+        title={`Kiosk browser fuldskærm: ${fullscreenLabel}`}
+        sx={compactDarkChipSx(fullscreenLabel === "Fuldskærm" ? "success" : fullscreenLabel === "Ikke fuldskærm" ? "warning" : "info")}
       />
-    </Tooltip>
+    </Box>
   );
 });
 

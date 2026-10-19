@@ -429,6 +429,8 @@ class ClientControlRoomListRead(ClientBase):
     approval_ready_at: Optional[datetime] = None
     approval_ready_boot_id: Optional[str] = None
     chrome_status: Optional[str] = None
+    # Canonical Display read projection, not a persistent Client column.
+    browser_fullscreen: str = "unknown"
     chrome_color: Optional[str] = None
     chrome_running: Optional[bool] = None
     chrome_step: Optional[str] = None
@@ -480,6 +482,7 @@ class ClientRead(ClientBase):
     approval_ready_at: Optional[datetime] = None
     approval_ready_boot_id: Optional[str] = None
     chrome_status: Optional[str] = "unknown"
+    browser_fullscreen: str = "unknown"
     chrome_last_updated: Optional[datetime] = None
     pending_reboot: Optional[bool] = False
     pending_shutdown: Optional[bool] = False
