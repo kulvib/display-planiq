@@ -219,6 +219,7 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
         ("Kiosk URL", "kiosk_url"),
         ("Status", "operational_status"),
         ("Kiosk browser status", "display"),
+        ("Fuldskærm", "browser_fullscreen"),
         ("Aktuel skærm", "resolution_current"),
         ("Backend-valgt", "resolution_desired"),
         ("Skærmstatus", "resolution_status"),

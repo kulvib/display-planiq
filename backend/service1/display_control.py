@@ -678,6 +678,20 @@ def _browser_runtime_projection(runtime: dict[str, Any]) -> tuple[str, str, str 
     return "Ingen status.", "gray", step, None
 
 
+def _browser_fullscreen_projection(runtime: dict[str, Any]) -> str:
+    """Status-only measurement; discard old, absent and non-running clients."""
+    if str(runtime.get("state") or "").strip().lower() != "running" or not runtime.get("browser_pid"):
+        return "unknown"
+    state = str(runtime.get("browser_fullscreen") or "").strip().lower()
+    if state not in {"fullscreen", "windowed"}:
+        return "unknown"
+    observed = _epoch_datetime(runtime.get("browser_fullscreen_updated_at"))
+    if observed is None:
+        return "unknown"
+    delta = (utcnow() - observed).total_seconds()
+    return state if -5 <= delta <= 120 else "unknown"
+
+
 def _display_read_projection_from_rows(
     desired: DisplayDesiredConfiguration | None,
     status: ClientDomainStatus | None,
@@ -725,6 +739,9 @@ def _display_read_projection_from_rows(
         "browser_refresh_interval_sec": int(getattr(desired, "browser_refresh_interval_sec", 900)) if desired else 900,
         "display_configuration_revision": desired.revision if desired else None,
         "chrome_status": chrome_status,
+        "browser_fullscreen": (
+            _browser_fullscreen_projection(runtime) if power_state != "off" else "unknown"
+        ),
         "browser_countdown": browser_countdown,
         "chrome_color": chrome_color,
         "chrome_step": chrome_step,

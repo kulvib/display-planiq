@@ -1136,6 +1136,7 @@ def _apply_display_projection_for_read(
     _set_runtime_read_attr(client, "kiosk_url", projection["kiosk_url"])
     _set_runtime_read_attr(client, "browser_refresh_interval_sec", projection.get("browser_refresh_interval_sec", 900))
     _set_runtime_read_attr(client, "chrome_status", projection["chrome_status"])
+    _set_runtime_read_attr(client, "browser_fullscreen", projection.get("browser_fullscreen", "unknown"))
     _set_runtime_read_attr(client, "chrome_color", projection["chrome_color"])
     _set_runtime_read_attr(client, "chrome_last_updated", projection["chrome_last_updated"])
     _set_runtime_read_attr(client, "chrome_running", projection["chrome_running"])
@@ -1714,6 +1715,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         # the browser does not need a second presence request every 5 seconds.
         "presence": presence.public_dict(),
         "chrome_status": chrome_status_value,
+        "browser_fullscreen": display_projection.get("browser_fullscreen", "unknown"),
         "browser_countdown": display_projection.get("browser_countdown"),
         "chrome_last_updated": client.chrome_last_updated,
         "chrome_color": chrome_color_value,

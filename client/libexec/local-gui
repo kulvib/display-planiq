@@ -787,6 +787,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             ("Kiosk URL", "kiosk_url"),
             ("Status", "operational_status"),
             ("Kiosk browser status", "display"),
+            ("Fuldskærm", "browser_fullscreen"),
             ("Aktuel skærm", "resolution_current"),
             ("Backend-valgt", "resolution_desired"),
             ("Skærmstatus", "resolution_status"),
@@ -1242,6 +1243,21 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             else:
                 browser_status, browser_color = self._browser_status(runtime)
                 self._set("display", browser_status, browser_color)
+            fullscreen = str(runtime.get("browser_fullscreen") or "unknown").strip().lower()
+            if (runtime.get("state") != "running" or not runtime.get("browser_pid")
+                    or runtime.get("display_power") == "off"):
+                fullscreen = "unknown"
+            try:
+                age = time.time() - float(runtime.get("browser_fullscreen_updated_at") or 0)
+                if age < -5 or age > 120:
+                    fullscreen = "unknown"
+            except (TypeError, ValueError, OverflowError):
+                fullscreen = "unknown"
+            fullscreen_text, fullscreen_color = {
+                "fullscreen": ("Ja", COLOR_GREEN),
+                "windowed": ("Nej", COLOR_ORANGE),
+            }.get(fullscreen, ("Ukendt", COLOR_GRAY))
+            self._set("browser_fullscreen", fullscreen_text, fullscreen_color)
             self._set("resolution_current", self._format_current_resolution(resolution))
             self._set("resolution_desired", self._format_desired_resolution(resolution_desired))
             resolution_text, resolution_color = self._format_resolution_status(resolution, resolution_desired)

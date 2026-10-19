@@ -1000,6 +1000,9 @@ export default function ClientDetailsPage({
   const [liveChromeStatus, setLiveChromeStatus] = useState(
     client?.chrome_status ?? null
   );
+  const [liveBrowserFullscreen, setLiveBrowserFullscreen] = useState(
+    client?.browser_fullscreen ?? "unknown"
+  );
   const [browserCountdown, setBrowserCountdown] = useState(null);
   const [countdownClockMs, setCountdownClockMs] = useState(() => Date.now());
   // Only repaint while an authoritative countdown is in progress. Background
@@ -1177,6 +1180,7 @@ export default function ClientDetailsPage({
     }
     setLivePresence(client?.presence ?? null);
     if (client?.chrome_status != null) setLiveChromeStatus(client.chrome_status);
+    setLiveBrowserFullscreen(client?.browser_fullscreen ?? "unknown");
     if (client?.chrome_color != null)  setLiveChromeColor(client.chrome_color);
     if (client?.chrome_step !== undefined) {
       setLiveStep(client.chrome_step ?? null);
@@ -1328,6 +1332,7 @@ export default function ClientDetailsPage({
 
           if (data?.presence) setLivePresence(data.presence);
           if (data?.chrome_status != null) setLiveChromeStatus(data.chrome_status);
+          setLiveBrowserFullscreen(data?.browser_fullscreen ?? "unknown");
           // Authoritative agent tick + server clock; never extrapolate from text.
           const snapshot = receiveBrowserCountdown(data?.browser_countdown, Date.now());
           setBrowserCountdown(snapshot ? { ...snapshot, clientId: client.id } : null);
@@ -1738,6 +1743,7 @@ export default function ClientDetailsPage({
       pending_chrome_action: effectivePendingAction,
       state: effectiveClientState,
       chrome_status: visibleChromeStatus,
+      browser_fullscreen: liveBrowserFullscreen,
       chrome_color: liveChromeColor ?? client?.chrome_color ?? null,
       chrome_step: liveStep ?? client?.chrome_step ?? null,
       last_chrome_step: liveStep ?? client?.last_chrome_step ?? client?.chrome_step ?? null,
@@ -1756,6 +1762,7 @@ export default function ClientDetailsPage({
       effectivePendingAction,
       effectiveClientState,
       visibleChromeStatus,
+      liveBrowserFullscreen,
       liveChromeColor,
       liveStep,
       liveChromeRunning,

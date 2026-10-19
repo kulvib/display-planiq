@@ -20,6 +20,15 @@ This commit is **not** an authorization for `in_place_update`, manual rollback o
 5. **Control Room and Clientlist:** a historically `expired` Control Room reboot command must remain in history but not mask a verified new boot and online/normal status; retain `reboot_completed` provenance. This is an already deployed backend correction, not a reason to change the immutable 1.3.39 artifact.
 6. **Operational boundaries:** status and GUI; authorized Terminal, Remote Desktop, Livestream, System and update features; no kiosk sudo; no new paid services/Neon or new PostgreSQL infrastructure; no silent bypass of DPoP/HTTPS, release approval or UI confirmation.
 
+## Browser fullscreen telemetry — approved 2026-10-19, pre-build PR
+
+- Physical Heidi1/Ubuntu 26.04/Wayland evidence: Chrome CDP `Browser.getWindowForTarget` reported `normal` when the window was not fullscreen, and `fullscreen` after the technician toggled F11; both were physically corroborated. `document.fullscreenElement` and window geometry must **not** be substituted for browser-level fullscreen.
+- The 1.3.40 source extension uses *read-only* Chrome CDP over `127.0.0.1:9222` with a validated, loopback-only browser WebSocket. A bounded off-thread probe avoids blocking the Display control socket; no GNOME introspection permission change or GNOME extension is allowed.
+- Display-runtime writes `browser_fullscreen=fullscreen|windowed|unknown` with an independent observation time to its existing group-readable status file. Status/Display agent already forwards that file; backend projects the status from the canonical Display row with a 120-second staleness bound, retaining `unknown` for old clients, missing/ambiguous pages, Chrome stopped, stale reports or intentional display off. No schema migration, new database query or new paid service.
+- GUI, Control Room/clientlist and client details each show an explicit fullscreen indicator separate from the browser-running state. Changes in fullscreen must become visible via the existing status/realtime/poll transport without a refresh or Chrome restart; do not falsely infer fullscreen from the start flags alone.
+- Extend the physical acceptance of the **new** release: verify browser normal -> windowed, F11 -> fullscreen, back to normal -> windowed, Chrome stop -> unknown, reboot and lockdown on/off, and verify the GUI plus both web views converge after agent reports. No fullscreen autopilot/window mutation in this feature.
+- Runtime-input transport and reproducible build must use the **new source SHA after this PR**, not PR #295's prior SHA.
+
 ## Release gates — separate and sequential
 
 1. **Source-stage PR and GitHub CI:** stage only the version/sequence, current identity tests, historical catalog-bound assertions and SHA256SUMS. CI must remain strict; do not modify approved catalog policy. Review the entire changes-only diff.
