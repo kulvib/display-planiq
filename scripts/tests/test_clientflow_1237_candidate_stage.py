@@ -11,12 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_source_1237_is_promoted_only_after_immutable_publication() -> None:
-    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.39"
+    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.40"
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1240,
+        "release_sequence": 1241,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",

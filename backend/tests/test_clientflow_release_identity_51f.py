@@ -51,13 +51,14 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
 
     selected_tuple = tuple(int(part) for part in selected["version"].split("."))
     assert selected_tuple <= source_tuple
-    # 1240 is a non-default, update-only pilot. The default 1239 selector
-    # must stay behind the source and never silently become the pilot release.
-    assert source_sequence == catalog_sequence == 1240
+    # 1240 remains a non-default, update-only pilot while 1241 is staged source.
+    # The default 1239 selector must never silently become an update target.
+    assert source_sequence == 1241 and catalog_sequence == 1240
     assert selected_tuple < source_tuple
     pilot = catalog["releases"][1]
-    assert pilot["release_sequence"] == source_sequence
-    assert pilot["version"] == version
+    assert pilot["release_sequence"] == catalog_sequence
+    assert pilot["version"] == "1.3.39"
+    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["installable"] is False and pilot["rollback_allowed"] is False
 

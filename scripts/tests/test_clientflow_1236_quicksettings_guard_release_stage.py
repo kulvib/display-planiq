@@ -15,9 +15,9 @@ def read(relative: str) -> str:
 
 
 def test_1236_historical_evidence_is_retained_after_1239_promotion() -> None:
-    assert read("client/VERSION").strip() == "1.3.39"
+    assert read("client/VERSION").strip() == "1.3.40"
     release = json.loads(read("client/release/release-input.json"))
-    assert release["release_sequence"] == 1240
+    assert release["release_sequence"] == 1241
     assert release["runtime_python"] == "3.13.14"
     assert release["minimum_ubuntu_lts"] == "26.04"
     assert release["architecture"] == "amd64"
