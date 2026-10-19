@@ -433,6 +433,24 @@ def power_projection_from_command(
             and current_boot_id
             and current_boot_id != requested_boot_id
         )
+        # A terminally failed System command must remain failed in the immutable
+        # command history. It must not, however, override the *current* client
+        # state after Status has observed a different boot and the client is
+        # online again. This also covers an unclaimed Control Room command that
+        # expired while the machine independently performed a local reboot.
+        # Do not attribute that reboot to the failed Control Room command:
+        # leave its power-event fields empty so the read projection can retain
+        # the separately verified local power observation, when available.
+        recovered_after_failed_command = bool(
+            status in {"failed", "expired", "cancelled"}
+            and status_online
+            and requested_boot_id
+            and current_boot_id
+            and current_boot_id != requested_boot_id
+        )
+        if recovered_after_failed_command:
+            result["state"] = "normal"
+            return result
         pending = status in SYSTEM_ACTIVE_STATUSES or (status == "succeeded" and not observed_new_boot)
         result["pending_reboot"] = pending
         result["state"] = "rebooting" if pending else ("error" if status in {"failed", "expired", "cancelled"} else "normal")
