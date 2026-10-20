@@ -39,6 +39,8 @@ import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClien
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
+import { summarizeServiceLevels } from "../../utils/serviceHealthSummary.mjs";
+import { hasActiveLivestreamError } from "../../utils/livestreamHealth.mjs";
 
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
@@ -2583,10 +2585,11 @@ function DiagnosticsPanel({ client, onRefresh }) {
   ];
 
   const serviceRows = [...criticalServiceRows, ...supportServiceRows];
-  const serviceIssues = serviceRows.filter((row) => {
-    const level = getRowLevel(row);
-    return level === "warn" || level === "error";
-  });
+  const serviceLevels = serviceRows.map(getRowLevel);
+  const serviceSummary = summarizeServiceLevels(serviceLevels);
+  const serviceIssues = serviceRows.filter((_, index) =>
+    ["warn", "error"].includes(serviceLevels[index]),
+  );
 
   const lifecycleLabelMap = {
     reboot_started: "Genstart startet",
@@ -2605,7 +2608,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
     client?.pending_shutdown ? { label: "Pending shutdown", level: "warn", value: "Ja" } : null,
     client?.pending_os_update ? { label: "Ubuntu-opdatering venter", level: "info", value: "Ja" } : null,
     hasUbuntuUpdates ? { label: "Ubuntu-pakker klar", level: "warn", value: formatUpdateCount(client?.ubuntu_updates_available) } : null,
-    hasDiagnosticValue(client?.livestream_last_error) ? { label: "Livestream-fejl", level: "error", value: client?.livestream_last_error } : null,
+    hasActiveLivestreamError(client) ? { label: "Livestream-fejl", level: "error", value: client?.livestream_last_error } : null,
     hasDiagnosticValue(client?.display_resolution_error) ? { label: "Display-fejl", level: "error", value: client?.display_resolution_error } : null,
     timeSyncLevel === "error" ? { label: "Systemtid er kritisk", level: "error", value: timeSyncMessage } : null,
     timeSyncLevel === "warn" ? { label: "Systemtid kræver tjek", level: "warn", value: timeSyncMessage } : null,
@@ -2614,8 +2617,10 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const criticalIssues = criticalServiceRows.filter((row) => ["warn", "error"].includes(getRowLevel(row)));
   const supportIssues = supportServiceRows.filter((row) => ["warn", "error"].includes(getRowLevel(row)));
 
-  const serviceOkCount = serviceRows.length - serviceIssues.length;
-  const serviceIssueText = serviceIssues.length ? serviceIssues.map((row) => row.label).join(", ") : "Alle overvågede services ser OK ud";
+  const serviceIssueText = [
+    ...(serviceIssues.length ? [`Kræver tjek: ${serviceIssues.map((row) => row.label).join(", ")}`] : []),
+    ...(serviceSummary.unverified ? [`${serviceSummary.unverified} uden bekræftet OK-status`] : []),
+  ].join(" · ") || "Alle overvågede services er bekræftet OK";
   const displaySummary = formatResolution(client?.display_resolution_current_width, client?.display_resolution_current_height);
 
   const summaryCards = [
@@ -2633,9 +2638,9 @@ function DiagnosticsPanel({ client, onRefresh }) {
     },
     {
       label: "Services",
-      value: `${serviceOkCount}/${serviceRows.length} OK`,
+      value: `${serviceSummary.ok}/${serviceSummary.total} OK`,
       helper: serviceIssueText,
-      level: serviceIssues.length ? "error" : "ok",
+      level: serviceSummary.issues ? "error" : serviceSummary.unverified ? "neutral" : "ok",
     },
     {
       label: "Drift",
@@ -2798,7 +2803,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Livestream service", value: client?.service_livestream_status, livestreamService: true, unit: "clientflow-livestream-producer.service" },
         { label: "Livestream process", value: client?.livestream_process_status, livestreamService: true, unit: "gst-launch / uploader" },
         { label: "Sidste segment", value: formatDiagnosticDate(client?.livestream_last_segment) },
-        { label: "Livestream fejl", value: client?.livestream_last_error, fallback: "Ingen", error: true, wide: true },
+        { label: hasActiveLivestreamError(client) ? "Livestream-fejl (aktuel)" : "Seneste livestream-fejl (historik)", value: client?.livestream_last_error, fallback: "Ingen", error: hasActiveLivestreamError(client), wide: true },
       ],
     },
     {

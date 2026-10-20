@@ -70,7 +70,13 @@ def build_client_health_issues(client: Any) -> list[dict[str, str]]:
         )
 
     livestream_error = str(getattr(client, "livestream_last_error", "") or "").strip()
-    if livestream_error:
+    # Last error is historical; a newer, verified running stream/process
+    # establishes recovery. A merely requested start is not sufficient.
+    livestream_recovered = (
+        str(getattr(client, "livestream_status", "") or "").strip().lower() == "running"
+        and str(getattr(client, "livestream_process_status", "") or "").strip().lower() == "running"
+    )
+    if livestream_error and not livestream_recovered:
         add(
             "livestream_error",
             "Livestream-fejl",

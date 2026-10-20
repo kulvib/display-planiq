@@ -67,6 +67,7 @@ import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearc
 import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientdetailspage/browserCountdown.mjs";
 import { calendarRebootView } from "./clientdetailspage/calendarRebootStatus.mjs";
 import { browserFullscreenLabel } from "../utils/browserFullscreen.mjs";
+import { sameClientHealthIssues } from "../utils/clientHealthIssues.mjs";
 
 /*
   ClientInfoPage.jsx
@@ -454,6 +455,7 @@ function isClientListEqual(a = [], b = []) {
       ca.browser_countdown?.ends_at !== cb.browser_countdown?.ends_at ||
       ca.browser_countdown?.step !== cb.browser_countdown?.step ||
       ca.browser_countdown?.reason !== cb.browser_countdown?.reason ||
+      !sameClientHealthIssues(ca.health_issues, cb.health_issues) ||
       ca.chrome_color !== cb.chrome_color ||
       ca.chrome_running !== cb.chrome_running ||
       ca.chrome_step !== cb.chrome_step ||

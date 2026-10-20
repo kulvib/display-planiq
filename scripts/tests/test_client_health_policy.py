@@ -102,3 +102,39 @@ def test_health_details_are_exposed_only_to_admin_and_superadmin():
     assert build_client_health_issues_for_principal(failing, viewer) == []
     assert build_client_health_issues_for_principal(failing, user) == []
     assert build_client_health_issues_for_principal(failing, client_principal) == []
+
+
+def test_old_livestream_failure_remains_historical_after_verified_recovery():
+    error = "previous_generation_failed"
+    recovering = _client(
+        livestream_last_error=error,
+        livestream_status="starting",
+        livestream_process_status="running",
+    )
+    assert "livestream_error" in {issue["code"] for issue in build_client_health_issues(recovering)}
+
+    recovered = _client(
+        livestream_last_error=error,
+        livestream_status="running",
+        livestream_process_status="running",
+    )
+    assert build_client_health_issues(recovered) == []
+    assert recovered.livestream_last_error == error  # historical evidence is retained
+
+
+def test_livestream_error_remains_actionable_without_verified_running_process():
+    error = "failed_to_start"
+    for status, process in (
+        ("failed", "stopped"),
+        ("starting", "running"),
+        ("running", "stopped"),
+        ("running", None),
+        (None, None),
+    ):
+        client = _client(
+            livestream_last_error=error,
+            livestream_status=status,
+            livestream_process_status=process,
+        )
+        issues = build_client_health_issues(client)
+        assert "livestream_error" in {issue["code"] for issue in issues}
