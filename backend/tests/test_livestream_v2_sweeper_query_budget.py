@@ -24,13 +24,21 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
     CLIENT_ID = 91
     GENERATION_ID = "99999999-9999-9999-9999-999999999999"
 
-    def setUp(self) -> None:
-        self.engine = create_engine(
+    @staticmethod
+    def _new_engine():
+        engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-        SQLModel.metadata.create_all(self.engine)
+        SQLModel.metadata.create_all(engine)
+        return engine
+
+    def setUp(self) -> None:
+        self.engine = self._new_engine()
+
+    def tearDown(self) -> None:
+        self.engine.dispose()
 
     def seed_client(self, session: Session) -> None:
         session.add(Client(id=self.CLIENT_ID, name="Query budget", status="approved"))
@@ -84,26 +92,30 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
                 self.assertFalse(activity.needs_fast_scan)
                 reconcile.assert_not_called()
 
-    def test_live_browser_activity_without_generation_retains_fast_sweep(self) -> None:
-        _presence_add(self.CLIENT_ID, "terminal", "idle-cost-test")
-        try:
-            with Session(self.engine) as session:
-                self.seed_client(session)
-                session.commit()
-                activity = livestream_v2._SweepActivity()
-                with patch.object(
-                    livestream_v2, "reconcile_viewer_lifecycle", return_value="start"
-                ) as reconcile:
-                    self.assertEqual(
-                        livestream_v2.reconcile_all_viewer_lifecycles(
-                            session, sweep_activity=activity
-                        ),
-                        [(self.CLIENT_ID, "start")],
-                    )
-                    self.assertTrue(activity.needs_fast_scan)
-                    reconcile.assert_called_once_with(session, self.CLIENT_ID)
-        finally:
-            _presence_remove(self.CLIENT_ID, "terminal", "idle-cost-test")
+    def test_support_session_without_viewer_does_not_start_hls_or_fast_poll(self) -> None:
+        for domain in ("terminal", "remote_desktop"):
+            with self.subTest(domain=domain):
+                engine = self._new_engine()
+                _presence_add(self.CLIENT_ID, domain, "idle-cost-test")
+                try:
+                    with Session(engine) as session:
+                        self.seed_client(session)
+                        session.commit()
+                        activity = livestream_v2._SweepActivity()
+                        with patch.object(
+                            livestream_v2, "reconcile_viewer_lifecycle"
+                        ) as reconcile:
+                            self.assertEqual(
+                                livestream_v2.reconcile_all_viewer_lifecycles(
+                                    session, sweep_activity=activity
+                                ),
+                                [],
+                            )
+                            self.assertFalse(activity.needs_fast_scan)
+                            reconcile.assert_not_called()
+                finally:
+                    _presence_remove(self.CLIENT_ID, domain, "idle-cost-test")
+                    engine.dispose()
 
     def test_running_generation_with_live_viewer_skips_per_client_reconcile(self) -> None:
         with Session(self.engine) as session:
@@ -130,22 +142,31 @@ class LivestreamV2SweeperQueryBudgetTests(unittest.TestCase):
                 self.assertTrue(activity.needs_fast_scan)
                 reconcile.assert_not_called()
 
-    def test_running_generation_with_live_activity_skips_per_client_reconcile(self) -> None:
-        # Live Terminal/RD presence is intentionally ephemeral and must not
-        # require a periodic Postgres heartbeat. The durable lease row is audit
-        # only and must not be treated as current presence after a restart.
-        _presence_add(self.CLIENT_ID, "terminal", "session-91")
-        try:
-            with Session(self.engine) as session:
-                self.seed_client(session)
-                self.seed_running_generation(session)
-                session.commit()
-
-                with patch.object(livestream_v2, "reconcile_viewer_lifecycle") as reconcile:
-                    self.assertEqual(livestream_v2.reconcile_all_viewer_lifecycles(session), [])
-                    reconcile.assert_not_called()
-        finally:
-            _presence_remove(self.CLIENT_ID, "terminal", "session-91")
+    def test_running_hls_generation_is_not_kept_alive_by_support(self) -> None:
+        for domain in ("terminal", "remote_desktop"):
+            with self.subTest(domain=domain):
+                engine = self._new_engine()
+                _presence_add(self.CLIENT_ID, domain, "session-91")
+                try:
+                    with Session(engine) as session:
+                        self.seed_client(session)
+                        self.seed_running_generation(session)
+                        session.commit()
+                        activity = livestream_v2._SweepActivity()
+                        with patch.object(
+                            livestream_v2, "reconcile_viewer_lifecycle", return_value="stop"
+                        ) as reconcile:
+                            self.assertEqual(
+                                livestream_v2.reconcile_all_viewer_lifecycles(
+                                    session, sweep_activity=activity
+                                ),
+                                [(self.CLIENT_ID, "stop")],
+                            )
+                            self.assertTrue(activity.needs_fast_scan)
+                            reconcile.assert_called_once_with(session, self.CLIENT_ID)
+                finally:
+                    _presence_remove(self.CLIENT_ID, domain, "session-91")
+                    engine.dispose()
 
     def test_stale_viewer_is_expired_before_steady_state_fast_path(self) -> None:
         stale_seen = livestream_v2._now() - timedelta(

@@ -60,19 +60,18 @@ class IdleLivestreamSweeperTests(unittest.TestCase):
             livestream_presence.leave(91280, "viewer-idle-cost", "admin:127")
         self.assertGreater(current_revision(), opened)
 
-    def test_terminal_and_rd_session_boundaries_wake_idle_sweeper(self) -> None:
+    def test_support_sessions_do_not_wake_livestream_sweeper(self) -> None:
         for domain in ("terminal", "remote_desktop"):
             with self.subTest(domain=domain):
                 previous = current_revision()
                 client_activity._presence_add(91281, domain, "cost-signal")
-                opened = current_revision()
-                self.assertGreater(opened, previous)
+                self.assertEqual(current_revision(), previous)
                 try:
                     client_activity._presence_add(91281, domain, "cost-signal")
-                    self.assertEqual(current_revision(), opened)
+                    self.assertEqual(current_revision(), previous)
                 finally:
                     client_activity._presence_remove(91281, domain, "cost-signal")
-                self.assertGreater(current_revision(), opened)
+                self.assertEqual(current_revision(), previous)
 
     def test_idle_scan_waits_longer_than_neon_scale_to_zero_then_resumes_fast(self) -> None:
         expected = [

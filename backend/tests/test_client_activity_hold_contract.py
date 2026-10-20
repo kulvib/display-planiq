@@ -37,27 +37,28 @@ def test_terminal_and_remote_desktop_publish_only_their_own_browser_presence():
     assert "request_start" not in remote
 
 
-def test_any_authenticated_client_activity_can_start_or_hold_livestream():
+def test_only_livestream_viewer_can_start_or_hold_hls():
     source = read("service1/livestream_v2.py")
     start = source.index("def reconcile_viewer_lifecycle(")
     end = source.index("def reconcile_all_viewer_lifecycles(", start)
     block = source[start:end]
-    assert "active_livestream_activity_count(session, client_id)" in block
-    assert "if active_viewers > 0 or active_client_activity > 0:" in block
-    assert 'source="viewer_reconcile" if active_viewers > 0 else "client_activity_reconcile"' in block
+    assert "if active_viewers > 0:" in block
+    assert 'source="viewer_reconcile"' in block
     assert "if generation is None:" in block
     assert "request_start(" in block
-    assert "last_livestream_activity_ended_at(session, client_id)" in block
+    assert "active_livestream_activity" not in block
+    assert "client_activity_reconcile" not in block
+    assert "last_livestream_activity_ended_at" not in block
 
 
-def test_activity_only_clients_are_sweeper_candidates_for_start():
+def test_support_only_clients_are_not_sweeper_candidates_for_start():
     source = read("service1/livestream_v2.py")
     start = source.index("def reconcile_all_viewer_lifecycles(")
     end = source.index("def _sweeper_loop(", start)
     block = source[start:end]
-    assert "active_activity_client_ids = active_livestream_activity_client_ids(session, now=now)" in block
-    assert "steady_presence_client_ids = active_viewer_client_ids | active_activity_client_ids" in block
+    assert "steady_presence_client_ids = _active_viewer_client_ids(session, now=now)" in block
     assert "candidate_ids = active_generation_client_ids | steady_presence_client_ids" in block
+    assert "active_livestream_activity_client_ids" not in block
 
 
 def test_sweeper_fast_path_only_skips_active_generation_with_live_presence():
@@ -79,26 +80,54 @@ def test_sweeper_fast_path_only_skips_active_generation_with_live_presence():
     assert "reconcile_viewer_lifecycle(session, client_id)" in block
 
 
-def test_recovery_and_stale_media_respect_terminal_or_rd_activity():
+def test_recovery_and_stale_media_require_an_actual_livestream_viewer():
     source = read("service1/livestream_v2.py")
-    assert "activity_active = active_livestream_activity_count(session, client_id) > 0" in source
-    assert '"client_activity_returned_during_recovery"' in source
+    assert 'source="viewer_returned_during_recovery"' in source
+    assert "active_livestream_activity_count" not in source
+    assert '"client_activity_returned_during_recovery"' not in source
     stale_start = source.index("def maybe_recover_stale_media(")
     stale_end = source.index("def reconcile_viewer_lifecycle(", stale_start)
     stale = source[stale_start:stale_end]
-    assert "active_livestream_activity_count(session, client_id) == 0" in stale
+    assert "if active_viewer_count(session, client_id) == 0:" in stale
 
 
-def test_last_activity_end_starts_the_same_30_second_stop_grace():
+def test_viewer_departure_retains_30_second_stop_grace():
     source = read("service1/livestream_v2.py")
     start = source.index("def reconcile_viewer_lifecycle(")
     end = source.index("def reconcile_all_viewer_lifecycles(", start)
     block = source[start:end]
     assert "last_viewer_ended" in block
-    assert "last_activity_ended" in block
-    assert "max(ended_candidates)" in block
+    assert (
+        "absent_since = last_viewer_ended if last_viewer_ended is not None "
+        "else generation.created_at"
+    ) in block
     assert "VIEWER_STOP_GRACE_SECONDS" in block
-    assert 'request_stop(session, client_id, source="client_activity_grace_expired")' in block
+    assert 'request_stop(session, client_id, source="viewer_grace_expired")' in block
+    assert "last_activity_ended" not in block
+
+
+def test_support_presence_is_still_domain_audited_without_waking_stream():
+    service = read("service1/client_activity.py")
+    assert "maintain_activity_lease" in service
+    assert "touch_activity_lease" in service
+    assert "end_activity_lease" in service
+    assert "notify_lifecycle_change" not in service
+
+
+def test_control_room_livestream_ui_contract_kept_intact():
+    """Support transport separation must not gate or rewrite the approved viewer UI."""
+    page = read("../frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx")
+    livestream = read(
+        "../frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx"
+    )
+    assert '<ClientDetailsLivestreamSection' in page
+    assert '<Suspense fallback={<SectionLoadingFallback label="Indlæser livestream…" />}>' in page
+    assert 'showLivestream' not in page
+    assert 'livestreamClientId' not in page
+    assert 'const VIEWER_HEARTBEAT_MS = 25_000;' in livestream
+    assert '/viewer-heartbeat' in livestream
+    assert 'const mobileViewerActive = !isTouchHandset || mobileSession.isActive;' in livestream
+    assert 'sendLeaveOnce("client_details_livestream_unmount")' in livestream
 
 
 def test_step_47a_migration_and_schema_contract_are_reviewed():
