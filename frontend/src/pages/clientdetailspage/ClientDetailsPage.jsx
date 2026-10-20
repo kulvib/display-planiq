@@ -18,6 +18,7 @@ import { useTheme } from "@mui/material/styles";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { calendarRebootView } from "./calendarRebootStatus.mjs";
+import { browserStatusTone, calendarRebootIsActionable, currentClientState, currentClientStateTone } from "../../utils/controlRoomPresentation.mjs";
 
 const ClientDetailsInfoSection = lazy(() => import("./ClientDetailsInfoSection"));
 const ClientDetailsActionsSection = lazy(() => import("./ClientDetailsActionsSection"));
@@ -464,71 +465,6 @@ function resolveChromeStepPayload(data) {
 }
 
 
-function formatDashboardDateTime(value, withSeconds = false) {
-  if (!value) return "ukendt";
-  const raw = String(value);
-  const d = new Date(raw.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}Z`);
-  if (Number.isNaN(d.getTime())) return "ukendt";
-  return new Intl.DateTimeFormat("da-DK", {
-    timeZone: "Europe/Copenhagen",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: withSeconds ? "2-digit" : undefined,
-    hour12: false,
-  }).format(d);
-}
-
-function normalizePowerEvent(value) {
-  return String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-}
-
-function formatPowerEventLabel(client) {
-  if (!client) return null;
-
-  const event = normalizePowerEvent(client.last_power_event);
-  const source = normalizePowerEvent(client.last_power_event_source);
-  const at = client.last_power_event_at || client.last_boot_at || client.last_reboot_started_at || client.last_shutdown_started_at;
-  const time = at ? formatDashboardDateTime(at) : null;
-
-  const sourceLabel = source === "backend"
-    ? "backend"
-    : source === "calendar"
-    ? "kalender"
-    : source === "local"
-    ? "lokal"
-    : source === "client"
-    ? "klient"
-    : source === "detected"
-    ? "registreret"
-    : source || null;
-
-  let label = null;
-  if (["reboot_started", "reboot_requested"].includes(event)) label = "Genstart startet";
-  else if (event === "reboot_completed") label = "Genstart fuldført";
-  else if (["shutdown_started", "shutdown_requested"].includes(event)) label = "Nedlukning startet";
-  else if (event === "boot_after_shutdown") label = "Boot efter nedlukning";
-  else if (["boot_completed", "boot_detected", "boot"].includes(event)) label = "Boot registreret";
-  else if (event) label = event.replaceAll("_", " ");
-  else if (client.last_boot_at) label = "Boot registreret";
-
-  if (!label) return null;
-  const pieces = [label];
-  if (time) pieces.push(time);
-  if (sourceLabel) pieces.push(sourceLabel);
-  return pieces.join(" · ");
-}
-
-function powerEventColor(client) {
-  const event = normalizePowerEvent(client?.last_power_event);
-  if (event.includes("shutdown")) return "warning";
-  if (event.includes("reboot")) return "warning";
-  if (event.includes("boot")) return "info";
-  return "default";
-}
-
 function formatDashboardUptime(value) {
   if (value === null || value === undefined || value === "") return "ukendt";
   const n = Number.parseInt(String(value), 10);
@@ -830,8 +766,9 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
   const clientName = client?.name || client?.client_name || "Ukendt Display-klient";
   const organizationName = client?.organization_name || client?.organization?.name || "";
   const location = client?.locality || client?.location || "Ingen lokation";
-  const powerEventLabel = formatPowerEventLabel(client);
   const dailyReboot = calendarRebootView(client?.calendar_daily_reboot);
+  const currentState = currentClientState(clientState);
+  const browserLabel = clientOnline ? (liveChromeStatus || "Browser ukendt") : "Browser offline";
 
   return (
     <Box
@@ -867,10 +804,10 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
         <Box sx={{
           minWidth: 0
         }}>
-          <Typography variant={isMobile ? "h6" : "h5"} sx={{ fontWeight: 950, lineHeight: 1.08, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <Typography variant={isMobile ? "h6" : "h5"} sx={{ fontWeight: 950, lineHeight: 1.08, overflow: compactMobile ? "visible" : "hidden", textOverflow: compactMobile ? "clip" : "ellipsis", whiteSpace: compactMobile ? "normal" : "nowrap", overflowWrap: "anywhere" }}>
             {clientName}
           </Typography>
-          <Typography variant="body2" sx={{ color: "rgba(203,213,225,0.68)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <Typography variant="body2" sx={{ color: "rgba(203,213,225,0.68)", overflow: compactMobile ? "visible" : "hidden", textOverflow: compactMobile ? "clip" : "ellipsis", whiteSpace: compactMobile ? "normal" : "nowrap", overflowWrap: "anywhere" }}>
             {[organizationName, location].filter(Boolean).join(" · ")}
           </Typography>
         </Box>
@@ -884,7 +821,7 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
           alignItems: "center",
           justifyContent: compactMobile ? "flex-start" : "flex-end",
           ...(touchHandset ? {
-            "& .MuiChip-root": { height: "auto", minHeight: 24, maxWidth: "100%" },
+            "& .MuiChip-root": { height: "auto", minHeight: 24, maxWidth: "100%", minWidth: 0 },
             "& .MuiChip-label": {
               whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.3,
               py: 0.5, textOverflow: "clip",
@@ -892,14 +829,15 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
           } : {})
         }}>
         <DashboardChip dark label={clientOnline ? "Online" : "Offline"} color={clientOnline ? "success" : "error"} variant="filled" />
-        <DashboardChip dark label={clientState || "ukendt"} color={clientState === "normal" ? "success" : "warning"} />
-        {powerEventLabel && (
-          <DashboardChip dark label={powerEventLabel} color={powerEventColor(client)} />
+        {currentState && (
+          <DashboardChip dark label={currentState} color={currentClientStateTone(clientState)} />
         )}
-        <Tooltip title={dailyReboot.title}>
-          <span><DashboardChip dark label={dailyReboot.label} color={dailyReboot.color} /></span>
-        </Tooltip>
-        <DashboardChip dark label={clientOnline ? (liveChromeStatus || "Browser ukendt") : "Browser offline"} color={clientOnline ? "info" : "default"} />
+        {calendarRebootIsActionable(client?.calendar_daily_reboot) && (
+          <Tooltip title={dailyReboot.title}>
+            <span><DashboardChip dark label={dailyReboot.label} color={dailyReboot.color} /></span>
+          </Tooltip>
+        )}
+        <DashboardChip dark label={`Browser: ${browserLabel}`} color={browserStatusTone(clientOnline, client?.chrome_color, browserLabel)} />
         {networkUnavailable && (
           <DashboardChip dark label={`Netværk: ${networkMessage || "diagnostik melder fejl"}`} color="error" />
         )}
