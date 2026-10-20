@@ -19,6 +19,7 @@ from ..models import utcnow
 from ..observability import log_safe_exception
 from ..realtime_wakeup import queue_wakeup_after_commit
 from ..ui_realtime import (
+    notify_ui_fleet_order_changed,
     issue_ui_realtime_capability,
     verify_ui_realtime_capability,
     wait_for_ui_change,
@@ -1469,6 +1470,77 @@ def get_control_room_clients(session=Depends(get_session), user=Depends(get_curr
     return get_clients(session=session, user=user)
 
 
+class ClientControlRoomOrderUpdate(BaseModel):
+    # Preconditions prevent silent overwrites when another administrator has
+    # changed the fleet ordering since the list was loaded.
+    expected_ids: list[int] = PydanticField(min_length=1, max_length=10000)
+    ordered_ids: list[int] = PydanticField(min_length=1, max_length=10000)
+
+
+def _persist_control_room_order(session, *, expected_ids: list[int], ordered_ids: list[int]) -> set[int]:
+    """Validate and update the complete approved fleet under one DB transaction.
+
+    PostgreSQL row locks serialize concurrent reorder operations. The caller
+    commits once after the audit row has been added; on any error nothing is
+    committed. Never touch pending, removed or other-organization clients.
+    """
+    if (
+        len(expected_ids) != len(ordered_ids)
+        or len(set(expected_ids)) != len(expected_ids)
+        or len(set(ordered_ids)) != len(ordered_ids)
+        or any(type(value) is not int or value <= 0 for value in expected_ids + ordered_ids)
+        or set(expected_ids) != set(ordered_ids)
+    ):
+        raise HTTPException(status_code=422, detail="Ugyldig eller ufuldstændig klientsortering")
+
+    clients = session.exec(
+        select(Client)
+        .where(Client.deleted_at.is_(None), Client.status == "approved")
+        .order_by(Client.id)
+        .with_for_update()
+    ).all()
+    current_ids = [
+        client.id for client in sorted(
+            clients,
+            key=lambda c: (c.sort_order is None, c.sort_order if c.sort_order is not None else 9999, c.id),
+        )
+    ]
+    if current_ids != expected_ids:
+        raise HTTPException(status_code=409, detail="Klientrækkefølgen er ændret. Genindlæs og prøv igen")
+
+    by_id = {client.id: client for client in clients}
+    for position, client_id in enumerate(ordered_ids, start=1):
+        by_id[client_id].sort_order = position
+        session.add(by_id[client_id])
+    return {client.organization_id for client in clients if client.organization_id is not None}
+
+
+@router.post("/clients/control-room-order")
+def update_control_room_order(
+    body: ClientControlRoomOrderUpdate,
+    request: Request,
+    session=Depends(get_session),
+    user=Depends(get_current_superadmin_user),
+):
+    """One write, one audit record and one realtime invalidation for a full reorder."""
+    if principal_is_client(user) or not getattr(user, "is_superadmin", False):
+        raise HTTPException(status_code=403, detail="Kun superadministrator må ændre klientsortering")
+    affected_organizations = _persist_control_room_order(
+        session, expected_ids=body.expected_ids, ordered_ids=body.ordered_ids,
+    )
+    add_audit_log(
+        session,
+        action="control_room_clients_reordered",
+        request=request,
+        actor=user,
+        entity_type="client",
+        details={"client_count": len(body.ordered_ids), "ordered_ids": body.ordered_ids},
+    )
+    session.commit()
+    notify_ui_fleet_order_changed(affected_organizations)
+    return {"ok": True, "ordered_ids": body.ordered_ids}
+
+
 @router.post("/clients/control-room-realtime/capability")
 def create_control_room_realtime_capability(
     client_id: int | None = Query(default=None, ge=1),
@@ -2523,6 +2595,8 @@ async def update_client(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     fields = set(client_update.model_fields_set)
+    if "sort_order" in fields:
+        raise HTTPException(status_code=410, detail="Brug atomar Control Room-klientsortering")
     _authorize_client_update_fields(user, client, client_update, fields)
     _validate_client_update_privileges(user, client, fields)
     _validate_client_update_command_availability(session, user, client, client_update, fields)
@@ -2531,7 +2605,6 @@ async def update_client(
     if "name" in fields: client.name = _normalize_client_name(client_update.name)
     if "machine_id" in fields: client.machine_id = client_update.machine_id
     if "locality" in fields: client.locality = client_update.locality
-    if "sort_order" in fields: client.sort_order = client_update.sort_order
     if "kiosk_url" in fields:
         set_display_desired_kiosk_url(
             session,

@@ -123,6 +123,7 @@ def test_shared_command_poll_matches_legacy_five_second_backend_cadence_without_
 
 def test_frontend_always_on_database_polls_are_visibility_aware():
     list_page = _read("frontend/src/pages/ClientInfoPage.jsx")
+    list_polling = _read("frontend/src/utils/controlRoomPolling.mjs")
     details_page = _read("frontend/src/pages/clientdetailspage/ClientDetailsPage.jsx")
     api = _read("frontend/src/api/api.js")
     actions = _read("frontend/src/pages/clientdetailspage/ClientDetailsActionsSection.jsx")
@@ -135,8 +136,10 @@ def test_frontend_always_on_database_polls_are_visibility_aware():
     assert "waitForControlRoomRealtime" in list_page
     assert "if (changed && isPageVisible() && !isDraggingRef.current)" in list_page
     assert "await fetchClients(false, false);" in list_page
-    assert "CLIENT_LIST_ACTIVE_POLL_MS = 10_000" in list_page
-    assert "CLIENT_LIST_IDLE_POLL_MS = 60_000" in list_page
+    assert "clientListPollDelay(lastFetchedClients.current)" in list_page
+    assert "return clientListNeedsFastPolling(items, nowMs) ? 10_000 : 60_000" in list_polling
+    assert "PENDING_ENROLLMENT.has(status)" in list_polling
+    assert "deadlineMs(countdown?.ends_at) > nowMs" in list_polling
     assert "/api/clients/control-room-realtime/capability" in api
     assert "/api/clients/control-room-realtime/wait?" in api
 

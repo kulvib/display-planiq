@@ -72,24 +72,26 @@ export default function ClientDetailsPageWrapper({ showSnackbar: showSnackbarPro
   // Hent klient
   // ---------------------------------------------------------------------------
   const fetchClient = useCallback(async (isRefresh = false) => {
-    if (!id) return;
+    if (!id) return false;
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
 
     try {
       const data = await getClient(id);
-      if (!mountedRef.current) return;
-      if (!data) { setError("Klienten blev ikke fundet."); return; }
+      if (!mountedRef.current) return false;
+      if (!data) { setError("Klienten blev ikke fundet."); return false; }
       setClient(data);
+      return true;
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       if (err?.response?.status === 403 || err?.status === 403)
         setError("Du har ikke adgang til denne klient.");
       else if (err?.response?.status === 404 || err?.status === 404)
         setError("Klienten blev ikke fundet.");
       else
         setError("Kunne ikke hente klientdata: " + (err?.message || String(err)));
+      return false;
     } finally {
       if (mountedRef.current) { setLoading(false); setRefreshing(false); }
     }
@@ -114,20 +116,22 @@ export default function ClientDetailsPageWrapper({ showSnackbar: showSnackbarPro
   // Hent kalender
   // ---------------------------------------------------------------------------
   const fetchMarkedDays = useCallback(async () => {
-    if (!id) return;
+    if (!id) return false;
     setCalendarLoading(true);
     try {
       const seasonData = await getCurrentSeason();
       const season = seasonData?.id ?? seasonData?.season ?? null;
-      if (!season) { setMarkedDays({}); return; }
+      if (!season) { setMarkedDays({}); return true; }
       const data = await getMarkedDays(season, id);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       const days = data?.markedDays ?? data?.marked_days ?? data ?? {};
       setMarkedDays(typeof days === "object" && !Array.isArray(days) ? days : {});
+      return true;
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current) return false;
       console.warn("Kunne ikke hente kalendermarkinger:", err?.message || err);
-      setMarkedDays({});
+      // Preserve last known calendar on transient failure.
+      return false;
     } finally {
       if (mountedRef.current) setCalendarLoading(false);
     }
@@ -161,8 +165,12 @@ export default function ClientDetailsPageWrapper({ showSnackbar: showSnackbarPro
     if (typeof cancelActionPollRef.current === "function") {
       cancelActionPollRef.current();
     }
-    await Promise.all([fetchClient(true), fetchMarkedDays()]);
-    showSnackbar({ message: "Klient opdateret", severity: "success" });
+    const results = await Promise.all([fetchClient(true), fetchMarkedDays()]);
+    if (results.every(Boolean)) {
+      showSnackbar({ message: "Klient opdateret", severity: "success" });
+    } else {
+      showSnackbar({ message: "Klientdata blev ikke fuldt opdateret. Prøv igen.", severity: "warning" });
+    }
   }, [fetchClient, fetchMarkedDays, showSnackbar]);
 
   const handleRestartStream = useCallback(() => {

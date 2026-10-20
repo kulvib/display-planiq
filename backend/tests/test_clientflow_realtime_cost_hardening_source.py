@@ -86,7 +86,18 @@ def test_control_room_realtime_wait_is_capability_scoped_and_db_free():
     assert "waitForControlRoomRealtime(capability, generation, 25)" in details
     assert "CHROME_STATUS_IDLE_POLL_MS = 60000" in details
     assert "waitForControlRoomRealtime(capability, generation, 25)" in listing
-    assert "CLIENT_LIST_IDLE_POLL_MS = 60_000" in listing
+    # P2 moved reconciliation cadence to a pure shared policy. Keep the
+    # original 60s idle/DB-cost gate, and also require the exact 10s active
+    # branch plus the actual import and scheduled use on the list page.
+    polling = read("frontend/src/utils/controlRoomPolling.mjs")
+    assert 'import { clientListPollDelay } from "../utils/controlRoomPolling.mjs"' in listing
+    assert "const delay = clientListPollDelay(lastFetchedClients.current);" in listing
+    assert "window.setTimeout(async () =>" in listing
+    assert "if (!cancelled && isPageVisible())" in listing
+    assert "return clientListNeedsFastPolling(items, nowMs) ? 10_000 : 60_000;" in polling
+    assert "PENDING_ENROLLMENT.has(status)" in polling
+    assert "BUSY_CLIENT_LIST_CHROME_STEPS.has(chromeStep)" in polling
+    assert "deadlineMs(countdown?.ends_at) > nowMs" in polling
 
 
 def test_calendar_uses_push_assisted_invalidation_with_conditional_reconciliation():

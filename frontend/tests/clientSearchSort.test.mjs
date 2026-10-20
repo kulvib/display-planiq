@@ -21,7 +21,7 @@ const clients = [
 ];
 
 test("client search matches organization, identity, locality and network without modifying source", () => {
-  for (const text of ["østervang", "ØSTERVANG", "viborg", "56", "Grønnegade", "nuc-v2", "192.168.126"]) {
+  for (const text of ["østervang", "ØSTERVANG", "viborg", "56", "Grønnegade", "192.168.126"]) {
     assert.deepEqual(clients.filter((c) => clientMatchesSearch(c, text, organizations)).map((c) => c.id), [56]);
   }
   assert.deepEqual(clients.filter((c) => clientMatchesSearch(c, "AARHUS", organizations)).map((c) => c.id), [42, 48]);
@@ -33,6 +33,7 @@ test("client search matches organization, identity, locality and network without
 test("unavailable organizations are not incorrectly exposed via search", () => {
   assert.equal(clientMatchesSearch(clients[0], "østervang", new Map()), false);
   assert.equal(clientMatchesSearch(clients[0], "20", new Map()), false);
+  assert.equal(clientMatchesSearch(clients[0], "nuc-v2", organizations), false, "hostname is not in the authorized list API");
 });
 
 test("livestream sort is immutable, stable and reflects requested order", () => {

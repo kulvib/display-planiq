@@ -11,6 +11,7 @@ const read = (relativePath) => fs.readFileSync(path.join(FRONTEND_ROOT, relative
 test("Control Room list uses DB-free realtime invalidation with bounded reconciliation polling", () => {
   const page = read("src/pages/ClientInfoPage.jsx");
   const api = read("src/api/api.js");
+  const policy = read("src/utils/controlRoomPolling.mjs");
 
   assert.match(api, /export async function getControlRoomClients\(\)/);
   const controlRoomTransport = api.slice(
@@ -26,16 +27,16 @@ test("Control Room list uses DB-free realtime invalidation with bounded reconcil
   assert.match(page, /createControlRoomRealtimeCapability/);
   assert.match(page, /waitForControlRoomRealtime\(capability, generation, 25\)/);
   assert.doesNotMatch(page, /getMyClients/);
-  assert.match(page, /CLIENT_LIST_ACTIVE_POLL_MS = 10_000/);
-  assert.match(page, /CLIENT_LIST_IDLE_POLL_MS = 60_000/);
-  assert.match(page, /clientListNeedsFastPolling/);
-  assert.match(page, /status !== "approved"/);
+  assert.match(policy, /return clientListNeedsFastPolling\(items, nowMs\) \? 10_000 : 60_000/);
+  assert.match(page, /clientListPollDelay/);
+  assert.match(policy, /clientListNeedsFastPolling/);
+  assert.match(policy, /PENDING_ENROLLMENT\.has\(status\)/);
   assert.match(page, /ca\.approval_ready_at !== cb\.approval_ready_at/);
   assert.match(page, /ca\.approval_ready_boot_id !== cb\.approval_ready_boot_id/);
   assert.match(page, /label: "Klar til godkendelse"/);
   assert.match(page, /label: "Afventer reboot"/);
-  assert.match(page, /pendingAction && pendingAction !== "none"/);
-  assert.match(page, /BUSY_CLIENT_LIST_CHROME_STEPS\.has\(chromeStep\)/);
+  assert.match(policy, /pendingAction && pendingAction !== "none"/);
+  assert.match(policy, /BUSY_CLIENT_LIST_CHROME_STEPS\.has\(chromeStep\)/);
   assert.match(page, /ca\.chrome_status !== cb\.chrome_status/);
   assert.match(page, /ca\.chrome_color !== cb\.chrome_color/);
   // The server remains authoritative for the reported browser status and
@@ -50,10 +51,10 @@ test("Control Room list uses DB-free realtime invalidation with bounded reconcil
   assert.match(statusCell, /return \(\) => window\.clearInterval\(timer\)/);
   assert.doesNotMatch(statusCell, /getControlRoomClients\(|getChromeStatus\(|fetch\(/);
   assert.match(page, /label = `\$\{onlineText\} \/ \$\{stateText\} \/ \$\{browserStatus\}`/);
-  assert.match(page, /client\?\.pending_reboot === true/);
-  assert.match(page, /client\?\.pending_shutdown === true/);
-  assert.match(page, /client\?\.pending_os_update === true/);
-  assert.match(page, /\["wakeup", "rebooting", "updating"\]\.includes\(state\)/);
+  assert.match(policy, /client\?\.pending_reboot === true/);
+  assert.match(policy, /client\?\.pending_shutdown === true/);
+  assert.match(policy, /client\?\.pending_os_update === true/);
+  assert.match(policy, /const ACTIVE_STATES = new Set\(\["wakeup", "rebooting", "updating"\]\)/);
   assert.doesNotMatch(page, /state !== "normal" && state !== "approved"/);
   assert.match(page, /window\.setTimeout\(async \(\) =>/);
   assert.doesNotMatch(page, /setInterval\([^\n]*fetchClients/);

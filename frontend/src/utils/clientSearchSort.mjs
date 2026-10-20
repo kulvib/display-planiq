@@ -18,11 +18,9 @@ export function clientMatchesSearch(client, search, namesById = new Map()) {
   const fields = [
     client?.id,
     client?.name,
-    client?.hostname,
     client?.locality,
     client?.location,
     organizationName(client, namesById),
-    client?.active_network_ip,
     client?.wifi_ip_address,
     client?.lan_ip_address,
   ];

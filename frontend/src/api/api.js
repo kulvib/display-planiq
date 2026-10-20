@@ -759,6 +759,18 @@ export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
   return json;
 }
 
+export async function updateControlRoomOrder(expectedIds, orderedIds) {
+  const res = await apiFetch(`${apiUrl}/api/clients/control-room-order`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    credentials: "include",
+    body: JSON.stringify({ expected_ids: expectedIds, ordered_ids: orderedIds }),
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke gemme klientsortering"));
+  return readJsonResponse(res);
+}
+
 export async function updateClient(id, updates) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/update`, {
     method: "PUT",
