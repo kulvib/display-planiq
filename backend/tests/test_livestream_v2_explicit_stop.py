@@ -94,7 +94,7 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
         livestream_v2.request_stop(
             session,
             self.CLIENT_ID,
-            source="client_activity_grace_expired",
+            source="viewer_grace_expired",
         )
         self.assertEqual(client.livestream_stop_reason, "explicit_stop:browser_manual_stop")
 

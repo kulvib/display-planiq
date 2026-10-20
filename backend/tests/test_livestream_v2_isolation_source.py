@@ -259,11 +259,12 @@ class LivestreamV2IsolationSourceTests(unittest.TestCase):
             'command.state = "cancelled"',
             'generation_stopped(',
             'active_viewer_count(session, client_id) > 0',
-            'active_livestream_activity_count(session, client_id) > 0',
             '"viewer_returned_during_recovery"',
-            '"client_activity_returned_during_recovery"',
         ):
             self.assertIn(required, reconcile_block)
+
+        self.assertNotIn("active_livestream_activity_count", reconcile_block)
+        self.assertNotIn("client_activity_returned_during_recovery", reconcile_block)
 
         producer = (
             REPO

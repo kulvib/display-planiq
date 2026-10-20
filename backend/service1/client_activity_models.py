@@ -1,8 +1,6 @@
-"""Shared browser-activity leases used for cross-feature client lifecycle.
+"""Authenticated browser-activity audit for Terminal/Remote Desktop.
 
-Terminal and Remote Desktop publish their own authenticated browser-session
-presence here. Livestream consumes that shared presence as client activity for
-its own lifecycle reconciliation; no domain directly invokes another domain.
+The support-domain activity leases are independent from Livestream viewers.
 """
 from __future__ import annotations
 

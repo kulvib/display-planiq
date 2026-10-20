@@ -25,11 +25,6 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from .auth import SECRET_KEY
-from .client_activity import (
-    active_livestream_activity_client_ids,
-    active_livestream_activity_count,
-    last_livestream_activity_ended_at,
-)
 from .db import engine
 from .models import Client
 from .realtime_wakeup import queue_wakeup_after_commit
@@ -921,25 +916,14 @@ def reconcile_stopping_generation_from_agent_status(
         generation_id=generation.id,
         error_code=None,
     )
-    # If any authenticated client activity is already present, do not wait for
-    # the next heartbeat/sweeper tick. The old generation is now physically and
-    # transactionally stopped, so enqueue the next generation immediately.
-    viewer_active = active_viewer_count(session, client_id) > 0
-    activity_active = active_livestream_activity_count(session, client_id) > 0
+    # Only an authenticated Livestream viewer may re-start HLS. Terminal and
+    # Remote Desktop have independent transports and never hold its lifecycle.
     if (
         not explicit_stop_latched(session, client_id)
-        and (viewer_active or activity_active)
+        and active_viewer_count(session, client_id) > 0
         and current_generation(session, client_id) is None
     ):
-        request_start(
-            session,
-            client_id,
-            source=(
-                "viewer_returned_during_recovery"
-                if viewer_active
-                else "client_activity_returned_during_recovery"
-            ),
-        )
+        request_start(session, client_id, source="viewer_returned_during_recovery")
     return True
 
 
@@ -975,10 +959,7 @@ def update_agent_status(
 
 
 def maybe_recover_stale_media(session: Session, client_id: int) -> bool:
-    if (
-        active_viewer_count(session, client_id) == 0
-        and active_livestream_activity_count(session, client_id) == 0
-    ):
+    if active_viewer_count(session, client_id) == 0:
         return False
     generation = current_generation(session, client_id)
     if generation is None or generation.state not in {"starting", "running"}:
@@ -1025,20 +1006,18 @@ def reconcile_viewer_lifecycle(session: Session, client_id: int) -> str | None:
             )
         ).all()
     )
-    active_client_activity = active_livestream_activity_count(session, client_id)
     generation = current_generation(session, client_id)
 
-    # One shared client lifecycle: a visible Livestream viewer, Terminal browser
-    # session, or Remote Desktop browser session can start/hold Livestream.
-    # Domains publish only authenticated presence; they never call each other.
-    if active_viewers > 0 or active_client_activity > 0:
+    # Only authenticated Livestream viewers can start/hold an HLS generation.
+    # Terminal and Remote Desktop do not participate in Livestream lifecycle.
+    if active_viewers > 0:
         if generation is None:
             if explicit_stop_latched(session, client_id):
                 return None
             request_start(
                 session,
                 client_id,
-                source="viewer_reconcile" if active_viewers > 0 else "client_activity_reconcile",
+                source="viewer_reconcile",
             )
             return "start"
         return None
@@ -1055,14 +1034,10 @@ def reconcile_viewer_lifecycle(session: Session, client_id: int) -> str | None:
         .order_by(LivestreamV2Viewer.ended_at.desc())
         .limit(1)
     ).first()
-    last_activity_ended = last_livestream_activity_ended_at(session, client_id)
-    ended_candidates = [
-        value for value in (last_viewer_ended, last_activity_ended) if value is not None
-    ]
-    absent_since = max(ended_candidates) if ended_candidates else generation.created_at
+    absent_since = last_viewer_ended if last_viewer_ended is not None else generation.created_at
     if now - absent_since < timedelta(seconds=VIEWER_STOP_GRACE_SECONDS):
         return None
-    request_stop(session, client_id, source="client_activity_grace_expired")
+    request_stop(session, client_id, source="viewer_grace_expired")
     return "stop"
 
 
@@ -1117,9 +1092,8 @@ def reconcile_all_viewer_lifecycles(
         for client_id, state in generation_rows
         if state != "stopping"
     }
-    active_viewer_client_ids = _active_viewer_client_ids(session, now=now)
-    active_activity_client_ids = active_livestream_activity_client_ids(session, now=now)
-    steady_presence_client_ids = active_viewer_client_ids | active_activity_client_ids
+    # A support-only Terminal/RD session must never be a sweep candidate.
+    steady_presence_client_ids = _active_viewer_client_ids(session, now=now)
     candidate_ids = active_generation_client_ids | steady_presence_client_ids
     if sweep_activity is not None:
         # A stopping generation is finalized by the agent, not by this loop.
