@@ -59,11 +59,13 @@ import {
   purgeClient,
   getDeletedClients,
   updateClient,
+  updateControlRoomOrder,
   getOrganizations,
 } from "../api";
 import { useAuth } from "../auth/AuthProvider";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearchSort.mjs";
+import { clientListPollDelay } from "../utils/controlRoomPolling.mjs";
 import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientdetailspage/browserCountdown.mjs";
 import { calendarRebootView } from "./clientdetailspage/calendarRebootStatus.mjs";
 import { browserFullscreenLabel } from "../utils/browserFullscreen.mjs";
@@ -94,48 +96,8 @@ import { sameClientHealthIssues } from "../utils/clientHealthIssues.mjs";
 // Polling
 // ---------------------------------------------------------------------------
 
-// Stable Control Room state changes only when backend/client state changes; the
-// shared agents themselves report on a 15-second cadence. Keep the historical
-// 2-second cadence while something is actually moving, but do not continually
-// re-read a stable 100-client list five times per 10 seconds.
-const CLIENT_LIST_ACTIVE_POLL_MS = 10_000;
-const CLIENT_LIST_IDLE_POLL_MS = 60_000;
-const BUSY_CLIENT_LIST_CHROME_STEPS = new Set([
-  "clear_cookies",
-  "terminate_chrome",
-  "kill_chrome",
-  "starting_chrome",
-  "countdown",
-  "display_sleep_countdown",
-  "system_reboot_countdown",
-  "system_rebooting",
-  "system_shutting_down",
-]);
-
-function clientListNeedsFastPolling(items = []) {
-  return items.some((client) => {
-    const status = String(client?.status || "").trim().toLowerCase();
-    const state = String(client?.state || "").trim().toLowerCase();
-    const pendingAction = String(client?.pending_chrome_action || "none").trim().toLowerCase();
-    const chromeStep = String(client?.chrome_step || "").trim().toLowerCase();
-
-    return (
-      status !== "approved" ||
-      (pendingAction && pendingAction !== "none") ||
-      BUSY_CLIENT_LIST_CHROME_STEPS.has(chromeStep) ||
-      client?.pending_reboot === true ||
-      client?.pending_shutdown === true ||
-      client?.pending_os_update === true ||
-      ["wakeup", "rebooting", "updating"].includes(state)
-    );
-  });
-}
-
-function clientListPollDelay(items = []) {
-  return clientListNeedsFastPolling(items)
-    ? CLIENT_LIST_ACTIVE_POLL_MS
-    : CLIENT_LIST_IDLE_POLL_MS;
-}
+// Realtime remains authoritative; background reconciliation uses 10s only
+// for active operations/enrollment, otherwise 60s (see controlRoomPolling.mjs).
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -829,8 +791,8 @@ export default function ClientInfoPage() {
   // ---------------------------------------------------------------------------
 
   const fetchClients = useCallback(
-    (forceUpdate = false, showLoading = false) => {
-      if (isDraggingRef.current) return Promise.resolve();
+    (forceUpdate = false, showLoading = false, notifyError = true) => {
+      if (isDraggingRef.current) return Promise.resolve(false);
       if (fetchingClientsPromiseRef.current) {
         return fetchingClientsPromiseRef.current;
       }
@@ -849,10 +811,12 @@ export default function ClientInfoPage() {
             setClients(data);
             lastFetchedClients.current = data;
           }
+          return true;
         } catch (err) {
-          if (forceUpdate || showLoading) {
+          if (notifyError && (forceUpdate || showLoading)) {
             showSnackbar("Fejl: " + (err?.message || err), "error");
           }
+          return false;
         } finally {
           if (fetchingClientsPromiseRef.current === requestPromise) {
             fetchingClientsPromiseRef.current = null;
@@ -883,19 +847,21 @@ export default function ClientInfoPage() {
   }, [fetchClients]);
 
   const fetchDeletedClients = useCallback(
-    async (showLoading = false) => {
-      if (!canViewTrash) return;
+    async (showLoading = false, notifyError = true) => {
+      if (!canViewTrash) return true;
       if (showLoading) setLoadingDeletedClients(true);
       try {
         const data = await getDeletedClients();
         setDeletedClients(Array.isArray(data) ? data : []);
+        return true;
       } catch (err) {
-        if (showLoading) {
+        if (notifyError && showLoading) {
           showSnackbar(
             "Kunne ikke hente papirkurv: " + (err?.message || err),
             "error",
           );
         }
+        return false;
       } finally {
         if (showLoading) setLoadingDeletedClients(false);
       }
@@ -907,8 +873,10 @@ export default function ClientInfoPage() {
     try {
       const data = await getOrganizations();
       setOrganizations(Array.isArray(data) ? data : []);
+      return true;
     } catch {
-      setOrganizations([]);
+      // Preserve last known organization names on failed refresh.
+      return false;
     }
   }, []);
 
@@ -1059,12 +1027,18 @@ export default function ClientInfoPage() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([
-        fetchClients(true, true),
-        fetchDeletedClients(false),
+      const results = await Promise.all([
+        fetchClients(true, true, false),
+        fetchDeletedClients(false, false),
         fetchOrganizations(),
       ]);
-      showSnackbar("Siden er opdateret.", "success");
+      if (results.every(Boolean)) {
+        showSnackbar("Siden er opdateret.", "success");
+      } else {
+        showSnackbar("Siden blev kun delvist opdateret. Prøv igen.", "warning");
+      }
+    } catch (err) {
+      showSnackbar("Kunne ikke opdatere siden: " + (err?.message || err), "error");
     } finally {
       setRefreshing(false);
     }
@@ -1167,27 +1141,29 @@ export default function ClientInfoPage() {
       setDragClients(reordered);
       setSavingSort(true);
 
+      let saved = false;
       try {
-        await Promise.all(
-          reordered.map((client, i) =>
-            updateClient(client.id, { sort_order: i + 1 }),
-          ),
+        await updateControlRoomOrder(
+          dragClients.map((client) => client.id),
+          reordered.map((client) => client.id),
         );
-
-        showSnackbar("Sortering opdateret!", "success");
-
-        isDraggingRef.current = false;
-        await fetchClients(true, false);
+        saved = true;
       } catch (err) {
+        // A 409 (or any other failed write) must not leave optimistic order in UI.
+        setDragClients(dragClients);
         showSnackbar(
           "Kunne ikke opdatere sortering: " + (err?.message || err),
           "error",
         );
-
-        isDraggingRef.current = false;
-        await fetchClients(true, false);
       } finally {
         isDraggingRef.current = false;
+        const refreshed = await fetchClients(true, false);
+        if (saved) {
+          showSnackbar(
+            refreshed ? "Sortering opdateret!" : "Sortering gemt, men klientlisten kunne ikke genindlæses.",
+            refreshed ? "success" : "warning",
+          );
+        }
         setSavingSort(false);
       }
     },
@@ -1728,7 +1704,7 @@ export default function ClientInfoPage() {
           size="small"
           type="search"
           label="Søg i klientoversigten"
-          placeholder="Klientnavn, ID, lokation, organisation, hostname eller IP"
+          placeholder="Klientnavn, ID, lokation, organisation, WiFi- eller LAN-IP"
           value={clientSearch}
           onChange={(event) => setClientSearch(event.target.value)}
           slotProps={{ htmlInput: { maxLength: 160 } }}

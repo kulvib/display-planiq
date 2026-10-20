@@ -68,6 +68,22 @@ def notify_ui_state_changed(
         return generation
 
 
+def notify_ui_fleet_order_changed(organization_ids: set[int]) -> int:
+    """One fleet invalidation after commit, including organization-scoped lists.
+
+    Ordering is global for superadmins, but organization admins read their own
+    authorized Control Room projection. Wake all affected scopes without one
+    notification (or database request) per client.
+    """
+    global _GLOBAL_GENERATION
+    with _CONDITION:
+        _GLOBAL_GENERATION += 1
+        for organization_id in organization_ids:
+            _ORG_GENERATIONS[int(organization_id)] += 1
+        _CONDITION.notify_all()
+        return int(_GLOBAL_GENERATION)
+
+
 def issue_ui_realtime_capability(
     principal: object, *, client_id: int | None = None
 ) -> dict[str, Any]:
