@@ -41,6 +41,7 @@ import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 import { summarizeServiceLevels } from "../../utils/serviceHealthSummary.mjs";
 import { hasActiveLivestreamError } from "../../utils/livestreamHealth.mjs";
+import { calendarRebootView } from "./calendarRebootStatus.mjs";
 
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
@@ -2599,8 +2600,10 @@ function DiagnosticsPanel({ client, onRefresh }) {
     boot_after_shutdown: "Boot efter nedlukning",
   };
   const lifecycleEventLabel = lifecycleLabelMap[normalizeText(client?.last_power_event)] || statusText(client?.last_power_event, "Ingen");
+  const dailyReboot = calendarRebootView(client?.calendar_daily_reboot);
 
   const attentionItems = [
+    onlineValue === false ? { label: "Klienten er offline", level: "error", value: "Seneste kontakt fremgår af tekniske detaljer" } : null,
     networkUnavailable ? { label: "Netværk mangler", level: "error", value: networkMessage } : null,
     serviceIssues.length > 0 ? { label: `${serviceIssues.length} systemd-status kræver tjek`, level: "error", value: serviceIssues.map((row) => row.label).join(", ") } : null,
     hasPendingChromeAction ? { label: "Pending browser-handling", level: "info", value: client?.pending_chrome_action } : null,
@@ -2612,6 +2615,9 @@ function DiagnosticsPanel({ client, onRefresh }) {
     hasDiagnosticValue(client?.display_resolution_error) ? { label: "Display-fejl", level: "error", value: client?.display_resolution_error } : null,
     timeSyncLevel === "error" ? { label: "Systemtid er kritisk", level: "error", value: timeSyncMessage } : null,
     timeSyncLevel === "warn" ? { label: "Systemtid kræver tjek", level: "warn", value: timeSyncMessage } : null,
+    serviceSummary.unverified > 0 ? { label: "Services ikke verificeret", level: "neutral", value: `${serviceSummary.unverified} mangler bekræftet OK-status` } : null,
+    !networkUnavailable && networkLevel === "neutral" ? { label: "Netværk ikke verificeret", level: "neutral", value: networkMessage } : null,
+    timeSyncLevel === "neutral" ? { label: "Systemtid ikke verificeret", level: "neutral", value: timeSyncMessage } : null,
   ].filter(Boolean);
 
   const criticalIssues = criticalServiceRows.filter((row) => ["warn", "error"].includes(getRowLevel(row)));
@@ -2641,12 +2647,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
       value: `${serviceSummary.ok}/${serviceSummary.total} OK`,
       helper: serviceIssueText,
       level: serviceSummary.issues ? "error" : serviceSummary.unverified ? "neutral" : "ok",
-    },
-    {
-      label: "Drift",
-      value: statusText(client?.chrome_status),
-      helper: `Livestream: ${statusText(client?.livestream_status || "idle")} · Display: ${displaySummary}`,
-      level: getStatusLevel(client?.chrome_color || client?.chrome_step || client?.chrome_status),
     },
     {
       label: "Systemtid",
@@ -2720,6 +2720,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       columns: 2,
       rows: [
         { label: "Seneste hændelse", value: lifecycleEventLabel, status: true },
+        { label: "Kalendergenstart", value: dailyReboot.label, helper: dailyReboot.title, level: dailyReboot.color === "error" ? "error" : dailyReboot.color === "warning" ? "warn" : dailyReboot.color === "success" ? "ok" : "neutral", wide: true },
         { label: "Kilde", value: client?.last_power_event_source, fallback: "ukendt", status: true },
         { label: "Event-tid", value: formatDiagnosticDate(client?.last_power_event_at) },
         { label: "Seneste boot", value: formatDiagnosticDate(client?.last_boot_at) },
@@ -2743,7 +2744,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Ubuntu version", value: client?.ubuntu_version },
         { label: "Oppetid", value: formatUptime(client?.uptime) },
         { label: "Sidst set", value: formatDiagnosticDate(client?.presence?.status?.reported_at) },
-        { label: "Diagnostik opdateret", value: formatDiagnosticDate(client?.diagnostics_updated_at), wide: true },
       ],
     },
     {
@@ -2758,7 +2758,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Klientens UTC-tid", value: formatDiagnosticDate(client?.client_time_utc) },
         { label: "Ur-afvigelse", value: formatClockDrift(client?.clock_drift_seconds), level: timeSyncLevel },
         { label: "Backend-vurdering", value: timeSyncMessage, level: timeSyncLevel, wide: true },
-        { label: "Diagnostik opdateret", value: formatDiagnosticDate(client?.diagnostics_updated_at), wide: true },
       ],
     },
     {
@@ -2840,6 +2839,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
     },
   ];
 
+  const [showOverviewDetails, setShowOverviewDetails] = React.useState(false);
   const [showTechnicalDetails, setShowTechnicalDetails] = React.useState(false);
 
   const renderStatusDot = (level) => {
@@ -2998,7 +2998,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   return (
     <DataPanel
       title="Diagnostik"
-      description="Samlet driftsstatus. De tekniske felter er samlet nederst og kan foldes ud efter behov. Kun synlig for superadministratorer."
+      description="Aktuelle fejl og ubekræftede statusser vises først. Supplerende driftsfelter og rå tekniske data kan foldes ud. Synlig for superadministratorer og brugere med Se-adgang."
       action={
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{
           alignItems: { xs: "flex-start", sm: "center" }
@@ -3031,7 +3031,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         >
           <Stack spacing={0.75}>
             <Typography sx={{ color: TEXT, fontWeight: 950 }}>
-              {attentionItems.length ? "Kræver opmærksomhed" : "Ingen tydelige diagnostikproblemer"}
+              {attentionItems.length ? "Kræver opmærksomhed eller verificering" : "Ingen aktuelle diagnostikproblemer"}
             </Typography>
             {attentionItems.length ? attentionItems.map((item) => (
               <Stack key={item.label} direction={{ xs: "column", sm: "row" }} spacing={0.75} sx={{
@@ -3043,15 +3043,36 @@ function DiagnosticsPanel({ client, onRefresh }) {
               </Stack>
             )) : (
               <Typography variant="body2" sx={{ color: MUTED }}>
-                Kritiske systemd-services, livestream-status, display og update-felter ser normale ud.
+                Ingen registrerede problemer eller ubekræftede statusser i den aktuelle diagnosticering.
               </Typography>
             )}
           </Stack>
         </Box>
 
-        <Grid container spacing={1.25}>
-          {overviewSections.map(renderSection)}
-        </Grid>
+        <Box
+          sx={{ p: 1.15, borderRadius: 2, background: "rgba(15,23,42,0.24)", border: `1px solid ${BORDER}` }}
+        >
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}>
+            <Box>
+              <Typography sx={{ color: TEXT, fontWeight: 950 }}>Supplerende driftsoplysninger</Typography>
+              <Typography variant="body2" sx={{ color: MUTED }}>Browser, systemtid og udvalgte services – felterne findes også i de relevante fagfaner.</Typography>
+            </Box>
+            <Button
+              size="small"
+              variant="outlined"
+              aria-expanded={showOverviewDetails}
+              onClick={() => setShowOverviewDetails((value) => !value)}
+              sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER, flex: "0 0 auto" }}
+            >
+              {showOverviewDetails ? "Skjul driftsoplysninger" : "Vis driftsoplysninger"}
+            </Button>
+          </Stack>
+          {showOverviewDetails && (
+            <Grid container spacing={1.25} sx={{ mt: 1.15 }}>
+              {overviewSections.map(renderSection)}
+            </Grid>
+          )}
+        </Box>
 
         <Box
           sx={{
@@ -3077,6 +3098,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
             <Button
               size="small"
               variant="outlined"
+              aria-expanded={showTechnicalDetails}
               onClick={() => setShowTechnicalDetails((value) => !value)}
               sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER, flex: "0 0 auto" }}
             >

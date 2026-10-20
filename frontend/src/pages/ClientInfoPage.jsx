@@ -70,6 +70,7 @@ import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientd
 import { calendarRebootView } from "./clientdetailspage/calendarRebootStatus.mjs";
 import { browserFullscreenLabel } from "../utils/browserFullscreen.mjs";
 import { sameClientHealthIssues } from "../utils/clientHealthIssues.mjs";
+import { browserStatusTone } from "../utils/controlRoomPresentation.mjs";
 
 /*
   ClientInfoPage.jsx
@@ -545,13 +546,13 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
       : client?.chrome_status || "Browserstatus ukendt"),
   ).trim();
   const browserColor = String(client?.chrome_color || "").trim().toLowerCase();
-  const tone = !isOnline || browserColor === "red"
-    ? "error"
-    : browserColor === "orange" || runtimeState.color === "warning"
-      ? "warning"
-      : browserColor === "blue" || runtimeState.color === "info"
-        ? "info"
-        : "success";
+  const browserTone = browserStatusTone(isOnline, browserColor, browserStatus);
+  const tone = !isOnline ? "error"
+    : runtimeState.color === "error" || browserTone === "error" ? "error"
+    : runtimeState.color === "warning" || browserTone === "warning" ? "warning"
+    : runtimeState.color === "info" || browserTone === "info" ? "info"
+    : browserTone === "success" && runtimeState.color !== "warning" ? "success"
+    : "neutral";
   const label = `${onlineText} / ${stateText} / ${browserStatus}`;
   const fullscreenLabel = browserFullscreenLabel(isOnline ? client?.browser_fullscreen : "unknown");
 
@@ -562,8 +563,9 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
           size="small"
           label={label}
           sx={compactDarkChipSx(tone, {
-            minWidth: 104,
+            minWidth: 0,
             maxWidth: 360,
+            overflowWrap: "anywhere",
             "& .MuiChip-label": {
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -1736,7 +1738,12 @@ export default function ClientInfoPage() {
           boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
         }}
       >
-        <TableContainer style={{ position: "relative" }}>
+        {isMobile && (
+          <Typography variant="caption" sx={{ display: "block", px: 1.5, py: 0.75, color: "text.secondary" }}>
+            Oversigten kan rulles vandret. Åbn Control Room for alle oplysninger om en klient.
+          </Typography>
+        )}
+        <TableContainer sx={{ position: "relative", maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {(loading || savingSort) && (
             <Box
               sx={{
