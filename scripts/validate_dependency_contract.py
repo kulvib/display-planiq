@@ -154,7 +154,7 @@ def main() -> int:
         "eslint-plugin-react-hooks": "7.1.1",
         "globals": "15.14.0",
         "@vitejs/plugin-react": "6.1.1",
-        "vite": "8.1.4",
+        "vite": "8.1.6",
     }
     packages = lock.get("packages") or {}
     if package.get("dependencies", {}).get("hls.js") != HLS_JS_RELEASE_PIN:

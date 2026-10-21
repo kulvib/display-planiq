@@ -178,6 +178,7 @@ def main() -> int:
         lease_seconds=300,
         status_payload=lambda: {
             "broker_socket": os.path.exists(SYSTEM_SOCKET),
+            "safe_reboot_recovery": True,
             "firmware": firmware_cache.snapshot(),
         },
         piggyback_status_on_claim=True,

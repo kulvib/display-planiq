@@ -57,15 +57,48 @@ def test_missing_requested_boot_id_does_not_count_as_verified_recovery():
     assert projected["state"] == "error"
 
 
-@pytest.mark.parametrize("status,expected_state,expected_pending", [
-    ("queued", "rebooting", True),
-    ("claimed", "rebooting", True),
-    ("succeeded", "normal", False),
+@pytest.mark.parametrize("status", ["queued", "claimed"])
+def test_active_reboot_with_verified_online_new_boot_does_not_hold_rebooting(status):
+    # Status is the authority for current boot health, not for whether the
+    # Control Room command itself succeeded. This closes Heidi1's stale UI.
+    row = command(status)
+    projected = power_projection_from_command(row, current_boot_id="new-boot", status_online=True)
+    assert projected["state"] == "normal"
+    assert projected["pending_reboot"] is False
+    assert projected["pending_shutdown"] is False
+    assert projected["last_power_event"] is None
+    assert projected["last_power_event_at"] is None
+    assert projected["last_power_event_source"] is None
+    assert row.status == status  # No synthetic acknowledgement or mutation.
+
+
+@pytest.mark.parametrize("status", ["queued", "claimed"])
+@pytest.mark.parametrize("online,boot_id", [
+    (True, "old-boot"),
+    (True, None),
+    (False, "new-boot"),
 ])
-def test_active_and_successful_reboot_contract_remains_unchanged(status, expected_state, expected_pending):
-    projected = power_projection_from_command(command(status), current_boot_id="new-boot", status_online=True)
+def test_active_reboot_remains_pending_without_verified_online_new_boot(status, online, boot_id):
+    row = command(status)
+    projected = power_projection_from_command(row, current_boot_id=boot_id, status_online=online)
+    assert projected["state"] == "rebooting"
+    assert projected["pending_reboot"] is True
+    assert projected["last_power_event"] in {"reboot_requested", "reboot_started"}
+    assert projected["last_power_event_source"] == "control_room"
+    assert row.status == status
+
+
+@pytest.mark.parametrize("online,boot_id,expected_state,expected_pending", [
+    (True, "new-boot", "normal", False),
+    (True, "old-boot", "rebooting", True),
+    (True, None, "rebooting", True),
+])
+def test_succeeded_reboot_waits_for_verified_new_boot(online, boot_id, expected_state, expected_pending):
+    row = command("succeeded")
+    projected = power_projection_from_command(row, current_boot_id=boot_id, status_online=online)
     assert projected["state"] == expected_state
     assert projected["pending_reboot"] is expected_pending
+    assert row.status == "succeeded"
 
 
 def test_shutdown_failures_are_not_reclassified_as_reboot_recovery():

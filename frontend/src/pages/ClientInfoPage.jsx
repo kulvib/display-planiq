@@ -555,6 +555,7 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
     : "neutral";
   const label = `${onlineText} / ${stateText} / ${browserStatus}`;
   const fullscreenLabel = browserFullscreenLabel(isOnline ? client?.browser_fullscreen : "unknown");
+  const fullscreenChipLabel = fullscreenLabel === "Ukendt" ? "Fuldskærm: Ukendt" : fullscreenLabel;
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
@@ -589,7 +590,7 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
       </Tooltip>
       <Chip
         size="small"
-        label={fullscreenLabel}
+        label={fullscreenChipLabel}
         title={`Kiosk browser fuldskærm: ${fullscreenLabel}`}
         sx={compactDarkChipSx(fullscreenLabel === "Fuldskærm" ? "success" : fullscreenLabel === "Ikke fuldskærm" ? "warning" : "info")}
       />

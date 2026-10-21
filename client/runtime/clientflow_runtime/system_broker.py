@@ -220,7 +220,7 @@ def _current_boot_id() -> str:
         raise SystemCommandInDoubt("system_boot_id_unavailable") from exc
 
 
-def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, dict[str, Any] | None]:
+def _journal_begin(client_id: int, command_id: str, action: str, *, recovery_only: bool = False) -> tuple[int, dict[str, Any] | None]:
     _ensure_state_dir()
     lock_fd = os.open(JOURNAL_LOCK_PATH, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -272,6 +272,10 @@ def _journal_begin(client_id: int, command_id: str, action: str) -> tuple[int, d
                     atomic_write_json(JOURNAL_PATH, journal, mode=0o600)
                     return lock_fd, dict(result)
             raise SystemCommandInDoubt("system_command_in_doubt")
+        if recovery_only:
+            # A post-boot claim cannot create a new privileged reboot. Only
+            # replay a result from this exact client's durable command journal.
+            raise SystemCommandInDoubt("system_command_recovery_journal_missing")
         journal[key] = {
             "client_id": client_id,
             "command_id": command_id,
@@ -449,7 +453,10 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Systembroker afviste handlingen")
 
     prepared = _prepare(action, payload, client_id=client_id, command_id=command_id)
-    lock_fd, completed = _journal_begin(client_id, command_id, action)
+    recovery_only = action == "reboot" and payload.get("recovery_only") is True
+    if recovery_only and str(payload.get("recovery_boot_id") or "") != _current_boot_id():
+        raise SystemCommandInDoubt("system_command_recovery_boot_mismatch")
+    lock_fd, completed = _journal_begin(client_id, command_id, action, recovery_only=recovery_only)
     if completed is not None:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)

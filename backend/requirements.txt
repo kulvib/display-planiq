@@ -12,6 +12,7 @@ python-dotenv==1.2.2
 python-multipart==0.0.32
 psycopg2-binary==2.9.13
 requests==2.34.2
+certifi==2026.10.19
 websockets==17.1
 redis==8.0.1
 alembic==1.20.0

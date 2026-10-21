@@ -441,6 +441,20 @@ def power_projection_from_command(
         # Do not attribute that reboot to the failed Control Room command:
         # leave its power-event fields empty so the read projection can retain
         # the separately verified local power observation, when available.
+        # A fresh authenticated Status heartbeat proves the *current* boot
+        # has recovered, even while a broker receipt is still pending. Do not
+        # present a running host as rebooting for five minutes. Do not label
+        # the command successful until the broker confirms its journal entry.
+        boot_recovered_without_receipt = bool(
+            status in SYSTEM_ACTIVE_STATUSES
+            and status_online
+            and requested_boot_id
+            and current_boot_id
+            and current_boot_id != requested_boot_id
+        )
+        if boot_recovered_without_receipt:
+            result["state"] = "normal"
+            return result
         recovered_after_failed_command = bool(
             status in {"failed", "expired", "cancelled"}
             and status_online
