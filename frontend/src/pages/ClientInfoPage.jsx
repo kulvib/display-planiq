@@ -52,8 +52,8 @@ import {
 import { Link } from "react-router-dom";
 import {
   getControlRoomClients,
-  createControlRoomRealtimeCapability,
-  waitForControlRoomRealtime,
+  createControlRoomRealtimeCapability as requestControlRoomRealtimeCapability,
+  waitForControlRoomRealtime as requestControlRoomRealtimeWait,
   getAuthSessionSignal,
   getAuthToken,
   approveClient,
@@ -892,6 +892,16 @@ export default function ClientInfoPage() {
   useEffect(() => {
     const scope = createRealtimeRequestScope(getAuthSessionSignal());
     const { signal } = scope;
+    // Preserve the canonical three-argument realtime subscription contract.
+    // These local adapters bind both requests to the same abortable route and
+    // login scope; the underlying API never falls back to the session bearer
+    // token for capability-authenticated long-poll requests.
+    function createControlRoomRealtimeCapability(signal) {
+      return requestControlRoomRealtimeCapability(signal ?? scope.signal);
+    }
+    function waitForControlRoomRealtime(capability, generation, timeoutSeconds) {
+      return requestControlRoomRealtimeWait(capability, generation, timeoutSeconds, scope.signal);
+    }
     let lastRealtimeSnapshotAt = Number.NEGATIVE_INFINITY;
     const run = async () => {
       let capability = null;
@@ -900,7 +910,7 @@ export default function ClientInfoPage() {
       while (!signal.aborted && getAuthToken()) {
         try {
           if (!capability) {
-            const issued = await createControlRoomRealtimeCapability(signal);
+            const issued = await createControlRoomRealtimeCapability();
             if (signal.aborted) break;
             capability = issued?.capability || null;
             generation = Number(issued?.generation || 0);
@@ -912,7 +922,7 @@ export default function ClientInfoPage() {
             }
           }
           if (signal.aborted) break;
-          const wake = await waitForControlRoomRealtime(capability, generation, 25, signal);
+          const wake = await waitForControlRoomRealtime(capability, generation, 25);
           if (signal.aborted) break;
           failures = 0;
           const nextGeneration = Number(wake?.generation || generation);

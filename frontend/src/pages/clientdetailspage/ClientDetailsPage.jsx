@@ -33,7 +33,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import {
   getChromeStatus,
   createScopedControlRoomRealtimeCapability as createControlRoomRealtimeCapability,
-  waitForControlRoomRealtime,
+  waitForControlRoomRealtime as requestControlRoomRealtimeWait,
   getAuthSessionSignal,
   getAuthToken,
   getClientflowDeployments,
@@ -1174,6 +1174,11 @@ export default function ClientDetailsPage({
     if (!client?.id) return undefined;
     const scope = createRealtimeRequestScope(getAuthSessionSignal());
     const { signal } = scope;
+    // Keep the existing capability/generation/25s contract while providing a
+    // route-scoped abort signal to the actual HTTP long-poll request.
+    function waitForControlRoomRealtime(capability, generation, timeoutSeconds) {
+      return requestControlRoomRealtimeWait(capability, generation, timeoutSeconds, scope.signal);
+    }
 
     const run = async () => {
       let capability = null;
@@ -1198,7 +1203,7 @@ export default function ClientDetailsPage({
             }
           }
           if (signal.aborted) break;
-          const wake = await waitForControlRoomRealtime(capability, generation, 25, signal);
+          const wake = await waitForControlRoomRealtime(capability, generation, 25);
           if (signal.aborted) break;
           failures = 0;
           const nextGeneration = Number(wake?.generation || generation);

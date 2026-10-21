@@ -32,12 +32,13 @@ test("a queued retry resolves immediately when the route or session is aborted",
   scope.cancel();
 });
 
-test("both pages bind their capabilities and wait requests to the same cancellable session scope", () => {
+test("both pages preserve the 25s capability contract and bind all transport calls to one abortable session scope", () => {
   for (const page of ["src/pages/ClientInfoPage.jsx", "src/pages/clientdetailspage/ClientDetailsPage.jsx"]) {
     const source = read(page);
     assert.match(source, /createRealtimeRequestScope\(getAuthSessionSignal\(\)\)/);
     assert.match(source, /while \(!signal\.aborted && getAuthToken\(\)\)/);
-    assert.match(source, /waitForControlRoomRealtime\(capability, generation, 25, signal\)/);
+    assert.match(source, /waitForControlRoomRealtime\(capability, generation, 25\)/);
+    assert.match(source, /requestControlRoomRealtimeWait\(capability, generation, timeoutSeconds, scope\.signal\)/);
     assert.match(source, /error\?\.status === 403/);
     assert.match(source, /return \(\) => scope\.cancel\(\)/);
     assert.doesNotMatch(source, /window\.setTimeout\(resolve, 2000\)/);
