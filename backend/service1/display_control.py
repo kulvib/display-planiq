@@ -644,6 +644,8 @@ def _browser_runtime_projection(runtime: dict[str, Any]) -> tuple[str, str, str 
         return text, "green", step or "start_chrome", True
     if state == "resetting":
         return "Nulstiller browserprofil og cookies…", "orange", step or "clear_cookies", False
+    if state == "waiting_internet":
+        return "Kiosk browser afventer internetforbindelse…", "orange", step or "waiting_for_internet", False
     if state == "waiting_session":
         return "Kiosk browser venter på grafisk session…", "orange", step or "browser_waiting_session", False
     if state == "failed":

@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 import websockets
 
 from .browser_fullscreen import probe_browser_fullscreen
+from .display_internet import InternetMonitor
 from .kiosk_consent import CONSENT_CSS
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
@@ -102,6 +103,7 @@ class DisplayRuntime:
         self.fullscreen_future_pid: int | None = None
         self._last_status_payload: dict[str, Any] = {}
         self.display_power = self._load_display_power()
+        self.internet = InternetMonitor()
         self.shared_group_gid: int | None = None
 
     @staticmethod
@@ -152,6 +154,8 @@ class DisplayRuntime:
             "state": state,
             "browser_pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
             "browser_requested": bool(self.browser_requested),
+            "internet_access": getattr(getattr(self, "internet", None), "state", "unknown"),
+            "internet_check_updated_at": getattr(getattr(self, "internet", None), "last_checked_at", None),
             "display_power": self.display_power,
             "browser_fullscreen": (
                 self.browser_fullscreen
@@ -243,6 +247,8 @@ class DisplayRuntime:
         )
 
     def _start_browser_with_boot_policy(self) -> dict[str, Any]:
+        if not self.internet.online:
+            return self._wait_for_internet()
         if self.boot_start_pending:
             # Never discard website consent/session storage on a normal reboot.
             self._countdown("countdown", BOOT_START_COUNTDOWN_SECONDS, reason="system_start")
@@ -343,7 +349,8 @@ class DisplayRuntime:
                 self.browser_requested = True
                 self.stop_browser(preserve_request=True, source="url_change")
                 # Changing the page is not a request to erase cookie consent.
-                self._countdown("countdown", CONFIGURATION_START_COUNTDOWN_SECONDS, reason="configuration_change")
+                if self.internet.online:
+                    self._countdown("countdown", CONFIGURATION_START_COUNTDOWN_SECONDS, reason="configuration_change")
                 self.start_browser(source="url_change")
             else:
                 self.browser_requested = False
@@ -641,9 +648,49 @@ class DisplayRuntime:
                 time.sleep(0.2)
         raise RuntimeError(f"Chrome early-protection kunne ikke etableres: {last_error}")
 
+    def _wait_for_internet(self) -> dict[str, Any]:
+        self._status("waiting_internet", step="waiting_for_internet")
+        return {"started": False, "waiting_for_internet": True}
+
+    def _publish_internet_snapshot(self) -> None:
+        # Preserve manual-stop, calendar, and power event provenance. Only the
+        # internet health fields may change when Chrome is not requested.
+        if not self._last_status_payload:
+            return
+        updated = {
+            **self._last_status_payload,
+            "internet_access": self.internet.state,
+            "internet_check_updated_at": self.internet.last_checked_at,
+            "updated_at": time.time(),
+        }
+        self._last_status_payload = updated
+        atomic_write_shared_json(STATUS_PATH, updated, mode=0o640, group_gid=self.shared_group_gid)
+
+    def _tick_internet(self, executor: ThreadPoolExecutor) -> None:
+        changed = self.internet.tick(executor, self.configuration.get("kiosk_url"))
+        if not self.internet.online:
+            if self.browser and self.browser.poll() is None:
+                # A lost internet route is NOT a manual stop. Preserve the
+                # browser request so a later online transition can recover it.
+                self.stop_browser(preserve_request=True, source="internet_loss")
+                changed = True
+            if self.browser_requested and self.configuration.get("kiosk_url"):
+                if (
+                    changed
+                    or self._last_status_payload.get("state") != "waiting_internet"
+                    or time.time() - float(self._last_status_payload.get("updated_at") or 0) >= 15.0
+                ):
+                    self._wait_for_internet()
+            elif changed:
+                self._publish_internet_snapshot()
+        elif changed:
+            self._publish_internet_snapshot()
+
     def start_browser(self, *, source: str = "runtime") -> dict[str, Any]:
         source = str(source or "runtime").strip().lower()
         self.browser_requested = True
+        if not self.internet.online:
+            return self._wait_for_internet()
         if self.browser and self.browser.poll() is None:
             self._status("running", step="start_chrome", event_source=source)
             return {"started": False, "already_running": True, "pid": self.browser.pid}
@@ -700,7 +747,7 @@ class DisplayRuntime:
         self.browser_requested = True
         # Manual Start may count down, but must preserve consent and website
         # storage exactly like Calendar wake and runtime recovery.
-        if source in {"backend", "gui"}:
+        if source in {"backend", "gui"} and self.internet.online:
             self._countdown("countdown", MANUAL_START_COUNTDOWN_SECONDS, reason=f"{source}_start")
         return self.start_browser(source=source)
 
@@ -738,7 +785,8 @@ class DisplayRuntime:
         self.browser_requested = True
         self.stop_browser(preserve_request=True, source="reset_browser")
         self._clear_browser_profile(reason="reset_browser")
-        self._countdown("countdown", RESET_BROWSER_COUNTDOWN_SECONDS, reason="reset_browser")
+        if self.internet.online:
+            self._countdown("countdown", RESET_BROWSER_COUNTDOWN_SECONDS, reason="reset_browser")
         result = self.start_browser(source="reset_browser")
         return {"reset": True, **result}
 
@@ -1072,7 +1120,8 @@ class DisplayRuntime:
             mode=0o640,
             group_gid=self.shared_group_gid,
         )
-        current = "running" if self.browser and self.browser.poll() is None else "stopped"
+        current = ("running" if self.browser and self.browser.poll() is None else
+                   "waiting_internet" if self.browser_requested and not self.internet.online else "stopped")
         self._status(current, step="display_wake_complete" if state == "on" else "display_sleep_complete")
         return {"state": state}
 
@@ -1122,10 +1171,13 @@ class DisplayRuntime:
             )
         if action == "status":
             return {
-                "state": "running" if self.browser and self.browser.poll() is None else "stopped",
+                "state": "running" if self.browser and self.browser.poll() is None else (
+                    "waiting_internet" if self.browser_requested and not self.internet.online else "stopped"
+                ),
                 "pid": self.browser.pid if self.browser and self.browser.poll() is None else None,
                 "configuration_revision": self.configuration.get("revision") if self.configuration else None,
                 "browser_requested": bool(self.browser_requested),
+                "internet_access": self.internet.state,
             }
         raise ValueError("Ukendt displayruntimehandling")
 
@@ -1158,16 +1210,13 @@ class DisplayRuntime:
         except Exception:
             self.next_gui_start_attempt = time.monotonic() + 2.0
             self.logger.info("local_gui_start_waiting_for_session")
-        if self.configuration.get("kiosk_url") and self._local_gui_running():
-            try:
-                self._start_browser_with_boot_policy()
-            except Exception:
-                self.logger.exception("browser_start_waiting_for_session")
-        else:
-            self._status("stopped")
+        self._status("waiting_internet" if self.browser_requested else "stopped",
+                     step="waiting_for_internet" if self.browser_requested else "idle")
         fullscreen_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-fullscreen")
+        internet_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cf-internet")
         try:
             while True:
+                self._tick_internet(internet_executor)
                 self._poll_browser_fullscreen(fullscreen_executor)
                 if self.browser and self.browser.poll() is not None:
                     code = self.browser.returncode
@@ -1234,6 +1283,7 @@ class DisplayRuntime:
             return 0
         finally:
             fullscreen_executor.shutdown(wait=False, cancel_futures=True)
+            internet_executor.shutdown(wait=False, cancel_futures=True)
             self.stop_local_gui()
             self.stop_browser(preserve_request=True)
             server.close()
