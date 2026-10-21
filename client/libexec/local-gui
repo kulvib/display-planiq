@@ -1026,6 +1026,8 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             }.get(source, ("Kiosk browser kører", COLOR_GREEN))
         if state == "resetting":
             return "Nulstiller browserprofil og cookies…", COLOR_ORANGE
+        if state == "waiting_internet":
+            return "Kiosk browser afventer internetforbindelse…", COLOR_ORANGE
         if state == "waiting_session":
             return "Kiosk browser venter på grafisk session…", COLOR_ORANGE
         if state == "failed":
@@ -1339,7 +1341,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 self.stop_button.set_sensitive(False)
             else:
                 self.start_button.set_sensitive(not startup_locked and not busy and not system_locked and not power_locked and not running)
-                self.stop_button.set_sensitive(not startup_locked and not busy and not system_locked and not power_locked and running)
+                self.stop_button.set_sensitive(
+                    not startup_locked and not busy and not system_locked and not power_locked
+                    and (running or (state == "waiting_internet" and bool(runtime.get("browser_requested"))))
+                )
             _write_gui_status("running")
         except Exception as exc:
             self.error_label.set_text(f"GUI refresh-fejl: {str(exc)[:180]}")

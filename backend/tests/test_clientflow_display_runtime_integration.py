@@ -45,6 +45,13 @@ def _configure_runtime_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setattr(runtime_module, "CHROME_XDG_DATA", chrome_xdg_root / "data")
     monkeypatch.setattr(runtime_module, "BOOT_MARKER_PATH", state / "browser-boot.json")
     monkeypatch.setattr(runtime_module, "CHROME_BINARY", Path("/bin/true"))
+    # These legacy browser/consent/countdown tests exercise the online path.
+    # The disconnected path has its own dedicated internet-gate test suite.
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        runtime_module, "InternetMonitor",
+        lambda: SimpleNamespace(online=True, state="online", last_checked_at=None),
+    )
     state.mkdir(parents=True)
     run.mkdir(parents=True)
     return state, run

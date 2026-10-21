@@ -93,6 +93,18 @@ def ready() -> bool:
         pid = int(status.get("browser_pid") or 0)
     except (TypeError, ValueError):
         pid = 0
+    if status.get("state") == "waiting_internet":
+        # Network loss must not fail the service's ExecStartPost and trigger a
+        # restart loop. A running local GUI is still mandatory; Chrome must be
+        # absent, and the monitor must explicitly report not-online.
+        try:
+            recent = 0 <= time.time() - float(status.get("updated_at") or 0) <= 30
+        except (TypeError, ValueError):
+            recent = False
+        return (
+            recent and bool(status.get("browser_requested")) and pid == 0
+            and status.get("internet_access") in {"checking", "offline"}
+        )
     return status.get("state") == "running" and bool(status.get("browser_requested")) and pid > 1
 
 
