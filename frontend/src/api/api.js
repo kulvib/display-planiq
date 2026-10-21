@@ -30,6 +30,8 @@ const authApiBase = AUTH_API_URL;
 // ---------------------------------------------------------------------------
 
 let accessTokenInMemory = null;
+let authSessionController = new AbortController();
+let authSessionGeneration = 0;
 let sessionExpiresAtInMemory = null;
 let refreshPromise = null;
 let bootRefreshPromise = null;
@@ -68,11 +70,24 @@ export function getAuthToken() {
   return accessTokenInMemory || "";
 }
 
+// All realtime subscribers are bound to the current login. Clearing the token
+// aborts outstanding long-polls immediately; a new login gets a fresh signal.
+export function getAuthSessionSignal() {
+  return authSessionController.signal;
+}
+
 export function setAuthToken(token) {
-  accessTokenInMemory = token || null;
+  if (!token) {
+    clearAuthToken();
+    return;
+  }
+  if (authSessionController.signal.aborted) authSessionController = new AbortController();
+  accessTokenInMemory = token;
 }
 
 export function clearAuthToken() {
+  authSessionGeneration += 1;
+  authSessionController.abort();
   accessTokenInMemory = null;
   sessionExpiresAtInMemory = null;
   adminTerminalStepUpInMemory = null;
@@ -141,12 +156,17 @@ async function refreshAccessToken() {
     throw normalizeApiError(err, err.message);
   }
 
+  const generationAtStart = authSessionGeneration;
   refreshPromise = runRefreshSerialized(() => fetchWithFriendlyErrors(`${authApiBase}/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
   }))
     .then(async (res) => {
+      // A refresh that completes after logout must never revive that session.
+      if (generationAtStart !== authSessionGeneration) {
+        throw new DOMException("Sessionen er afsluttet", "AbortError");
+      }
       if (!res.ok) {
         const err = await buildApiErrorFromResponse(res, "Sessionen er udløbet");
         if (res.status === 429) {
@@ -157,6 +177,9 @@ async function refreshAccessToken() {
       }
       refreshBlockedUntil = 0;
       const data = await readJsonResponse(res, "Uventet svar fra session-fornyelse");
+      if (generationAtStart !== authSessionGeneration) {
+        throw new DOMException("Sessionen er afsluttet", "AbortError");
+      }
       setAuthToken(data?.access_token || "");
       setSessionExpiresAt(data?.session_expires_at || null);
       return data;
@@ -206,6 +229,7 @@ async function apiFetch(input, init = {}) {
     return first;
   }
 
+  fetchInit.signal?.throwIfAborted?.();
   try {
     await refreshAccessToken();
   } catch (error) {
@@ -218,6 +242,7 @@ async function apiFetch(input, init = {}) {
     throw error;
   }
 
+  fetchInit.signal?.throwIfAborted?.();
   return fetchWithFriendlyErrors(input, {
     ...fetchInit,
     headers: authHeaders(fetchInit.headers || {}),
@@ -598,24 +623,26 @@ export async function getControlRoomClients() {
 }
 
 
-export async function createControlRoomRealtimeCapability() {
-  return createScopedControlRoomRealtimeCapability(null);
+export async function createControlRoomRealtimeCapability(signal) {
+  return createScopedControlRoomRealtimeCapability(null, signal);
 }
 
-export async function createScopedControlRoomRealtimeCapability(clientId) {
+export async function createScopedControlRoomRealtimeCapability(clientId, signal) {
   const clientScope = clientId == null ? "" : `?client_id=${encodeURIComponent(clientId)}`;
   const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/capability${clientScope}`, {
+    signal,
     method: "POST",
     headers: authHeaders({ Accept: "application/json" }),
     credentials: "include",
     cache: "no-store",
   });
+  signal?.throwIfAborted?.();
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
-  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke oprette realtime-forbindelse"));
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke oprette realtime-forbindelse");
   return readJsonResponse(res);
 }
 
-export async function waitForControlRoomRealtime(capability, generation, timeoutSeconds = 25) {
+export async function waitForControlRoomRealtime(capability, generation, timeoutSeconds = 25, signal) {
   const token = String(capability || "").trim();
   if (!token) throw new Error("Realtime-capability mangler");
   const params = new URLSearchParams({
@@ -627,6 +654,7 @@ export async function waitForControlRoomRealtime(capability, generation, timeout
   // header with the ordinary login Bearer token and turn every wait into 401.
   // Keep the capability request isolated from session refresh/retry semantics.
   const res = await fetchWithFriendlyErrors(`${apiUrl}/api/clients/control-room-realtime/wait?${params}`, {
+    signal,
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
@@ -634,7 +662,10 @@ export async function waitForControlRoomRealtime(capability, generation, timeout
     credentials: "omit",
     cache: "no-store",
   });
-  if (!res.ok) throw new Error(await extractError(res, "Realtime-forbindelsen blev afbrudt"));
+  signal?.throwIfAborted?.();
+  // A 401 here means the *capability* expired or was rejected, not that the
+  // user's login expired. Keep this separate from apiFetch/session refresh.
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Realtime-forbindelsen blev afbrudt");
   return readJsonResponse(res);
 }
 

@@ -21,11 +21,12 @@ test("Control Room list uses DB-free realtime invalidation with bounded reconcil
   assert.match(controlRoomTransport, /\/api\/clients\/control-room-summary/);
   assert.match(controlRoomTransport, /cache: "no-store"/);
   assert.match(page, /getControlRoomClients/);
-  assert.match(api, /export async function createControlRoomRealtimeCapability\(\)/);
+  assert.match(api, /export async function createControlRoomRealtimeCapability\(signal\)/);
   assert.match(api, /export async function waitForControlRoomRealtime\(/);
   assert.match(api, /\/api\/clients\/control-room-realtime\/wait/);
   assert.match(page, /createControlRoomRealtimeCapability/);
   assert.match(page, /waitForControlRoomRealtime\(capability, generation, 25\)/);
+  assert.match(page, /requestControlRoomRealtimeWait\(capability, generation, timeoutSeconds, scope\.signal\)/);
   assert.doesNotMatch(page, /getMyClients/);
   assert.match(policy, /return clientListNeedsFastPolling\(items, nowMs\) \? 10_000 : 60_000/);
   assert.match(page, /clientListPollDelay/);
@@ -68,6 +69,7 @@ test("Client detail uses realtime invalidation with 5s active and 60s reconcilia
   assert.match(details, /chromeStatusNeedsFastPolling/);
   assert.match(details, /createControlRoomRealtimeCapability/);
   assert.match(details, /waitForControlRoomRealtime\(capability, generation, 25\)/);
+  assert.match(details, /requestControlRoomRealtimeWait\(capability, generation, timeoutSeconds, scope\.signal\)/);
   assert.match(details, /\["wakeup", "rebooting", "updating"\]\.includes\(state\)/);
   assert.doesNotMatch(details, /state !== "normal" && state !== "approved"/);
   assert.match(details, /hotPollFastUntilRef\.current = Date\.now\(\) \+ ACTION_POLL_MAX_MS/);
