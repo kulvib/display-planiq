@@ -26,6 +26,7 @@ const ClientDetailsLivestreamSection = lazy(() => import("./ClientDetailsLivestr
 const ClientCalendarDialog = lazy(() => import("../calendarpage/ClientCalendarDialog"));
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { isPageVisible } from "../../utils/pageVisibility";
+import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../../utils/controlRoomRealtimeLifecycle.mjs";
 import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./browserCountdown.mjs";
 import { useAuth } from "../../auth/AuthProvider";
 
@@ -33,6 +34,8 @@ import {
   getChromeStatus,
   createScopedControlRoomRealtimeCapability as createControlRoomRealtimeCapability,
   waitForControlRoomRealtime,
+  getAuthSessionSignal,
+  getAuthToken,
   getClientflowDeployments,
   clientAction,
   openRemoteDesktop,
@@ -1169,15 +1172,18 @@ export default function ClientDetailsPage({
   // fallback polling remains for reconciliation after lost events/restarts.
   useEffect(() => {
     if (!client?.id) return undefined;
-    let cancelled = false;
+    const scope = createRealtimeRequestScope(getAuthSessionSignal());
+    const { signal } = scope;
 
     const run = async () => {
       let capability = null;
       let generation = 0;
-      while (!cancelled) {
+      let failures = 0;
+      while (!signal.aborted && getAuthToken()) {
         try {
           if (!capability) {
-            const issued = await createControlRoomRealtimeCapability(client.id);
+            const issued = await createControlRoomRealtimeCapability(client.id, signal);
+            if (signal.aborted) break;
             capability = issued?.capability || null;
             generation = Number(issued?.generation || 0);
             if (!capability) throw new Error("Realtime-capability mangler");
@@ -1191,7 +1197,10 @@ export default function ClientDetailsPage({
               }
             }
           }
-          const wake = await waitForControlRoomRealtime(capability, generation, 25);
+          if (signal.aborted) break;
+          const wake = await waitForControlRoomRealtime(capability, generation, 25, signal);
+          if (signal.aborted) break;
+          failures = 0;
           const nextGeneration = Number(wake?.generation || generation);
           const changed = wake?.changed === true || nextGeneration > generation;
           generation = Math.max(generation, nextGeneration);
@@ -1201,14 +1210,16 @@ export default function ClientDetailsPage({
               hotPollWakeRef.current();
             }
           }
-        } catch {
+        } catch (error) {
           capability = null;
-          if (!cancelled) await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          if (signal.aborted || !getAuthToken() || error?.status === 403) break;
+          failures += 1;
+          await waitForRealtimeRetry(realtimeRetryDelayMs(failures, error), signal);
         }
       }
     };
     void run();
-    return () => { cancelled = true; };
+    return () => scope.cancel();
   }, [client?.id]);
 
   // ---------------------------------------------------------------------------

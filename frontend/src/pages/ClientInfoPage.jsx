@@ -43,6 +43,7 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { compactDarkChipSx } from "../utils/chipStyles";
 import { isPageVisible } from "../utils/pageVisibility";
 import { realtimeSnapshotDelayMs } from "../utils/realtimeSnapshotPacing.mjs";
+import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../utils/controlRoomRealtimeLifecycle.mjs";
 import {
   pageHeaderIconSx,
   pageHeaderPaperSx,
@@ -53,6 +54,8 @@ import {
   getControlRoomClients,
   createControlRoomRealtimeCapability,
   waitForControlRoomRealtime,
+  getAuthSessionSignal,
+  getAuthToken,
   approveClient,
   removeClient,
   restoreClient,
@@ -887,15 +890,18 @@ export default function ClientInfoPage() {
   // signed capability and does not hold/query PostgreSQL. On any relevant
   // backend state commit, fetch the existing authoritative list immediately.
   useEffect(() => {
-    let cancelled = false;
+    const scope = createRealtimeRequestScope(getAuthSessionSignal());
+    const { signal } = scope;
     let lastRealtimeSnapshotAt = Number.NEGATIVE_INFINITY;
     const run = async () => {
       let capability = null;
       let generation = 0;
-      while (!cancelled) {
+      let failures = 0;
+      while (!signal.aborted && getAuthToken()) {
         try {
           if (!capability) {
-            const issued = await createControlRoomRealtimeCapability();
+            const issued = await createControlRoomRealtimeCapability(signal);
+            if (signal.aborted) break;
             capability = issued?.capability || null;
             generation = Number(issued?.generation || 0);
             if (!capability) throw new Error("Realtime-capability mangler");
@@ -905,7 +911,10 @@ export default function ClientInfoPage() {
               await resyncClientsAfterCurrentFetch();
             }
           }
-          const wake = await waitForControlRoomRealtime(capability, generation, 25);
+          if (signal.aborted) break;
+          const wake = await waitForControlRoomRealtime(capability, generation, 25, signal);
+          if (signal.aborted) break;
+          failures = 0;
           const nextGeneration = Number(wake?.generation || generation);
           const changed = wake?.changed === true || nextGeneration > generation;
           generation = Math.max(generation, nextGeneration);
@@ -914,21 +923,24 @@ export default function ClientInfoPage() {
             // cap redundant full-list reads while the generation counter still
             // guarantees an authoritative snapshot of all committed changes.
             const pause = realtimeSnapshotDelayMs(Date.now(), lastRealtimeSnapshotAt);
-            if (pause > 0) {
-              await new Promise((resolve) => window.setTimeout(resolve, pause));
-            }
-            if (cancelled || !isPageVisible() || isDraggingRef.current) continue;
+            if (pause > 0) await waitForRealtimeRetry(pause, signal);
+            if (signal.aborted || !isPageVisible() || isDraggingRef.current) continue;
             await resyncClientsAfterCurrentFetch();
             lastRealtimeSnapshotAt = Date.now();
           }
-        } catch {
+        } catch (error) {
           capability = null;
-          if (!cancelled) await new Promise((resolve) => window.setTimeout(resolve, 2000));
+          // 401 on /wait is only an expired capability; it may be reissued.
+          // Session logout clears the token and aborts the scope. Revoked
+          // authorization (403) must not enter an infinite retry loop.
+          if (signal.aborted || !getAuthToken() || error?.status === 403) break;
+          failures += 1;
+          await waitForRealtimeRetry(realtimeRetryDelayMs(failures, error), signal);
         }
       }
     };
     void run();
-    return () => { cancelled = true; };
+    return () => scope.cancel();
   }, [resyncClientsAfterCurrentFetch]);
 
   // Initial load + adaptive reconciliation polling. Hidden pages perform no DB-backed poll.

@@ -39,10 +39,10 @@ test("detail uses only a client-authorized scoped capability", () => {
   const api = source("src/api/api.js");
   const list = source("src/pages/ClientInfoPage.jsx");
   const detail = source("src/pages/clientdetailspage/ClientDetailsPage.jsx");
-  assert.match(detail, /createControlRoomRealtimeCapability\(client\.id\)/);
-  assert.match(list, /createControlRoomRealtimeCapability\(\)/);
+  assert.match(detail, /createControlRoomRealtimeCapability\(client\.id, signal\)/);
+  assert.match(list, /createControlRoomRealtimeCapability\(signal\)/);
   assert.match(api, /client_id=\$\{encodeURIComponent\(clientId\)\}/);
-  assert.match(api, /export async function createControlRoomRealtimeCapability\(\)/);
+  assert.match(api, /export async function createControlRoomRealtimeCapability\(signal\)/);
   assert.match(list, /realtimeSnapshotDelayMs\(Date\.now\(\), lastRealtimeSnapshotAt\)/);
   assert.match(list, /await resyncClientsAfterCurrentFetch\(\)/);
 });
