@@ -46,6 +46,7 @@ import {
 import { compactDarkChipSx } from "../../../utils/chipStyles";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import { shouldAutoOpenTerminalPty } from "./terminalOpenPolicy.mjs";
+import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND } from "./wifiSupportCommands.mjs";
 
 function nowTime() {
   return new Date().toLocaleTimeString("da-DK", { hour12: false });
@@ -360,6 +361,8 @@ const SUPPORT_COMMAND_GROUPS = [
       { label: "Ubuntu / APT health", command: UBUNTU_APT_HEALTH_COMMAND, adminOnly: true },
       { label: "Disk, RAM og oppetid", command: SYSTEM_RESOURCES_DIAGNOSTICS_COMMAND },
       { label: "Netværk, DNS, tid og backend", command: NETWORK_TIME_DIAGNOSTICS_COMMAND, adminOnly: true },
+      { label: "WiFi / NetworkManager diagnose", command: WIFI_DIAGNOSTICS_COMMAND, adminOnly: true, description: "Kun læsning: netværk, WiFi, signal, DNS og hændelser (ingen adgangskoder)." },
+      { label: "Tilføj WiFi-profil (uden aktivering)", command: WIFI_STAGE_PROFILE_COMMAND, adminOnly: true, description: "Interaktiv opsætning: gem WPA2/WPA3-personlig WiFi-profil med autoconnect slået fra. Skifter ikke aktivt netværk." },
     ],
   },
   {
@@ -1350,7 +1353,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                                 color: "rgba(226,232,240,0.62)",
                               }}
                             >
-                              {item.command}
+                              {item.description || item.command}
                             </Typography>
                             <Button size="small" variant="outlined" onClick={() => insertCommand(item.command)} disabled={itemDisabled} sx={{ color: "#e2e8f0", borderColor: "rgba(148,163,184,0.28)" }}>
                               Indsæt
