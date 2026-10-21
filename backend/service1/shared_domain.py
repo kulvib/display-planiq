@@ -410,12 +410,13 @@ def _reconcile_command_state(
     )
     current_boot_id = None
     needs_boot_id = domain == "system" and any(
-        row.status == "claimed" and row.command_type in {"update_os", "update_firmware"}
+        row.command_type in {"reboot", "update_os", "update_firmware"}
         for row in active_rows
     )
     if needs_boot_id:
         client = session.get(Client, client_id)
         current_boot_id = str(getattr(client, "last_boot_id", "") or "") if client is not None else None
+    system_recovery_capable: bool | None = None
     for row in active_rows:
         if row.expires_at <= now:
             row.status = "expired"
@@ -429,6 +430,67 @@ def _reconcile_command_state(
                     session, client_id=client_id, command_id=row.id, error_message=row.error_message
                 )
             continue
+        if domain == "system" and row.command_type == "reboot":
+            payload = row.payload if isinstance(row.payload, dict) else {}
+            requested_boot = str(payload.get("requested_boot_id") or "")
+            if requested_boot and current_boot_id and requested_boot != current_boot_id:
+                if (
+                    row.status == "queued"
+                    and payload.get("recovery_only") is True
+                    and str(payload.get("recovery_boot_id") or "") == current_boot_id
+                ):
+                    # This *already* is a fail-closed recovery-only replay.
+                    # A second reconciliation must not cancel it before claim.
+                    continue
+                # The canonical Status agent observed a new boot. A queued
+                # reboot from the preceding boot must *never* be executed now.
+                # Do not equate a changed boot with a successful System command:
+                # an unrelated local reboot could have occurred.
+                if row.status == "claimed" and not payload.get("recovery_only"):
+                    if system_recovery_capable is None:
+                        status_row = session.exec(
+                            select(ClientDomainStatus).where(
+                                ClientDomainStatus.client_id == client_id,
+                                ClientDomainStatus.domain == "system",
+                            )
+                        ).first()
+                        status_payload = (
+                            status_row.status_payload if status_row is not None
+                            and isinstance(status_row.status_payload, dict) else {}
+                        )
+                        system_recovery_capable = bool(
+                            status_payload.get("safe_reboot_recovery") is True
+                            and status_row is not None
+                            and status_row.observed_state == "online"
+                            and str(status_row.boot_id or "") == current_boot_id
+                        )
+                    if system_recovery_capable and row.attempt_count < row.max_attempts:
+                        # Only new brokers advertising the capability may be
+                        # asked to replay the *same* id in recovery-only mode.
+                        # They refuse to create a new journal entry if absent.
+                        row.payload = {
+                            **payload,
+                            "recovery_only": True,
+                            "recovery_boot_id": current_boot_id,
+                        }
+                        row.status = "queued"
+                        row.available_at = now
+                        _clear_claim(row)
+                        session.add(row)
+                        continue
+                # Legacy 1.3.38 agents do not implement recovery-only: fail
+                # closed rather than risk a second reboot. An already-queued
+                # request also cannot be attributed to the new boot.
+                row.status = "failed" if row.status == "claimed" else "cancelled"
+                row.completed_at = now
+                row.error_code = "reboot_completion_unverified_after_boot"
+                row.error_message = (
+                    "Ny opstart registreret, men kommandokvittering fra broker kan ikke bekræftes; "
+                    "forældet genstart må ikke udføres igen"
+                )
+                _clear_claim(row)
+                session.add(row)
+                continue
         if row.status == "claimed" and domain == "system" and row.command_type in {"update_os", "update_firmware"}:
             payload = row.payload if isinstance(row.payload, dict) else {}
             requested_boot_id = str(payload.get("requested_boot_id") or "")
@@ -501,6 +563,32 @@ def claim_shared_command(
         now=now,
         rows=active_rows,
     )
+    # A System agent can resume before the canonical Status agent has posted
+    # the new boot. The System-agent's authenticated boot report is a *veto*
+    # (never completion authority): don't send a queued reboot addressed to
+    # a previous boot, even briefly during this cross-domain handover.
+    system_reported_boot: str | None = None
+    if domain == "system" and any(
+        row.status == "queued" and row.command_type == "reboot" for row in active_rows
+    ):
+        system_status = session.exec(
+            select(ClientDomainStatus).where(
+                ClientDomainStatus.client_id == credential.client_id,
+                ClientDomainStatus.domain == "system",
+            )
+        ).first()
+        system_reported_boot = str(system_status.boot_id or "") if system_status else None
+
+    def boot_matches_reboot_command(candidate: ClientCommand) -> bool:
+        if domain != "system" or candidate.command_type != "reboot":
+            return True
+        payload = candidate.payload if isinstance(candidate.payload, dict) else {}
+        expected = str(
+            (payload.get("recovery_boot_id") if payload.get("recovery_only") is True
+             else payload.get("requested_boot_id")) or ""
+        )
+        return bool(expected and system_reported_boot == expected)
+
     row = next(
         (
             candidate
@@ -509,6 +597,7 @@ def claim_shared_command(
             and candidate.available_at <= now
             and candidate.expires_at > now
             and candidate.attempt_count < candidate.max_attempts
+            and boot_matches_reboot_command(candidate)
         ),
         None,
     )

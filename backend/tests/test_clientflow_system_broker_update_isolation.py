@@ -93,6 +93,37 @@ def test_system_broker_recovers_disruptive_command_after_observed_boot_change(
     assert entry["result"] == completed
 
 
+def test_recovery_only_broker_refuses_new_reboot_when_journal_is_missing(monkeypatch, tmp_path):
+    boot = "11111111-1111-4111-8111-111111111111"
+    _bind_temp_journal(monkeypatch, tmp_path, boot_id=boot)
+    command_id = "00000000-0000-4000-8000-000000000191"
+    with pytest.raises(system_broker.SystemCommandInDoubt, match="recovery_journal_missing"):
+        system_broker._journal_begin(42, command_id, "reboot", recovery_only=True)
+    assert system_broker._load_journal() == {}
+
+
+def test_recovery_only_broker_replays_exact_journal_without_exec(monkeypatch, tmp_path):
+    old_boot = "11111111-1111-4111-8111-111111111111"
+    next_boot = "22222222-2222-4222-8222-222222222222"
+    _bind_temp_journal(monkeypatch, tmp_path, boot_id=old_boot)
+    command_id = "00000000-0000-4000-8000-000000000192"
+    lock_fd, completed = system_broker._journal_begin(42, command_id, "reboot")
+    assert completed is None
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    os.close(lock_fd)
+    system_broker.BOOT_ID_PATH.write_text(next_boot + "\n", encoding="ascii")
+    lock_fd, recovered = system_broker._journal_begin(42, command_id, "reboot", recovery_only=True)
+    try:
+        assert recovered["recovered_after_boot_change"] is True
+        assert recovered["previous_boot_id"] == old_boot
+        assert recovered["observed_boot_id"] == next_boot
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+    with pytest.raises(system_broker.SystemCommandInDoubt, match="recovery_journal_missing"):
+        system_broker._journal_begin(42, "00000000-0000-4000-8000-000000000193", "reboot", recovery_only=True)
+
+
 def test_system_broker_same_boot_keeps_disruptive_command_in_doubt(monkeypatch, tmp_path):
     boot_id = "11111111-1111-4111-8111-111111111111"
     _bind_temp_journal(monkeypatch, tmp_path, boot_id=boot_id)
