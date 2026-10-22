@@ -59,27 +59,27 @@ def test_approved_1338_1239_fresh_install_selector_keeps_update_blocked():
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1240
+    assert catalog["catalog_sequence"] == 1241
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["release_sequence"] == 1239
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]
     assert "ikke fysisk verificeret" in selected["block_reason"]
     pilot = catalog["releases"][1]
-    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
-    assert pilot["release_sequence"] == 1240
+    assert pilot["release_id"] == "clientflow-1.3.40-seq-1241"
+    assert pilot["release_sequence"] == 1241
     assert pilot["status"] == "supported"
     assert pilot["installable"] is False
     assert pilot["update_allowed"] is True
     assert pilot["rollback_allowed"] is False
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
-    assert all(item.get("release_sequence") != 1228 for item in catalog["releases"])
+    assert all(item.get("release_sequence") not in (1228, 1240) for item in catalog["releases"])
 
 def test_dispatch_uses_staged_immutable_release_cli_not_stable_updater():
     source = _source(HELPER)

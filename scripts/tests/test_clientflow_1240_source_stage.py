@@ -13,7 +13,7 @@ def _json(path: str):
     return json.loads((ROOT / path).read_text(encoding="utf-8"))
 
 
-def test_exact_1240_pilot_promotion_preserves_1239_fresh_install_default():
+def test_1240_history_survives_1241_successor_without_reauthorizing_1240():
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.40"
     source = _json("client/release/release-input.json")
     assert source == {
@@ -24,8 +24,8 @@ def test_exact_1240_pilot_promotion_preserves_1239_fresh_install_default():
         "runtime_python": "3.13.14",
     }
     catalog = _json("backend/service1/clientflow_release_catalog.json")
-    assert catalog["catalog_sequence"] == 1240
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1241
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert len(catalog["releases"]) == 2
@@ -34,7 +34,7 @@ def test_exact_1240_pilot_promotion_preserves_1239_fresh_install_default():
     assert old["install_modes"] == ["fresh_install"]
     assert old["update_allowed"] is False and old["rollback_allowed"] is False
     assert old["installable"] is True
-    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["release_id"] == "clientflow-1.3.40-seq-1241"
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["installable"] is False
     assert pilot["status"] == "supported"
@@ -50,9 +50,11 @@ def test_new_pilot_selector_does_not_authorize_downgrade_or_fleet_update(monkeyp
 
     load_catalog.cache_clear()
     assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
-    release = resolve_release("1.3.39")
-    monkeypatch.delenv("CLIENTFLOW_1240_PILOT_CLIENT_ID", raising=False)
-    with pytest.raises(ClientFlowPilotDenied):
+    with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
+        resolve_release("1.3.39")
+    release = resolve_release("1.3.40")
+    monkeypatch.setenv("CLIENTFLOW_1240_PILOT_CLIENT_ID", "1")
+    with pytest.raises(ClientFlowPilotDenied, match="permanent lukket"):
         require_pilot_1240(client_id=1, current_version="1.3.38", release=release,
             reason="physical test", pre_first_activation_repair=False, confirm_downgrade=False)
     with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):

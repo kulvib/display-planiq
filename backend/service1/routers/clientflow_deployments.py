@@ -24,7 +24,7 @@ from ..clientflow_deployments import (
     cancel_deployment,
     create_authorized_deployment,
 )
-from ..clientflow_pilot_1240 import ClientFlowPilotDenied, PILOT_FLAG, require_pilot_1240
+from ..clientflow_pilot_1241 import ClientFlowPilotDenied, PILOT_FLAG, require_pilot_1241
 from ..clientflow_releases import (
     ClientFlowArtifactUnavailable,
     ClientFlowCatalogError,
@@ -240,9 +240,9 @@ def create_clientflow_deployment(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Defense-in-depth: catalog eligibility is not a per-client permission.
-    # Deny all requests except the explicitly switched-on 1240/Viborg1 pilot.
+    # Deny all requests except the explicitly switched-on 1241/Heidi1 pilot.
     try:
-        require_pilot_1240(
+        require_pilot_1241(
             client_id=client_id,
             current_version=current_version,
             release=release,
@@ -290,7 +290,7 @@ def create_clientflow_deployment(
             validate_release_compatibility(
                 release, current_version=locked_version, ubuntu_version=client.ubuntu_version
             )
-            require_pilot_1240(
+            require_pilot_1241(
                 client_id=int(client.id),
                 current_version=locked_version,
                 release=release,

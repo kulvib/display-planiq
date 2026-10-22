@@ -6,7 +6,6 @@ in a request. Remove this temporary policy only through a separately audited PR.
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
 PILOT_CLIENT_ID = 1
@@ -44,36 +43,6 @@ def require_pilot_1240(
     The switch is deliberately not a generic allowlist: a typo, another ID, or
     an accidentally configured fleet value must not authorize any client.
     """
-    if os.environ.get(PILOT_FLAG) != "1":
-        raise ClientFlowPilotDenied("ClientFlow 1240-piloten er ikke aktiveret i backend")
-    if type(client_id) is not int or client_id != PILOT_CLIENT_ID:
-        raise ClientFlowPilotDenied("ClientFlow 1240 er kun autoriseret for pilotklient 1")
-    if (
-        current_version != PILOT_FROM_VERSION
-        or str(release.get("version")) != PILOT_TO_VERSION
-        or str(release.get("release_id")) != PILOT_RELEASE_ID
-        or release.get("release_sequence") != PILOT_RELEASE_SEQUENCE
-        or release.get("install_modes") != ["in_place_update"]
-        or release.get("status") != "supported"
-        or release.get("update_allowed") is not True
-        or release.get("installable") is not False
-        or release.get("rollback_allowed") is not False
-        or release.get("min_current_version") != PILOT_FROM_VERSION
-        or release.get("max_current_version") != PILOT_FROM_VERSION
-    ):
-        raise ClientFlowPilotDenied("ClientFlow-piloten kræver præcis 1.3.38 → 1.3.39")
-    if pre_first_activation_repair or confirm_downgrade:
-        raise ClientFlowPilotDenied("Pilotopdatering tillader hverken repair eller downgrade")
-    if not str(reason or "").strip():
-        raise ClientFlowPilotDenied("Pilotopdatering kræver en eksplicit begrundelse")
-    if artifact is not None:
-        expected = {
-            "target_release_id": PILOT_RELEASE_ID,
-            "bundle_sha256": PILOT_APPROVED_BUNDLE_SHA256,
-            "bundle_size": PILOT_APPROVED_BUNDLE_SIZE,
-            "release_approval_reference": PILOT_APPROVAL_REFERENCE,
-            "release_candidate_sha256": PILOT_CANDIDATE_SHA256,
-            "source_commit": PILOT_SOURCE_COMMIT,
-        }
-        if any(artifact.get(name) != value for name, value in expected.items()):
-            raise ClientFlowPilotDenied("Pilotopdateringens publicerede artifact matcher ikke approval")
+    # The failed 1240 field pilot is retired regardless of legacy environment
+    # variables. Historical deployments and approval evidence remain intact.
+    raise ClientFlowPilotDenied("ClientFlow 1240-piloten er permanent lukket")

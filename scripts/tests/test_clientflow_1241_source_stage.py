@@ -11,7 +11,7 @@ def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_exact_1241_source_is_only_one_sequence_ahead_of_frozen_catalog():
+def test_exact_1241_source_is_promoted_only_for_single_client_pilot():
     version = _read("client/VERSION").strip()
     source = json.loads(_read("client/release/release-input.json"))
     catalog = json.loads(_read("backend/service1/clientflow_release_catalog.json"))
@@ -24,26 +24,27 @@ def test_exact_1241_source_is_only_one_sequence_ahead_of_frozen_catalog():
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["catalog_sequence"] == 1240
+    assert source["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["catalog_sequence"] == 1241
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
     }
     assert len(catalog["releases"]) == 2
-    assert all(item["release_sequence"] < 1241 for item in catalog["releases"])
-    assert all(item["version"] != "1.3.40" for item in catalog["releases"])
+    assert all(item["release_sequence"] <= 1241 for item in catalog["releases"])
+    assert all(item["version"] != "1.3.39" for item in catalog["releases"])
 
     stable, failed_pilot = catalog["releases"]
+    assert all(item["release_sequence"] != 1240 for item in catalog["releases"])
     assert stable["release_id"] == "clientflow-1.3.38-seq-1239"
     assert stable["status"] == "stable"
     assert stable["installable"] is True
     assert stable["install_modes"] == ["fresh_install"]
     assert stable["update_allowed"] is False
     assert stable["rollback_allowed"] is False
-    assert failed_pilot["release_id"] == "clientflow-1.3.39-seq-1240"
-    assert failed_pilot["release_sequence"] == 1240
+    assert failed_pilot["release_id"] == "clientflow-1.3.40-seq-1241"
+    assert failed_pilot["release_sequence"] == 1241
     assert failed_pilot["status"] == "supported"
     assert failed_pilot["installable"] is False
     assert failed_pilot["install_modes"] == ["in_place_update"]
