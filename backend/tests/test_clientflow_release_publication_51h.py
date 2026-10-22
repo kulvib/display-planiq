@@ -401,3 +401,43 @@ def test_publication_postflight_independently_verifies_approved_artifact(
     assert result["approved_count"] == 1
     assert result["protected_latest"][0]["release_id"] == RELEASE_ID
     assert destination.read_bytes() == source.read_bytes()
+
+
+def test_51h_publisher_cannot_create_fifth_approved_bundle(tmp_path, monkeypatch):
+    """Capacity gate must be enforced in the *writer*, not only the audit CLI."""
+    source = _approved_bundle(
+        tmp_path / "source", approval_reference="approved-cap-gate",
+        source_commit="c" * 40, marker=b"incoming-four-cap",
+    )
+    expected_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    monkeypatch.setattr(release_bundle, "validate_runtime_artifacts", lambda _payload, _manifest: None)
+    monkeypatch.setattr(publication, "_source_release_identity", _source_identity)
+    from scripts import audit_clientflow_release_retention as audit
+
+    store = tmp_path / "store"
+    store.mkdir(mode=0o700)
+    for sequence in range(1236, 1240):
+        (store / f"clientflow-1.3.{sequence - 1200}-seq-{sequence}.tar").write_bytes(
+            f"approved-{sequence}".encode()
+        )
+    def fake_archive(path, *, require_deployable=True):
+        match = audit.RELEASE_FILE.fullmatch(path.name)
+        assert require_deployable and match
+        raw = path.read_bytes()
+        return (
+            {"release_id": path.stem, "version": match.group(1),
+             "release_sequence": int(match.group(2)),
+             "release_approval": {"reference": "approved/test"},
+             "source": {"commit": "a" * 40}},
+            None, len(raw), hashlib.sha256(raw).hexdigest(), path.open("rb"),
+        )
+    monkeypatch.setattr(audit, "open_verified_bundle_structure", fake_archive)
+    before = {x.name: x.read_bytes() for x in store.iterdir()}
+    with pytest.raises(RuntimeError, match="retention preflight"):
+        publication.publish(
+            source, store,
+            expected_bundle_sha256=expected_sha,
+            expected_approval_reference="approved-cap-gate",
+            expected_source_commit="c" * 40,
+        )
+    assert before == {x.name: x.read_bytes() for x in store.iterdir()}

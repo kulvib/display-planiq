@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -168,6 +169,10 @@ def publish(
 
         directory_fd = _open_secure_directory(artifact_dir)
         try:
+            # Serialize all publishers and explicit retention cleanup operations.
+            # Without the lock, two different approved releases could both pass
+            # a four-bundle preflight and leave five published bundles.
+            fcntl.flock(directory_fd, fcntl.LOCK_EX)
             destination_name = f"{manifest['release_id']}.tar"
             try:
                 existing_size, existing_digest = _existing_artifact_identity(directory_fd, destination_name)
@@ -296,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         item["release_id"] for item in verified["older_review_only"]
     ))
     print("RELEASE_AUTOMATIC_DELETION=NO")
+    print("RELEASE_APPROVED_LIMIT_MET=" + ("YES" if verified["within_approved_limit"] else "NO"))
     print("RELEASE_ROLLBACK_ENABLED=NO")
     return 0
 

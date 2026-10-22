@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Render release-store audit for a three-approved-release retention plan.
+"""Read-only Render release-store audit for a four-approved-release retention policy.
 
 Never deletes artifacts, updates the release catalog, or authorizes rollback.
 Run *inside* the backend runtime, where Render's persistent disk is mounted.
@@ -23,7 +23,7 @@ from clientflow_release_format.bundle import (  # noqa: E402
 )
 
 RELEASE_FILE = re.compile(r"^clientflow-(\d+\.\d+\.\d+)-seq-([1-9]\d*)\.tar$")
-KEEP_LATEST_APPROVED = 3
+KEEP_LATEST_APPROVED = 4
 # Minimum free space to leave on the 1-GB disk while staging a new artifact.
 # The artifact itself also needs temporary space during immutable publication.
 RESERVED_FREE_BYTES = 64 * 1024 * 1024
@@ -46,10 +46,10 @@ def _check_directory(directory: Path) -> None:
         raise StoreAuditError("Release-store has insecure permissions or owner")
 
 
-def inspect_store(directory: Path, *, require_three: bool = False) -> dict:
+def inspect_store(directory: Path, *, require_four: bool = False, require_three: bool = False) -> dict:
     """Inventory immutable approved artifacts; never mutate the store.
 
-    A corrupt or unapproved artifact *cannot* count toward the protected three.
+    A corrupt or unapproved artifact *cannot* count toward the protected four.
     If *any* artifact is untrusted, fail closed rather than suggest pruning.
     """
     _check_directory(directory)
@@ -122,7 +122,9 @@ def inspect_store(directory: Path, *, require_three: bool = False) -> dict:
         "mode": "read_only",
         "retention_target": KEEP_LATEST_APPROVED,
         "approved_count": len(artifacts),
-        "retention_ready": len(protected) == KEEP_LATEST_APPROVED and not invalid,
+        "retention_ready": len(artifacts) == KEEP_LATEST_APPROVED and not invalid,
+        "within_approved_limit": len(artifacts) <= KEEP_LATEST_APPROVED and not invalid,
+        "approved_limit": KEEP_LATEST_APPROVED,
         "protected_latest": protected,
         "older_review_only": older,
         "invalid_artifacts": invalid,
@@ -136,8 +138,8 @@ def inspect_store(directory: Path, *, require_three: bool = False) -> dict:
     }
     if invalid:
         raise StoreAuditError("Unsafe release store: " + json.dumps(result, ensure_ascii=False))
-    if require_three and not result["retention_ready"]:
-        raise StoreAuditError("Fewer than three verified approved releases: " + json.dumps(result, ensure_ascii=False))
+    if (require_four or require_three) and not result["retention_ready"]:
+        raise StoreAuditError("Store must contain exactly four verified approved releases: " + json.dumps(result, ensure_ascii=False))
     return result
 
 
@@ -198,6 +200,11 @@ def plan_publication(
         ]
 
     projected.sort(key=lambda item: item["release_sequence"], reverse=True)
+    if len(projected) > KEEP_LATEST_APPROVED:
+        raise StoreAuditError(
+            "Approved release cap exceeded: archive older approved bundles through the "
+            "separately authorized, dependency-reviewed retention cleanup before publication"
+        )
     return {
         "mode": "read_only_publication_preflight",
         "disposition": disposition,
@@ -218,7 +225,9 @@ def plan_publication(
 
 def verify_publication(directory: Path, *, release_id: str, size_bytes: int, sha256: str) -> dict:
     """Independent postflight inspection; never modifies approved artifacts."""
-    snapshot = inspect_store(directory)
+    snapshot = inspect_store(directory, require_four=False)
+    if not snapshot["within_approved_limit"]:
+        raise StoreAuditError("Post-publication approved release cap exceeded")
     matches = [
         item
         for item in snapshot["protected_latest"] + snapshot["older_review_only"]
@@ -236,8 +245,10 @@ def verify_publication(directory: Path, *, release_id: str, size_bytes: int, sha
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-dir", type=Path)
+    parser.add_argument("--require-four", action="store_true",
+                        help="require exactly four verified approved bundles")
     parser.add_argument("--require-three", action="store_true",
-                        help="fail if fewer than three verified approved bundles exist")
+                        help="deprecated alias: require exactly four approved bundles")
     args = parser.parse_args(argv)
     try:
         directory = args.artifact_dir
@@ -246,13 +257,14 @@ def main(argv: list[str] | None = None) -> int:
             if not configured:
                 raise StoreAuditError("Set CLIENTFLOW_RELEASE_ARTIFACT_DIR or --artifact-dir")
             directory = Path(configured)
-        result = inspect_store(directory, require_three=args.require_three)
+        result = inspect_store(directory, require_four=args.require_four, require_three=args.require_three)
     except (StoreAuditError, OSError) as exc:
         print(f"RELEASE_STORE_AUDIT=FAIL: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True, ensure_ascii=False))
     print("RELEASE_STORE_AUDIT=PASS")
     print("RELEASE_RETENTION_READY=" + ("YES" if result["retention_ready"] else "NO"))
+    print("RELEASE_APPROVED_LIMIT_MET=" + ("YES" if result["within_approved_limit"] else "NO"))
     return 0
 
 
