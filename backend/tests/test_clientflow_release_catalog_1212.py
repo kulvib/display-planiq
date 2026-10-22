@@ -20,7 +20,7 @@ CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 def test_catalog_1239_promotes_exact_1338_fresh_install_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1240
+    assert data["catalog_sequence"] == 1241
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert data["retention_policy"] == {
@@ -69,8 +69,8 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
     assert source_version == "1.3.40"
     assert release_input["release_sequence"] == 1241
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] == 1240
-    assert data["catalog_sequence"] + 1 == release_input["release_sequence"]
+    assert data["catalog_sequence"] == 1241
+    assert data["catalog_sequence"] == release_input["release_sequence"]
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert release["release_id"] == "clientflow-1.3.38-seq-1239"
@@ -79,14 +79,15 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
     assert all(item["version"] != "1.3.27" for item in data["releases"])
 
     pilot = data["releases"][1]
-    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
-    assert pilot["release_sequence"] == 1240
+    assert pilot["release_id"] == "clientflow-1.3.40-seq-1241"
+    assert pilot["release_sequence"] == 1241
     assert pilot["status"] == "supported"
     assert pilot["installable"] is False
     assert pilot["update_allowed"] is True
     assert pilot["rollback_allowed"] is False
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
+    assert all(item["release_sequence"] != 1240 for item in data["releases"])
 
     # SHA-256 and approval provenance belong to the immutable published bundle,
     # never to the catalog selector (which holds policy only).
@@ -113,13 +114,13 @@ def test_catalog_1239_fresh_install_resolves_but_update_and_old_version_fail_clo
     assert fresh["update_allowed"] is False
     assert fresh["install_modes"] == ["fresh_install"]
 
-    approved_pilot = resolve_release("1.3.39")
+    approved_pilot = resolve_release("1.3.40")
     assert approved_pilot["install_modes"] == ["in_place_update"]
     assert approved_pilot["installable"] is False
     assert approved_pilot["rollback_allowed"] is False
     with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):
         resolve_release("1.3.38")
-    for legacy in ("1.3.37", "1.3.36", "1.3.35", "1.3.34", "1.3.33"):
+    for legacy in ("1.3.39", "1.3.37", "1.3.36", "1.3.35", "1.3.34", "1.3.33"):
         with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
             resolve_release(legacy)
 

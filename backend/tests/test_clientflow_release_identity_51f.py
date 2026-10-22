@@ -45,7 +45,7 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected["version"] == catalog["latest_stable"]
     assert selected["version"] == catalog["default_install_version"]
     assert selected["release_sequence"] == 1239
-    assert catalog_sequence == 1240
+    assert catalog_sequence == 1241
     assert selected["release_id"] == f"clientflow-{selected['version']}-seq-{selected['release_sequence']}"
     assert selected["revision"] == selected["release_id"]
 
@@ -53,12 +53,12 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected_tuple <= source_tuple
     # 1240 remains a non-default, update-only pilot while 1241 is staged source.
     # The default 1239 selector must never silently become an update target.
-    assert source_sequence == 1241 and catalog_sequence == 1240
+    assert source_sequence == catalog_sequence == 1241
     assert selected_tuple < source_tuple
     pilot = catalog["releases"][1]
     assert pilot["release_sequence"] == catalog_sequence
-    assert pilot["version"] == "1.3.39"
-    assert pilot["release_id"] == "clientflow-1.3.39-seq-1240"
+    assert pilot["version"] == "1.3.40"
+    assert pilot["release_id"] == "clientflow-1.3.40-seq-1241"
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["installable"] is False and pilot["rollback_allowed"] is False
 
