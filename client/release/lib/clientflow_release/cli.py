@@ -1098,6 +1098,7 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.add_argument("--release-id")
     rollback.add_argument("--expected-release-approval-reference", required=True)
     rollback.add_argument("--reason", required=True)
+    rollback.add_argument("--permit-file", type=Path)
     _common_transaction_parser(rollback)
     status_parser = sub.add_parser("status")
     _common_transaction_parser(status_parser)
@@ -1252,6 +1253,9 @@ def transaction_main(argv: list[str] | None = None) -> int:
     rollback.add_argument("--release-id")
     rollback.add_argument("--expected-release-approval-reference", required=True)
     rollback.add_argument("--reason", required=True)
+    rollback.add_argument("--permit-file", type=Path)
+    report = sub.add_parser("report-rollback")
+    report.add_argument("--permit-id", required=True)
     recover = sub.add_parser("recover-failed-update")
     recover.add_argument("--expected-failed-release-id", required=True)
     recover.add_argument("--expected-previous-release-id", required=True)
@@ -1278,7 +1282,12 @@ def transaction_main(argv: list[str] | None = None) -> int:
             release_id=args.release_id,
             expected_release_approval_reference=args.expected_release_approval_reference,
             reason=args.reason,
+            permit_file=args.permit_file,
         )
+    elif args.operation == "report-rollback":
+        _require_root(Layout())
+        from .rollback_reporter import report_completed_rollback
+        result = report_completed_rollback(args.permit_id)
     elif args.operation == "recover-failed-update":
         result = recover_failed_update(
             expected_failed_release_id=args.expected_failed_release_id,

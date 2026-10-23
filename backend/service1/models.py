@@ -932,3 +932,6 @@ class OrganizationTimesRead(SQLModel):
     organization_id: int
     season: Optional[str] = None
     day_times: Dict[str, Dict[str, str]]
+
+# Import the isolated rollback audit tables into canonical SQLModel metadata.
+from . import clientflow_rollback_models as _clientflow_rollback_models  # noqa: E402,F401
