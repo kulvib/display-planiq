@@ -1265,6 +1265,21 @@ def activate_release(
     release_id = _validate_release_id(release_id)
     with TransactionLock(layout):
         state = load_state(layout)
+        # ``activate`` is a first-install or forward-update entry point, not a
+        # way to silently bypass the explicitly reasoned ``rollback`` path.
+        # An already-installed older release may be restored with
+        # rollback_release(), which retains the high-water mark and records
+        # the operator's reason.  This also covers an activation-intent resume:
+        # an in-flight downgrade must be resumed through ``rollback``.
+        current_id = state.get("active_release_id")
+        if current_id is not None and current_id != release_id:
+            current_id = _validate_release_id(str(current_id))
+            current_sequence = int(current_id.rsplit("-seq-", 1)[1])
+            target_sequence = int(release_id.rsplit("-seq-", 1)[1])
+            if target_sequence <= current_sequence:
+                raise TransactionError(
+                    "Activation af ældre eller ikke-stigende release kræver eksplicit rollback med begrundelse"
+                )
         canonical_reference = _canonical_activation_approval(
             layout,
             state,
