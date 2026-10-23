@@ -9,6 +9,7 @@ after a full comparison with the reviewed frozen baseline.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -106,6 +107,82 @@ REVIEWED_ENROLLMENT_BINDING_REVISION = "20260908_55a_enroll_binding"
 REVIEWED_CALENDAR_DELIVERY_REVISION = "20260922_56a_calendar_rev"
 REVIEWED_IMPERSONATION_REVISION = "20260929_57a_impersonation"
 REVIEWED_MAINTENANCE_REVISION = "20260929_58a_maintenance"
+# 59A is an explicitly reviewed, additive successor to the frozen Step 58A
+# graph. Preserve the historical 58A anchors required by the recovery contract.
+# Pin the actual migration source: future edits require another explicit review.
+REVIEWED_ROLLBACK_59A_REVISION = "20261023_59a_rollback"
+REVIEWED_ROLLBACK_59A_SOURCE_SHA256 = "97c43d29009c07ab6203e9ec3dd816b3636f47036a831d54daf1c57392e872b4"
+ROLLBACK_59A_TABLES = frozenset({"clientflow_rollback_permit", "clientflow_rollback_event"})
+ROLLBACK_59A_CONSTRAINTS = frozenset({
+    "clientflow_rollback_permit_pkey",
+    "clientflow_rollback_permit_client_id_fkey",
+    "clientflow_rollback_permit_credential_id_fkey",
+    "clientflow_rollback_permit_admin_id_fkey",
+    "ck_clientflow_rollback_permit_state",
+    "ck_clientflow_rollback_permit_sequences",
+    "ck_clientflow_rollback_permit_expiry",
+    "clientflow_rollback_event_pkey",
+    "clientflow_rollback_event_permit_id_fkey",
+    "clientflow_rollback_event_client_id_fkey",
+    "clientflow_rollback_event_actor_user_id_fkey",
+    "clientflow_rollback_event_credential_id_fkey",
+})
+ROLLBACK_59A_INDEXES = frozenset({
+    "clientflow_rollback_permit_pkey",
+    "ix_clientflow_rollback_permit_client_id",
+    "ix_clientflow_rollback_permit_expires_at",
+    "ix_clientflow_rollback_permit_client_state",
+    "clientflow_rollback_event_pkey",
+    "ix_clientflow_rollback_event_permit",
+    "ix_clientflow_rollback_event_client",
+})
+
+
+def _require_reviewed_59a_extension() -> None:
+    """Accept only the precisely frozen 59A addition to the reviewed 58A schema."""
+    source = ROOT / "migrations/versions/20261023_59a_clientflow_rollback_permit.py"
+    try:
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError("Reviewed 59A-migration mangler") from exc
+    if (
+        EXPECTED_HEAD_REVISION != REVIEWED_ROLLBACK_59A_REVISION
+        or digest != REVIEWED_ROLLBACK_59A_SOURCE_SHA256
+    ):
+        raise RuntimeError("59A-udvidelsen er ikke gennemgået for den aktuelle Alembic-kæde")
+
+
+def _without_rollback_59a_schema(
+    columns: dict[str, dict],
+    constraints: dict[str, str],
+    indexes: dict[str, str],
+) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
+    """Reverse exactly 59A's two new tables for frozen 58A/39A comparisons."""
+    _require_reviewed_59a_extension()
+    if not ROLLBACK_59A_TABLES <= columns.keys():
+        raise RuntimeError("Head-kontrakten mangler Step 59A-tabeller")
+    if not ROLLBACK_59A_CONSTRAINTS <= constraints.keys():
+        raise RuntimeError("Head-kontrakten mangler Step 59A-constraints")
+    if not ROLLBACK_59A_INDEXES <= indexes.keys():
+        raise RuntimeError("Head-kontrakten mangler Step 59A-indekser")
+    return (
+        {
+            name: dict(spec)
+            for name, spec in columns.items()
+            if name not in ROLLBACK_59A_TABLES
+        },
+        {
+            name: definition
+            for name, definition in constraints.items()
+            if name not in ROLLBACK_59A_CONSTRAINTS
+        },
+        {
+            name: definition
+            for name, definition in indexes.items()
+            if name not in ROLLBACK_59A_INDEXES
+        },
+    )
+
 LIVESTREAM_V2_TABLES = frozenset({
     "livestream_v2_agent_status",
     "livestream_v2_command",
@@ -544,16 +621,19 @@ def _baseline_schema_contract() -> tuple[dict[str, dict], dict[str, str], dict[s
     """
     if (
         BASELINE_REVISION != REVIEWED_BASELINE_ADOPTION_BASE
-        or EXPECTED_HEAD_REVISION != REVIEWED_BASELINE_ADOPTION_HEAD
+        or REVIEWED_BASELINE_ADOPTION_HEAD != REVIEWED_MAINTENANCE_REVISION
     ):
         raise RuntimeError(
             "Display baseline-adoption er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_calendar_delivery_schema(
+    columns, constraints, indexes = _without_rollback_59a_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_calendar_delivery_schema(
+        columns, constraints, indexes,
     )
     columns, constraints, indexes = _without_enrollment_binding_schema(
         columns, constraints, indexes
@@ -662,15 +742,18 @@ def _pre_livestream_control_schema_contract() -> tuple[dict[str, dict], dict[str
     database catalog exactly matches Step 39A, proving that the unknown label
     carries no schema delta relative to the reviewed predecessor.
     """
-    if EXPECTED_HEAD_REVISION != REVIEWED_LEGACY_RECONCILIATION_HEAD:
+    if REVIEWED_LEGACY_RECONCILIATION_HEAD != REVIEWED_MAINTENANCE_REVISION:
         raise RuntimeError(
             "Legacy-revision reconciliation er ikke gennemgået for den aktuelle Alembic-kæde"
         )
 
-    columns, constraints, indexes = _without_calendar_delivery_schema(
+    columns, constraints, indexes = _without_rollback_59a_schema(
         {table: dict(values) for table, values in EXPECTED_COLUMNS.items()},
         dict(EXPECTED_CONSTRAINTS),
         dict(EXPECTED_INDEXES),
+    )
+    columns, constraints, indexes = _without_calendar_delivery_schema(
+        columns, constraints, indexes,
     )
     columns, constraints, indexes = _without_enrollment_binding_schema(
         columns, constraints, indexes
@@ -951,7 +1034,12 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             )
     else:
         if current == RECOVERABLE_LEGACY_REVISION:
-            if head != REVIEWED_LEGACY_RECONCILIATION_HEAD:
+            if REVIEWED_LEGACY_RECONCILIATION_HEAD != REVIEWED_MAINTENANCE_REVISION:
+                raise RuntimeError(
+                    "Legacy-revision reconciliation er ikke gennemgået for dette repo-head"
+                )
+            _require_reviewed_59a_extension()
+            if head != REVIEWED_ROLLBACK_59A_REVISION:
                 raise RuntimeError(
                     "Legacy-revision reconciliation er ikke gennemgået for dette repo-head"
                 )
@@ -1013,7 +1101,10 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or calendar_delivery_revision.down_revision != REVIEWED_ENROLLMENT_BINDING_REVISION
                 or impersonation_revision.down_revision != REVIEWED_CALENDAR_DELIVERY_REVISION
                 or maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION
-                or head != REVIEWED_MAINTENANCE_REVISION
+                or (
+                    head != REVIEWED_MAINTENANCE_REVISION
+                    and head_revision.down_revision != REVIEWED_MAINTENANCE_REVISION
+                )
             ):
                 raise RuntimeError(
                     "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A -> 55A -> 56A -> 57A -> 58A-kæde"

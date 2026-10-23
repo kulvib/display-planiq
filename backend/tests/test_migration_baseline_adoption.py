@@ -62,6 +62,9 @@ class BaselineAdoptionTests(unittest.TestCase):
         columns, constraints, indexes = runner._baseline_schema_contract()
 
         self.assertNotIn("livestream_viewer_lease", columns)
+        self.assertTrue(runner.ROLLBACK_59A_TABLES.isdisjoint(columns))
+        self.assertTrue(runner.ROLLBACK_59A_CONSTRAINTS.isdisjoint(constraints))
+        self.assertTrue(runner.ROLLBACK_59A_INDEXES.isdisjoint(indexes))
         self.assertNotIn("livestream_viewer_lease_pkey", constraints)
         self.assertNotIn("livestream_viewer_lease_client_id_fkey", constraints)
         self.assertNotIn("uq_livestream_viewer_lease_client_viewer", constraints)
@@ -95,6 +98,21 @@ class BaselineAdoptionTests(unittest.TestCase):
         self.assertTrue(runtime_columns.isdisjoint(columns["client"]))
         self.assertTrue(runtime_columns.issubset(runner.EXPECTED_COLUMNS["client"]))
         self.assertTrue(runner.ADOPTED_RUNTIME_TABLES.isdisjoint(columns))
+
+    def test_59a_successor_requires_frozen_migration_and_exact_tables(self) -> None:
+        import copy
+
+        with patch.object(runner, "EXPECTED_HEAD_REVISION", "20261024_60a_unreviewed"):
+            with self.assertRaisesRegex(RuntimeError, "59A-udvidelsen"):
+                runner._baseline_schema_contract()
+        with patch.object(runner, "REVIEWED_ROLLBACK_59A_SOURCE_SHA256", "0" * 64):
+            with self.assertRaisesRegex(RuntimeError, "59A-udvidelsen"):
+                runner._pre_livestream_control_schema_contract()
+        original = copy.deepcopy(runner.EXPECTED_CONSTRAINTS)
+        original.pop("clientflow_rollback_permit_client_id_fkey")
+        with patch.object(runner, "EXPECTED_CONSTRAINTS", original):
+            with self.assertRaisesRegex(RuntimeError, "Step 59A-constraints"):
+                runner._baseline_schema_contract()
 
     def test_empty_database_flag_runs_upgrade_then_exact_head_verification(self) -> None:
         calls: list[str] = []
@@ -235,6 +253,9 @@ class BaselineAdoptionTests(unittest.TestCase):
             self.assertNotIn(column_name, columns["client"])
             self.assertIn(column_name, runner.EXPECTED_COLUMNS["client"])
         self.assertIn("livestream_viewer_lease", columns)
+        self.assertTrue(runner.ROLLBACK_59A_TABLES.isdisjoint(columns))
+        self.assertTrue(runner.ROLLBACK_59A_CONSTRAINTS.isdisjoint(constraints))
+        self.assertTrue(runner.ROLLBACK_59A_INDEXES.isdisjoint(indexes))
         self.assertTrue(runner.LIVESTREAM_V2_TABLES.isdisjoint(columns))
         self.assertTrue(
             all(not name.startswith(("livestream_v2_", "uq_livestream_v2_")) for name in constraints)
@@ -308,6 +329,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_CALENDAR_DELIVERY_REVISION)
                 if revision == runner.REVIEWED_MAINTENANCE_REVISION:
                     return Revision(runner.REVIEWED_IMPERSONATION_REVISION)
+                if revision == runner.REVIEWED_ROLLBACK_59A_REVISION:
+                    return Revision(runner.REVIEWED_MAINTENANCE_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         def verify(_connection, **kwargs):
@@ -725,6 +748,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_CALENDAR_DELIVERY_REVISION)
                 if revision == runner.REVIEWED_MAINTENANCE_REVISION:
                     return Revision(runner.REVIEWED_IMPERSONATION_REVISION)
+                if revision == runner.REVIEWED_ROLLBACK_59A_REVISION:
+                    return Revision(runner.REVIEWED_MAINTENANCE_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         with patch.object(
