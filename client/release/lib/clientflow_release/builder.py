@@ -61,6 +61,9 @@ def _git(repo: Path, *args: str) -> str:
 
 
 DIRECT_EXEC_PAYLOAD_SUFFIXES = frozenset({
+    # The transaction wrapper is shipped with mode 100644 in Git/ZIP sources.
+    # It must be directly executable in the immutable installed release.
+    "release/bin/clientflow-release-transaction",
     "client-runtime/libexec/display-power",
     "client-runtime/libexec/update-os",
     "client-runtime/libexec/update-firmware",
