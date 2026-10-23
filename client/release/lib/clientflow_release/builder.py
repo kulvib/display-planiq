@@ -11,6 +11,7 @@ import tarfile
 import zipfile
 
 from clientflow_release_format.archive import FileRegion
+from clientflow_release_format.rollback_permit import SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE
 
 from .constants import (
     ARTIFACT_TYPE_RUNTIME_RELEASE,
@@ -24,6 +25,7 @@ from .constants import (
 )
 from .crypto import sha256_file
 from .manifest import validate_manifest
+from .rollback_trust_build import validate_release_rollback_trust
 
 EXCLUDED_NAMES = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules", "dist", "build"}
 REQUIRED_WHEELS = (
@@ -381,6 +383,12 @@ def build(repo: Path, output_dir: Path, *, runtime_inputs: Path | None, allow_di
     release_input = json.loads((repo / "client/release/release-input.json").read_text(encoding="utf-8"))
     sequence = int(release_input["release_sequence"])
     release_id = f"clientflow-{version}-seq-{sequence}"
+    # Reusing the historical sequence with a new version must never bypass
+    # the signed-rollback transition boundary.
+    version_tuple = tuple(int(part) for part in version.split("."))
+    if version_tuple >= (1, 3, 41) and sequence < SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE:
+        raise ValueError("Ny ClientFlow-version må ikke omgå signed rollback-sekvensgrænsen")
+    validate_release_rollback_trust(repo, sequence)
     commit = _git(repo, "rev-parse", "HEAD")
     dirty = bool(_git(repo, "status", "--porcelain"))
     if dirty and not allow_dirty:
