@@ -12,7 +12,6 @@ import select
 import signal
 import re
 import subprocess
-import sys
 import time
 
 
