@@ -32,6 +32,7 @@ from .routers.shared_domain import router as shared_domain_router
 from .routers.terminal_auth import router as terminal_auth_router
 from .routers import enrollment
 from .routers import clientflow_releases
+from .routers import clientflow_rollbacks
 from .routers import clientflow_deployments
 from .routers import clientflow_update
 from .routers import websocket_tickets
@@ -635,6 +636,7 @@ app.include_router(users.router,      prefix="/api")
 app.include_router(enrollment.router, prefix="/api")
 app.include_router(clientflow_releases.router, prefix="/api")
 app.include_router(clientflow_deployments.router, prefix="/api")
+app.include_router(clientflow_rollbacks.router, prefix="/api")
 app.include_router(clientflow_update.router, prefix="/api")
 app.include_router(websocket_tickets.router, prefix="/api")
 app.include_router(maintenance.router, prefix="/api")

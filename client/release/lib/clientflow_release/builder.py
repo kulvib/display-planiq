@@ -150,6 +150,7 @@ def _create_payload(
     sources.append((wrapper, PurePosixPath(root) / "release/bin/clientflow-release-transaction"))
     sources.append((repo / "client/VERSION", PurePosixPath(root) / "VERSION"))
     sources.append((repo / "client/release/release-input.json", PurePosixPath(root) / "release/release-input.json"))
+    sources.append((repo / "client/release/rollback-trust.json", PurePosixPath(root) / "release/rollback-trust.json"))
     sources.append((updater_pyz, PurePosixPath(root) / "release/updater/clientflow-updater.pyz"))
 
     runtime_files: list[dict] = []

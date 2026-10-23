@@ -29,6 +29,8 @@ from .filesystem import (
     remove_tree_no_symlink,
 )
 from .runtime_prepare import prepare_runtime
+from .rollback_verifier import verify_for_transaction
+from clientflow_release_format.rollback_permit import RollbackPermitError
 
 _RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
 _APPROVAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/@+-]{0,199}$")
@@ -1047,6 +1049,7 @@ def _activation_intent(
     release_id: str,
     release_approval_reference: str,
     current_release_id: str | None,
+    manual_rollback_permit_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     existing = state.get("activation_intent")
     if existing is not None:
@@ -1055,6 +1058,7 @@ def _activation_intent(
         if (
             existing.get("release_id") != release_id
             or existing.get("release_approval_reference") != release_approval_reference
+            or existing.get("manual_rollback_permit_id") != manual_rollback_permit_id
         ):
             raise TransactionError("En anden activation er allerede committed lokalt")
         previous = existing.get("previous_release_id")
@@ -1085,6 +1089,8 @@ def _activation_intent(
         "release_approval_reference": release_approval_reference,
         "started_at": _now(),
     }
+    if manual_rollback_permit_id is not None:
+        intent["manual_rollback_permit_id"] = manual_rollback_permit_id
     state["activation_intent"] = intent
     _append_history(
         state,
@@ -1102,6 +1108,7 @@ def _activate_release(
     state: dict[str, Any],
     release_id: str,
     release_approval_reference: str,
+    manual_rollback_permit_id: str | None = None,
 ) -> dict[str, Any]:
     installed = state.get("installed") or {}
     if release_id not in installed:
@@ -1116,6 +1123,7 @@ def _activate_release(
         release_id=release_id,
         release_approval_reference=release_approval_reference,
         current_release_id=current,
+        manual_rollback_permit_id=manual_rollback_permit_id,
     )
     previous = intent.get("previous_release_id")
     release_root = layout.releases / release_id
@@ -1503,6 +1511,7 @@ def rollback_release(
     expected_release_approval_reference: str,
     reason: str,
     release_id: str | None = None,
+    permit_file: Path | None = None,
     layout: Layout = Layout(),
 ) -> dict[str, Any]:
     reason = reason.strip()
@@ -1523,7 +1532,30 @@ def rollback_release(
             expected_approval_reference=expected_release_approval_reference,
         )
         active = state["active_release_id"]
+        try:
+            permit_id = verify_for_transaction(
+                layout, state, active=active, target=target,
+                approval=approval, reason=reason, permit_file=permit_file,
+            )
+        except (RollbackPermitError, OSError, ValueError) as exc:
+            raise TransactionError("Manuel rollback har ikke en gyldig central tilladelse") from exc
+        used = state.setdefault("used_rollback_permits", {})
+        if not isinstance(used, dict):
+            raise TransactionError("Rollback-forbrugsjournal er ugyldig")
         intent = state.get("activation_intent")
+        resume_uncommitted_request = False
+        if permit_id and permit_id in used and intent is None:
+            # A crash immediately after persisting the request (before intent)
+            # may resume that EXACT request; a fully finished permit never can.
+            last = state.get("history", [])[-1] if state.get("history") else None
+            if not (isinstance(last, dict) and last.get("event") == "manual_rollback_requested"
+                    and last.get("permit_id") == permit_id and last.get("reason") == reason
+                    and last.get("from_release_id") == active
+                    and last.get("to_release_id") == target):
+                raise TransactionError("Rollback-tilladelsen er allerede brugt")
+            resume_uncommitted_request = True
+        if permit_id and permit_id in used and used[permit_id] != target:
+            raise TransactionError("Rollback-tilladelsens forbrugsbinding er ændret")
         if intent is not None:
             # Resume only the same audited manual request. An unrelated
             # in-flight activation must never be relabeled as an operator
@@ -1544,24 +1576,31 @@ def rollback_release(
                     or request.get("from_release_id") != active
                     or request.get("to_release_id") != target
                     or request.get("release_approval_reference") != approval
-                    or request.get("reason") != reason):
-                raise TransactionError("Genoptagelse kræver den oprindelige rollback-begrundelse")
-        else:
-            # Audit the authorized request BEFORE disabling the running system.
+                    or request.get("reason") != reason
+                    or request.get("permit_id") != permit_id):
+                raise TransactionError("Genoptagelse kræver den oprindelige rollback-begrundelse og tilladelse")
+        elif not resume_uncommitted_request:
+            # Audit and durable consumption BEFORE disabling the running system.
+            if permit_id is not None:
+                used[permit_id] = target  # Never prune: a permit is one-shot.
             _append_history(
                 state,
                 "manual_rollback_requested",
+                permit_id=permit_id,
                 from_release_id=active,
                 to_release_id=target,
                 reason=reason,
                 release_approval_reference=approval,
             )
             save_state(layout, state)
-        result = _activate_release(layout, state, target, approval)
+        result = _activate_release(
+            layout, state, target, approval, manual_rollback_permit_id=permit_id,
+        )
         state = load_state(layout)
         _append_history(
             state,
             "manual_rollback",
+            permit_id=permit_id,
             from_release_id=active,
             to_release_id=target,
             reason=reason,
@@ -1569,6 +1608,8 @@ def rollback_release(
         )
         save_state(layout, state)
         result["rollback_reason"] = reason
+        if permit_id is not None:
+            result["rollback_permit_id"] = permit_id
         return result
 
 

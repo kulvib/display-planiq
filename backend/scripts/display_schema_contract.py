@@ -1117,3 +1117,81 @@ EXPECTED_CONSTRAINTS["maintenance_state_pkey"] = "PRIMARY KEY (id)"
 EXPECTED_INDEXES["maintenance_state_pkey"] = "CREATE UNIQUE INDEX maintenance_state_pkey ON public.maintenance_state USING btree (id)"
 # Replaced below after deterministic contract fingerprint calculation.
 EXPECTED_FINGERPRINT = "d575b231d0e68b64f42e51558b3ed22f5c2604a663eab260900e72bfb6b472e6"
+
+
+# Step 59A: signed, one-shot ClientFlow manual rollback permits and durable audit.
+# This extension is exact: all new columns, FKs, checks and indexes are checked
+# by the same fail-closed production migration verifier as previous revisions.
+EXPECTED_HEAD_REVISION = "20261023_59a_rollback"
+EXPECTED_TABLES = set(EXPECTED_TABLES)
+EXPECTED_TABLES.update(("clientflow_rollback_permit", "clientflow_rollback_event"))
+
+def _rollback_column(data_type, udt, length=None, nullable=False, default=None):
+    return {"data_type": data_type, "udt_name": udt, "length": length,
+            "nullable": nullable, "default": default}
+
+_rbv = lambda length, nullable=False, default=None: _rollback_column("character varying", "varchar", length, nullable, default)
+# The third positional parameter of _rollback_column is length, not nullable.
+_rbi = lambda nullable=False: _rollback_column("integer", "int4", nullable=nullable)
+_rbt = lambda nullable=False: _rollback_column("text", "text", nullable=nullable)
+_rbts = lambda nullable=False: _rollback_column("timestamp without time zone", "timestamp", nullable=nullable)
+
+EXPECTED_COLUMNS["clientflow_rollback_permit"] = {
+    "id": _rbv(36),
+    "client_id": _rbi(),
+    "credential_id": _rbv(36),
+    "admin_id": _rbi(True),
+    "from_release_id": _rbv(160),
+    "from_sequence": _rbi(),
+    "to_release_id": _rbv(160),
+    "to_sequence": _rbi(),
+    "release_approval_reference": _rbv(200),
+    "bundle_sha256": _rbv(64),
+    "reason_sha256": _rbv(64),
+    "reason": _rbt(),
+    "policy_revision": _rbi(),
+    "signing_key_id": _rbv(32),
+    "signed_envelope": _rbt(),
+    "issued_at": _rbts(),
+    "expires_at": _rbts(),
+    "state": _rbv(16, default="'issued'::character varying"),
+    "reported_at": _rbts(True),
+    "revoked_at": _rbts(True),
+}
+EXPECTED_COLUMNS["clientflow_rollback_event"] = {
+    "id": _rbv(36),
+    "permit_id": _rbv(36),
+    "client_id": _rbi(),
+    "event_type": _rbv(32),
+    "actor_user_id": _rbi(True),
+    "credential_id": _rbv(36, nullable=True),
+    "occurred_at": _rbts(True),
+    "received_at": _rbts(),
+    "details": _rollback_column("jsonb", "jsonb"),
+}
+EXPECTED_CONSTRAINTS.update({
+    "clientflow_rollback_permit_pkey": "PRIMARY KEY (id)",
+    "clientflow_rollback_permit_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES client(id)",
+    "clientflow_rollback_permit_credential_id_fkey": "FOREIGN KEY (credential_id) REFERENCES clientflow_update_credential(id)",
+    "clientflow_rollback_permit_admin_id_fkey": 'FOREIGN KEY (admin_id) REFERENCES "user"(id) ON DELETE SET NULL',
+    "ck_clientflow_rollback_permit_state": "CHECK (state::text = ANY (ARRAY['issued'::character varying::text, 'revoked'::character varying::text, 'succeeded'::character varying::text, 'failed'::character varying::text]))",
+    "ck_clientflow_rollback_permit_sequences": "CHECK (from_sequence > to_sequence AND to_sequence > 0)",
+    "ck_clientflow_rollback_permit_expiry": "CHECK (expires_at > issued_at)",
+    "clientflow_rollback_event_pkey": "PRIMARY KEY (id)",
+    "clientflow_rollback_event_permit_id_fkey": "FOREIGN KEY (permit_id) REFERENCES clientflow_rollback_permit(id) ON DELETE RESTRICT",
+    "clientflow_rollback_event_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES client(id)",
+    "clientflow_rollback_event_actor_user_id_fkey": 'FOREIGN KEY (actor_user_id) REFERENCES "user"(id) ON DELETE SET NULL',
+    "clientflow_rollback_event_credential_id_fkey": "FOREIGN KEY (credential_id) REFERENCES clientflow_update_credential(id) ON DELETE SET NULL",
+})
+EXPECTED_INDEXES.update({
+    "clientflow_rollback_permit_pkey": "CREATE UNIQUE INDEX clientflow_rollback_permit_pkey ON public.clientflow_rollback_permit USING btree (id)",
+    "ix_clientflow_rollback_permit_client_id": "CREATE INDEX ix_clientflow_rollback_permit_client_id ON public.clientflow_rollback_permit USING btree (client_id)",
+    "ix_clientflow_rollback_permit_expires_at": "CREATE INDEX ix_clientflow_rollback_permit_expires_at ON public.clientflow_rollback_permit USING btree (expires_at)",
+    "ix_clientflow_rollback_permit_client_state": "CREATE INDEX ix_clientflow_rollback_permit_client_state ON public.clientflow_rollback_permit USING btree (client_id, state)",
+    "clientflow_rollback_event_pkey": "CREATE UNIQUE INDEX clientflow_rollback_event_pkey ON public.clientflow_rollback_event USING btree (id)",
+    "ix_clientflow_rollback_event_permit": "CREATE INDEX ix_clientflow_rollback_event_permit ON public.clientflow_rollback_event USING btree (permit_id, received_at)",
+    "ix_clientflow_rollback_event_client": "CREATE INDEX ix_clientflow_rollback_event_client ON public.clientflow_rollback_event USING btree (client_id, received_at)",
+})
+# Frozen SHA-256 of the entire expected schema, recalculated from the exact
+# canonical contract payload by the offline schema contract build step.
+EXPECTED_FINGERPRINT = "8d181a41c47ed0a53fd978fd294b7b314d57e1fc2b04f94b78e2d0d7b0e4bc55"
