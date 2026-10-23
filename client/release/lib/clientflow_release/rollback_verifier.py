@@ -15,7 +15,12 @@ import tempfile
 import time
 
 from clientflow_release_format.rollback_permit import (
-    RollbackPermitError, b64_decode, canonical_bytes, reason_hash,
+    RELEASE_RE,
+    SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE,
+    RollbackPermitError,
+    b64_decode,
+    canonical_bytes,
+    reason_hash,
     verify_envelope_structure,
 )
 from .filesystem import load_secure_json
@@ -40,10 +45,17 @@ def _regular_file(path: Path, *, max_bytes: int, forbidden: int) -> bytes:
 
 
 def _trust(layout, source: str) -> dict:
+    match = RELEASE_RE.fullmatch(source)
+    if match is None:
+        raise RollbackPermitError("Rollback-kildens release-ID er ugyldigt")
+    requires_signed_trust = int(match.group(1)) >= SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE
     path = layout.releases / source / "release/rollback-trust.json"
     if not path.exists():
-        # Existing approved releases have no opt-in trust root; rollout changes
-        # neither their on-disk bytes nor their historical rollback contract.
+        # Historical immutable releases must preserve their existing local
+        # rollback contract. A future source release must NEVER interpret
+        # missing trust as an opt-out of signature verification.
+        if requires_signed_trust:
+            raise RollbackPermitError("Ny ClientFlow-release mangler obligatorisk rollback-trust")
         return {"schema_version": 1, "enabled": False, "keys": []}
     raw = _regular_file(path, max_bytes=4096, forbidden=0o022)
     try:
@@ -55,6 +67,8 @@ def _trust(layout, source: str) -> dict:
     if not data["enabled"]:
         if data["keys"]:
             raise RollbackPermitError("Deaktiveret trust må ikke indeholde aktive nøgler")
+        if requires_signed_trust:
+            raise RollbackPermitError("Ny ClientFlow-release kræver aktiveret rollback-trust")
         return data
     if not 1 <= len(data["keys"]) <= 3:
         raise RollbackPermitError("Rollback-trust kræver en pinning-nøgle")
