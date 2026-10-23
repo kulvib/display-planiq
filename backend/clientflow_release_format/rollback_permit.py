@@ -13,6 +13,8 @@ import re
 import uuid
 
 PURPOSE = "planiq.clientflow.manual-rollback.v1"
+# Source releases beginning at this sequence must fail closed without pinned trust.
+SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE = 1242
 KEY_FIELDS = frozenset({
     "schema_version", "purpose", "algorithm", "issuer_key_id", "permit_id",
     "client_id", "update_credential_id", "from_release_id", "from_sequence",

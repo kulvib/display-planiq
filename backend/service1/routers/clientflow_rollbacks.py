@@ -14,7 +14,11 @@ from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 
 from clientflow_release_format.rollback_permit import (
-    PURPOSE, RELEASE_RE, RollbackPermitError, reason_hash,
+    PURPOSE,
+    RELEASE_RE,
+    SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE,
+    RollbackPermitError,
+    reason_hash,
 )
 from ..audit import add_audit_log
 from ..auth import get_current_superadmin_user, _require_session_security_password
@@ -125,7 +129,7 @@ def issue_rollback_permit(
         # rollback trust root. Never issue a permit to a host that cannot
         # verify it. First eligible source is the NEXT separately approved
         # ClientFlow release, not the current Heidi1 development baseline.
-        if from_seq < 1242:
+        if from_seq < SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE:
             raise HTTPException(status_code=409, detail="Klientens release kan endnu ikke verificere signerede rollback-tilladelser")
         # Check signer readiness before taking the per-client transaction lock.
         _, issuer_key_id = _signing_key()

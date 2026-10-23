@@ -267,3 +267,54 @@ def test_unfinished_rollback_cannot_report_success(tmp_path, monkeypatch):
     from clientflow_release.rollback_reporter import report_completed_rollback
     with pytest.raises(transaction.TransactionError, match="afsluttet"):
         report_completed_rollback(payload["permit_id"], layout=layout, transport=object())
+
+
+@pytest.mark.parametrize("trust_mode", ["missing", "disabled"])
+def test_new_source_never_falls_back_to_unsigned_rollback(tmp_path, monkeypatch, trust_mode):
+    """A 1242+ source must not silently take the historical unsigned path."""
+    from clientflow_release import rollback_verifier
+    from clientflow_release_format.rollback_permit import SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE
+
+    layout, calls = prepare(tmp_path, monkeypatch)
+    future = f"clientflow-1.3.41-seq-{SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE}"
+    old_source = layout.releases / CURRENT
+    new_source = layout.releases / future
+    old_source.rename(new_source)
+    manifest = new_source / "release-manifest.json"
+    document = json.loads(manifest.read_text())
+    document["release_id"] = future
+    manifest.write_text(json.dumps(document))
+    trust = new_source / "release/rollback-trust.json"
+    if trust_mode == "disabled":
+        trust.parent.mkdir()
+        trust.write_text(json.dumps({"schema_version": 1, "enabled": False, "keys": []}))
+
+    state = transaction.load_state(layout)
+    state["installed"][future] = state["installed"].pop(CURRENT)
+    state["installed"][future]["release_sequence"] = SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE
+    state["active_release_id"] = future
+    state["highest_release_sequence"] = SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE
+    transaction.save_state(layout, state)
+    layout.active.unlink()
+    layout.active.symlink_to("releases/" + future)
+
+    with pytest.raises(transaction.TransactionError, match="gyldig central tilladelse"):
+        transaction.rollback_release(
+            release_id=PREVIOUS, expected_release_approval_reference=APPROVAL,
+            reason=REASON, layout=layout,
+        )
+    assert calls == []
+    assert transaction.load_state(layout)["active_release_id"] == future
+    with pytest.raises(RollbackPermitError, match="rollback-trust"):
+        rollback_verifier._trust(layout, future)
+
+
+def test_historical_source_preserves_unsigned_rollback_contract(tmp_path, monkeypatch):
+    layout, calls = prepare(tmp_path, monkeypatch)
+    result = transaction.rollback_release(
+        release_id=PREVIOUS, expected_release_approval_reference=APPROVAL,
+        reason=REASON, layout=layout,
+    )
+    assert result["status"] == "active"
+    assert "rollback_permit_id" not in result
+    assert calls
