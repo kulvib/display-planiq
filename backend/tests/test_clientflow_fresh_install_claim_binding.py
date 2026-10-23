@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,12 +21,12 @@ from service1.routers import enrollment as enrollment_router  # noqa: E402
 
 
 BINDING = {
-    "release_id": "clientflow-1.3.3-seq-1204",
-    "version": "1.3.3",
-    "release_sequence": 1204,
+    "release_id": "clientflow-1.3.38-seq-1239",
+    "version": "1.3.38",
+    "release_sequence": 1239,
     "bundle_sha256": "a" * 64,
     "bundle_size": 80123456,
-    "release_approval_reference": "clientflow-1.3.3-seq-1204/test-approval",
+    "release_approval_reference": "clientflow-1.3.38-seq-1239/test-approval",
     "release_candidate_sha256": "b" * 64,
     "source_commit": "c" * 40,
 }
@@ -71,11 +72,52 @@ def test_initial_claim_authorization_accepts_only_same_token_and_exact_release_b
 
 
 @pytest.mark.parametrize(
+    ("minimum_sequence", "revoked_ids", "denial"),
+    [
+        (1240, [], "minimumssikkerhedssekvens"),
+        (1239, [BINDING["release_id"]], "tilbagekaldt"),
+    ],
+)
+def test_initial_claim_rejects_valid_preissued_authorization_after_policy_change(
+    monkeypatch, tmp_path, minimum_sequence, revoked_ids, denial,
+):
+    # The same token and signed release binding remain valid, but a later
+    # security-policy change must be enforced at claim time (fail closed).
+    from service1 import clientflow_release_security_policy as release_policy
+
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    raw = _authorization(monkeypatch, token_id=42, expires_at=expires_at)
+    token = SimpleNamespace(id=42, expires_at=expires_at.replace(tzinfo=None))
+
+    policy_path = tmp_path / "release-security-policy.json"
+    policy_path.write_text(
+        json.dumps({
+            "schema_version": 1,
+            "revision": 2,
+            "minimum_safe_release_sequence": minimum_sequence,
+            "revoked_release_ids": revoked_ids,
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(release_policy, "POLICY_PATH", policy_path)
+
+    with pytest.raises(HTTPException) as exc:
+        enrollment_router._verify_initial_fresh_install_authorization(
+            token=token,
+            authorization_value=raw,
+            binding=dict(BINDING),
+        )
+
+    assert exc.value.status_code == 409
+    assert denial in str(exc.value.detail)
+
+
+@pytest.mark.parametrize(
     ("field", "replacement"),
     [
-        ("release_id", "clientflow-1.3.4-seq-1204"),
-        ("version", "1.3.4"),
-        ("release_sequence", 1205),
+        ("release_id", "clientflow-1.3.39-seq-1239"),
+        ("version", "1.3.39"),
+        ("release_sequence", 1240),
         ("bundle_sha256", "d" * 64),
         ("bundle_size", 80123457),
         ("release_approval_reference", "different-approval"),
