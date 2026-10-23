@@ -1131,7 +1131,8 @@ def _rollback_column(data_type, udt, length=None, nullable=False, default=None):
             "nullable": nullable, "default": default}
 
 _rbv = lambda length, nullable=False, default=None: _rollback_column("character varying", "varchar", length, nullable, default)
-_rbi = lambda nullable=False: _rollback_column("integer", "int4", nullable)
+# The third positional parameter of _rollback_column is length, not nullable.
+_rbi = lambda nullable=False: _rollback_column("integer", "int4", nullable=nullable)
 _rbt = lambda nullable=False: _rollback_column("text", "text", nullable=nullable)
 _rbts = lambda nullable=False: _rollback_column("timestamp without time zone", "timestamp", nullable=nullable)
 
@@ -1193,4 +1194,4 @@ EXPECTED_INDEXES.update({
 })
 # Frozen SHA-256 of the entire expected schema, recalculated from the exact
 # canonical contract payload by the offline schema contract build step.
-EXPECTED_FINGERPRINT = "a2e0f703bd139702ad77197c785846c3933c40e760e243a6205361fa37946590"
+EXPECTED_FINGERPRINT = "8d181a41c47ed0a53fd978fd294b7b314d57e1fc2b04f94b78e2d0d7b0e4bc55"

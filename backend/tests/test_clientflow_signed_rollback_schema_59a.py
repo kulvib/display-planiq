@@ -74,3 +74,29 @@ def test_signed_rollback_is_not_enabled_by_source_default():
     assert 'CLIENTFLOW_SIGNED_ROLLBACK_ENABLED' in signer
     assert '"false"' in signer
     assert 'CLIENTFLOW_ROLLBACK_SIGNING_KEY_PEM_B64' in signer
+
+
+def test_signed_rollback_nullable_user_refs_match_sql_model_and_migration():
+    # Admins may be deleted later: ON DELETE SET NULL must agree across
+    # the migration, SQLModel and the frozen PostgreSQL schema contract.
+    contract = _contract()
+    for table, column in (
+        ('clientflow_rollback_permit', 'admin_id'),
+        ('clientflow_rollback_event', 'actor_user_id'),
+    ):
+        spec = contract.EXPECTED_COLUMNS[table][column]
+        assert spec['data_type'] == 'integer'
+        assert spec['udt_name'] == 'int4'
+        assert spec['length'] is None
+        assert spec['nullable'] is True
+        assert spec['default'] is None
+
+    # Confirm that allowing optional administrator references does not
+    # accidentally make the client, credential or permit binding optional.
+    for table, column in (
+        ('clientflow_rollback_permit', 'client_id'),
+        ('clientflow_rollback_permit', 'credential_id'),
+        ('clientflow_rollback_event', 'client_id'),
+        ('clientflow_rollback_event', 'permit_id'),
+    ):
+        assert contract.EXPECTED_COLUMNS[table][column]['nullable'] is False
