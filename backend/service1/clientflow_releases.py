@@ -11,6 +11,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from .clientflow_release_security_policy import require_centrally_eligible_release
+
 from .clientflow_release_artifacts import (
     ClientFlowReleaseArtifactError,
     inspect_published_fresh_install_artifact,
@@ -185,6 +187,10 @@ def resolve_release(requested_version: str | None) -> dict[str, Any]:
     release = next((item for item in catalog["releases"] if item.get("version") == version), None)
     if release is None:
         raise ClientFlowCatalogError(f"ClientFlow-version {version} findes ikke")
+    require_centrally_eligible_release(
+        release_id=str(release.get("release_id") or release.get("revision") or ""),
+        release_sequence=release.get("release_sequence"),
+    )
     status = str(release.get("status") or "").lower()
     if status not in SELECTABLE_STATUSES or release.get("update_allowed") is not True:
         reason = release.get("block_reason") or release.get("deprecation_reason") or "Versionen kan ikke installeres"
@@ -199,6 +205,10 @@ def resolve_fresh_install_release() -> dict[str, Any]:
     release = next((item for item in catalog["releases"] if item.get("version") == version), None)
     if release is None:
         raise ClientFlowCatalogError("Default fresh-install version findes ikke i releasekataloget")
+    require_centrally_eligible_release(
+        release_id=str(release.get("release_id") or release.get("revision") or ""),
+        release_sequence=release.get("release_sequence"),
+    )
     status = str(release.get("status") or "").lower()
     install_modes = release.get("install_modes") or []
     if (

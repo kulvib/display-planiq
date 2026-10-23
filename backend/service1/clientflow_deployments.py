@@ -8,6 +8,10 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from .clientflow_release_security_policy import (
+    ClientFlowReleaseSecurityDenied,
+    require_centrally_eligible_release,
+)
 from .clientflow_update_models import (
     CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES,
     CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES,
@@ -190,6 +194,13 @@ def authorize_activation(
     )
     if existing is not None:
         return deployment
+    try:
+        require_centrally_eligible_release(
+            release_id=deployment.target_release_id,
+            release_sequence=deployment.target_release_sequence,
+        )
+    except ClientFlowReleaseSecurityDenied as exc:
+        raise ClientFlowDeploymentConflict(str(exc)) from exc
     if deployment.state != "staged" or deployment.completed_at is not None:
         raise ClientFlowDeploymentConflict(
             f"Deployment er ikke klar til activation (state={deployment.state!r})"
