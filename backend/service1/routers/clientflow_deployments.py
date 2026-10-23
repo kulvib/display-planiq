@@ -25,6 +25,7 @@ from ..clientflow_deployments import (
     create_authorized_deployment,
 )
 from ..clientflow_pilot_1241 import ClientFlowPilotDenied, PILOT_FLAG, require_pilot_1241
+from ..clientflow_release_security_policy import ClientFlowReleaseSecurityDenied
 from ..clientflow_releases import (
     ClientFlowArtifactUnavailable,
     ClientFlowCatalogError,
@@ -236,7 +237,7 @@ def create_clientflow_deployment(
             current_version=current_version,
             ubuntu_version=client.ubuntu_version,
         )
-    except ClientFlowCatalogError as exc:
+    except (ClientFlowCatalogError, ClientFlowReleaseSecurityDenied) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Defense-in-depth: catalog eligibility is not a per-client permission.
@@ -299,7 +300,7 @@ def create_clientflow_deployment(
                 confirm_downgrade=body.confirm_downgrade,
                 artifact=artifact,
             )
-        except (ClientFlowCatalogError, ClientFlowPilotDenied) as exc:
+        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowReleaseSecurityDenied) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if locked_version != current_version:
             raise HTTPException(status_code=409, detail="Klientens aktive release ændrede sig under autorisation")

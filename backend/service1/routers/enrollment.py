@@ -31,6 +31,10 @@ from ..clientflow_release_artifacts import (
     ClientFlowReleaseArtifactError,
     open_artifact_matches_fresh_install_authorization,
 )
+from ..clientflow_release_security_policy import (
+    ClientFlowReleaseSecurityDenied,
+    require_centrally_eligible_release,
+)
 from ..clientflow_releases import (
     ClientFlowCatalogError,
     fresh_install_release_snapshot,
@@ -460,6 +464,16 @@ def _require_bound_resume_receipt(
     raise HTTPException(status_code=401, detail="Enrollment resume-proof eller release-binding er ugyldig")
 
 
+def _enforce_fresh_install_security(binding: dict[str, object]) -> None:
+    try:
+        require_centrally_eligible_release(
+            release_id=str(binding.get("release_id") or ""),
+            release_sequence=binding.get("release_sequence"),
+        )
+    except ClientFlowReleaseSecurityDenied as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 def _verify_initial_fresh_install_authorization(
     *,
     token: EnrollmentToken,
@@ -486,6 +500,9 @@ def _verify_initial_fresh_install_authorization(
         _authorization_fresh_install_binding(authorization),
         detail="Fresh-install release-binding matcher ikke authorization",
     )
+    # A previously issued enrollment token/authorization must not bypass a
+    # release revocation published after the token was created.
+    _enforce_fresh_install_security(binding)
     return authorization
 
 
@@ -574,7 +591,7 @@ def create_enrollment_token(
         raise HTTPException(status_code=404, detail="Organisation ikke fundet")
     try:
         snapshot = fresh_install_release_snapshot()
-    except ClientFlowCatalogError as exc:
+    except (ClientFlowCatalogError, ClientFlowReleaseSecurityDenied) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     code = _generate_enrollment_code()
@@ -651,6 +668,7 @@ def fresh_install_bootstrap(
     )
     token = _active_token_for_code(session, data.enrollment_code)
     binding = _token_fresh_install_binding(token)
+    _enforce_fresh_install_security(binding)
     snapshot = {
         "target_release_id": binding["release_id"],
         "target_version": binding["version"],
@@ -705,6 +723,7 @@ def download_fresh_install_artifact(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     if authorization.expires_at_epoch != utc_epoch(token.expires_at):
         raise HTTPException(status_code=401, detail="Fresh-install authorization matcher ikke installationskodens udløb")
+    _enforce_fresh_install_security(_authorization_fresh_install_binding(authorization))
     if str(data.expected_release_id).strip() != authorization.release_id:
         raise HTTPException(status_code=409, detail="Forventet release-id matcher ikke fresh-install authorization")
     expected_sha = str(data.expected_bundle_sha256).strip().lower()

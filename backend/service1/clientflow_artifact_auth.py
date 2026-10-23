@@ -19,6 +19,10 @@ from .clientflow_update_auth import (
     verify_dpop_proof,
 )
 from .clientflow_update_models import ClientFlowDeployment, ClientFlowUpdateCredential
+from .clientflow_release_security_policy import (
+    ClientFlowReleaseSecurityDenied,
+    require_centrally_eligible_release,
+)
 
 ARTIFACT_ACCESS_TOKEN_TYP = "clientflow-artifact-access+jwt"
 ARTIFACT_ACCESS_TOKEN_AUDIENCE = "urn:planiq:clientflow-update:artifact"
@@ -42,6 +46,13 @@ class ArtifactPrincipal:
 
 
 def _require_downloadable(deployment: ClientFlowDeployment) -> None:
+    try:
+        require_centrally_eligible_release(
+            release_id=deployment.target_release_id,
+            release_sequence=deployment.target_release_sequence,
+        )
+    except ClientFlowReleaseSecurityDenied as exc:
+        raise ClientFlowArtifactAuthorizationError(str(exc)) from exc
     if deployment.completed_at is not None or deployment.state not in ARTIFACT_DOWNLOADABLE_STATES:
         raise ClientFlowArtifactAuthorizationError(
             "Artifact-download er kun tilladt før deploymentens activation-start"
