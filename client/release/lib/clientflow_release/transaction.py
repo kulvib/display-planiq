@@ -1438,6 +1438,66 @@ def recover_failed_update(
         return {"status": "rolled_back", "release_id": failed, "restored_release_id": previous}
 
 
+def _validate_manual_rollback_target(
+    state: dict[str, Any],
+    *,
+    current: str | None,
+    target: str | None,
+) -> str:
+    """Allow an explicit downgrade only to the immediately previous release.
+
+    The local operation is *not* central authorization or revocation proof.
+    It merely constrains a root-initiated emergency rollback to the durable,
+    already-installed predecessor, with a consistent anti-rollback high-water
+    mark. Automatic health-failure recovery has its own separate transaction.
+    """
+    # The symlink may already point at the requested rollback target after a
+    # power loss. The durably committed active_release_id still identifies the
+    # source release until health verification and activation commit succeed.
+    active = state.get("active_release_id")
+    if not isinstance(active, str) or current is None:
+        raise TransactionError("Manuel rollback kræver en konsistent aktiv release")
+    active = _validate_release_id(active)
+    if not target or target == active:
+        raise TransactionError("Der findes ingen anden installeret release at rulle tilbage til")
+    target = _validate_release_id(str(target))
+    if target != state.get("previous_release_id"):
+        raise TransactionError("Manuel rollback kræver præcis den umiddelbart forrige release")
+    if target not in (state.get("installed") or {}):
+        raise TransactionError("Rollbackmålet er ikke installeret")
+
+    installed = state.get("installed")
+    if not isinstance(installed, dict):
+        raise TransactionError("Release state mangler installerede releases")
+    for release_id in (active, target):
+        record = installed.get(release_id)
+        if not isinstance(record, dict):
+            raise TransactionError("Manuel rollback kræver to installerede releases")
+        sequence = int(release_id.rsplit("-seq-", 1)[1])
+        if type(record.get("release_sequence")) is not int or record["release_sequence"] != sequence:
+            raise TransactionError("Installeret release-sekvens matcher ikke release-identiteten")
+
+    current_sequence = int(active.rsplit("-seq-", 1)[1])
+    target_sequence = int(target.rsplit("-seq-", 1)[1])
+    if target_sequence >= current_sequence:
+        raise TransactionError("Manuel rollback må kun gå til en lavere release-sekvens")
+    highest = state.get("highest_release_sequence")
+    if type(highest) is not int or highest < current_sequence:
+        raise TransactionError("Anti-rollback high-water mark er inkonsistent")
+
+    intent = state.get("activation_intent")
+    if intent is None:
+        if current != active:
+            raise TransactionError("Active-symlink matcher ikke den durable aktive release")
+    else:
+        if (not isinstance(intent, dict)
+                or intent.get("release_id") != target
+                or intent.get("previous_release_id") != active
+                or current not in {active, target}):
+            raise TransactionError("En anden activation er allerede committed lokalt")
+    return target
+
+
 def rollback_release(
     *,
     expected_release_approval_reference: str,
@@ -1451,23 +1511,58 @@ def rollback_release(
     with TransactionLock(layout):
         state = load_state(layout)
         current = _read_active_release_id(layout)
-        target = _validate_release_id(release_id) if release_id else state.get("previous_release_id")
-        if not target or target == current:
-            raise TransactionError("Der findes ingen anden installeret release at rulle tilbage til")
-        if target not in (state.get("installed") or {}):
-            raise TransactionError("Rollbackmålet er ikke installeret")
+        target = _validate_manual_rollback_target(
+            state,
+            current=current,
+            target=release_id if release_id is not None else state.get("previous_release_id"),
+        )
         approval = _canonical_activation_approval(
             layout,
             state,
             target,
             expected_approval_reference=expected_release_approval_reference,
         )
+        active = state["active_release_id"]
+        intent = state.get("activation_intent")
+        if intent is not None:
+            # Resume only the same audited manual request. An unrelated
+            # in-flight activation must never be relabeled as an operator
+            # rollback by supplying the same release ID.
+            if intent.get("release_approval_reference") != approval:
+                raise TransactionError("Rollback-intent matcher ikke release-godkendelsen")
+            history = state["history"]
+            anchors = [index for index, event in enumerate(history)
+                       if isinstance(event, dict)
+                       and event.get("event") == "activation_intent_committed"
+                       and event.get("release_id") == target
+                       and event.get("previous_release_id") == active
+                       and event.get("release_approval_reference") == approval]
+            anchor = anchors[-1] if anchors else 0
+            request = history[anchor - 1] if anchor else None
+            if (not isinstance(request, dict)
+                    or request.get("event") != "manual_rollback_requested"
+                    or request.get("from_release_id") != active
+                    or request.get("to_release_id") != target
+                    or request.get("release_approval_reference") != approval
+                    or request.get("reason") != reason):
+                raise TransactionError("Genoptagelse kræver den oprindelige rollback-begrundelse")
+        else:
+            # Audit the authorized request BEFORE disabling the running system.
+            _append_history(
+                state,
+                "manual_rollback_requested",
+                from_release_id=active,
+                to_release_id=target,
+                reason=reason,
+                release_approval_reference=approval,
+            )
+            save_state(layout, state)
         result = _activate_release(layout, state, target, approval)
         state = load_state(layout)
         _append_history(
             state,
             "manual_rollback",
-            from_release_id=current,
+            from_release_id=active,
             to_release_id=target,
             reason=reason,
             release_approval_reference=approval,
