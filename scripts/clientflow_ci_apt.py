@@ -25,6 +25,20 @@ MAX_IDLE_SECONDS = 240
 MAX_UPDATE_SECONDS = 420
 MAX_INSTALL_SECONDS = 900
 
+# GitHub's Ubuntu mirror+file source prefers azure.archive.ubuntu.com and
+# falls back to archive.ubuntu.com/security.ubuntu.com. Default same-mirror
+# retries can consume the entire CI job when an HTTP connection stalls.
+# Bound each transport attempt and allow the signed APT mirror list to fail
+# over; do not change package sources, signatures, or production APT settings.
+CI_APT_NETWORK_OPTIONS = (
+    "-o",
+    "Acquire::Retries=0",
+    "-o",
+    "Acquire::http::Timeout=20",
+    "-o",
+    "Acquire::https::Timeout=20",
+)
+
 
 def _terminate_group(proc: subprocess.Popen[bytes]) -> None:
     """Kill the whole apt/dpkg process group, including any forked children."""
@@ -145,8 +159,11 @@ def run_ci_apt(command: list[str], *, timeout: int = 600) -> str:
     if command != update and not is_install:
         raise CIAptCommandError("CI_APT_REJECTED noncanonical or unsupported command")
     limit = min(timeout, MAX_INSTALL_SECONDS if is_install else MAX_UPDATE_SECONDS)
+    # Validate the exact production-shaped command *before* adding CI-only
+    # transport settings.  Keep the host's signed repository and mirror list.
+    bounded_command = [*command[:3], *CI_APT_NETWORK_OPTIONS, *command[3:]]
     try:
-        return stream_command(command, timeout=limit)
+        return stream_command(bounded_command, timeout=limit)
     except (CIAptCommandError, OSError, subprocess.SubprocessError) as exc:
         print(f"CI_APT_FAILED: {exc}", flush=True)
         print_apt_diagnostics()

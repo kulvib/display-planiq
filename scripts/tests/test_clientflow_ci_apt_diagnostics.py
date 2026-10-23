@@ -69,7 +69,13 @@ def test_ci_apt_adapter_requires_canonical_apt_executable_and_command(monkeypatc
     install = ["/usr/bin/apt-get", "-o", "DPkg::Lock::Timeout=120", "-y", "--no-install-recommends", "install", "rfkill"]
     assert ci_apt.run_ci_apt(update, timeout=600) == "ok"
     assert ci_apt.run_ci_apt(install, timeout=1200) == "ok"
-    assert seen == [(update, ci_apt.MAX_UPDATE_SECONDS), (install, ci_apt.MAX_INSTALL_SECONDS)]
+    def with_network_bounds(command):
+        return [*command[:3], *ci_apt.CI_APT_NETWORK_OPTIONS, *command[3:]]
+
+    assert seen == [
+        (with_network_bounds(update), ci_apt.MAX_UPDATE_SECONDS),
+        (with_network_bounds(install), ci_apt.MAX_INSTALL_SECONDS),
+    ]
 
 
 def test_ci_apt_failure_snapshots_diagnostics_and_never_succeeds(monkeypatch, capsys):
@@ -152,3 +158,47 @@ def test_ci_apt_adapter_rejects_unapproved_options_or_package_syntax(monkeypatch
     ):
         with pytest.raises(ci_apt.CIAptCommandError, match="CI_APT_REJECTED"):
             ci_apt.run_ci_apt(command)
+
+
+def test_ci_apt_transport_bounds_fail_over_without_weakening_trust(monkeypatch):
+    """Transport failover must retain APT's signature enforcement and full install."""
+    commands = []
+    monkeypatch.setattr(ci_apt, "stream_command", lambda command, *, timeout: commands.append(command) or "ok")
+    original = [
+        "/usr/bin/apt-get",
+        "-o",
+        "DPkg::Lock::Timeout=120",
+        "-y",
+        "--no-install-recommends",
+        "install",
+        "rfkill",
+        "gstreamer1.0-plugins-good",
+    ]
+    assert ci_apt.run_ci_apt(original, timeout=1200) == "ok"
+    assert len(commands) == 1
+    bounded = commands[0]
+    assert bounded == [*original[:3], *ci_apt.CI_APT_NETWORK_OPTIONS, *original[3:]]
+    assert "Acquire::Retries=0" in bounded
+    assert "Acquire::http::Timeout=20" in bounded
+    assert "Acquire::https::Timeout=20" in bounded
+    assert bounded[-2:] == ["rfkill", "gstreamer1.0-plugins-good"]
+    for forbidden in (
+        "--allow-unauthenticated",
+        "--allow-insecure-repositories",
+        "APT::Get::AllowUnauthenticated=true",
+        "Acquire::AllowInsecureRepositories=true",
+        "Acquire::Check-Valid-Until=false",
+        "APT::Get::Fix-Missing=true",
+    ):
+        assert forbidden not in bounded
+    # The canonical input is untouched and remains under the strict whitelist.
+    assert original == [
+        "/usr/bin/apt-get",
+        "-o",
+        "DPkg::Lock::Timeout=120",
+        "-y",
+        "--no-install-recommends",
+        "install",
+        "rfkill",
+        "gstreamer1.0-plugins-good",
+    ]
