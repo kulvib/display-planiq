@@ -275,7 +275,9 @@ jobs:
     needs: client-host-ubuntu-2604-scope
     if: ${{ needs.client-host-ubuntu-2604-scope.outputs.platform_required == 'true' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    timeout-minutes: 25
+    # APT diagnostics must finish before the job ceiling; the CI-only runner
+    # fails closed on a hard deadline or prolonged silence.
 
     steps:
       - name: Checkout repository

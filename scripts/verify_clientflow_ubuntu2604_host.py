@@ -22,6 +22,7 @@ sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
 from clientflow_release.runtime_prepare import CLIENTFLOW_ENTRYPOINTS  # noqa: E402
 from clientflow_release.systemd_contract import validate_release_systemd_contract  # noqa: E402
 from clientflow_release.transaction import Layout, _apply_definitions  # noqa: E402
+from clientflow_ci_apt import run_ci_apt  # noqa: E402
 
 
 class HostGateError(RuntimeError):
@@ -213,6 +214,16 @@ def _platform_capabilities(repo: Path) -> dict[str, object]:
         raise HostGateError("--install-platform-requirements skal køres som root på ephemeral CI host")
     module = _load_platform_prepare(repo)
     packages = module._requirements()
+    # Use a CI-only streaming APT adapter; the installed client platform
+    # preparation code and its package/capability contract are unchanged.
+    original_run = module._run
+
+    def ci_run(command: list[str], *, timeout: int = 600) -> str:
+        if command and command[0] == "/usr/bin/apt-get":
+            return run_ci_apt(command, timeout=timeout)
+        return original_run(command, timeout=timeout)
+
+    module._run = ci_run
     module._ensure_packages(packages)
     module._verify_capabilities()
     return {"platform_packages": len(packages), "capabilities": "ok"}
