@@ -173,10 +173,15 @@ def test_migration_and_schema_contract_include_impersonation_refresh_binding():
 
     assert 'revision = "20260929_57a_impersonation"' in migration
     assert 'down_revision = "20260922_56a_calendar_rev"' in migration
-    assert 'EXPECTED_HEAD_REVISION = "20261023_59a_rollback"' in contract
+    assert 'EXPECTED_HEAD_REVISION = "20261024_60a_incidents"' in contract
     assert 'session_id' in migration
     assert 'ix_refresh_tokens_session_id' in contract
     assert 'REVIEWED_IMPERSONATION_REVISION = "20260929_57a_impersonation"' in runner
     assert 'REVIEWED_MAINTENANCE_REVISION = "20260929_58a_maintenance"' in runner
     assert 'maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION' in runner
-    assert 'head != REVIEWED_MAINTENANCE_REVISION' in runner
+    # Step 58A remains the reviewed historical anchor, but the current head
+    # has two independent, source-pinned successors: 59A -> 60A.
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD != REVIEWED_MAINTENANCE_REVISION' in runner
+    assert 'head != REVIEWED_INCIDENT_60A_REVISION' in runner
+    assert 'rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION' in runner
+    assert 'head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION' in runner

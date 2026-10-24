@@ -24,7 +24,7 @@ def test_56a_migration_is_additive_and_is_current_head() -> None:
     assert 'op.add_column(' in migration and '"updated_at"' in migration
     assert 'UPDATE calendarmarking SET updated_at = CURRENT_TIMESTAMP' in migration
     assert 'op.alter_column("calendarmarking", "updated_at", nullable=False)' in migration
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261023_59a_rollback"'
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261024_60a_incidents"'
     assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260929_58a_maintenance"' in runner
     assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260929_58a_maintenance"' in runner
     assert 'REVIEWED_CALENDAR_DELIVERY_REVISION = "20260922_56a_calendar_rev"' in runner

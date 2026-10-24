@@ -114,6 +114,21 @@ class BaselineAdoptionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Step 59A-constraints"):
                 runner._baseline_schema_contract()
 
+    def test_60a_successor_requires_frozen_migration_and_exact_tables(self) -> None:
+        import copy
+
+        # The new head must be the exact reviewed migration; never let
+        # legacy reconciliation adopt unreviewed migration bytes or a schema
+        # contract missing even one of the incident tables.
+        with patch.object(runner, "REVIEWED_INCIDENT_60A_SOURCE_SHA256", "0" * 64):
+            with self.assertRaisesRegex(RuntimeError, "60A-udvidelsen"):
+                runner._baseline_schema_contract()
+        incomplete_columns = copy.deepcopy(runner.EXPECTED_COLUMNS)
+        incomplete_columns.pop("operational_incident_event")
+        with patch.object(runner, "EXPECTED_COLUMNS", incomplete_columns):
+            with self.assertRaisesRegex(RuntimeError, "Step 60A-objekter"):
+                runner._baseline_schema_contract()
+
     def test_empty_database_flag_runs_upgrade_then_exact_head_verification(self) -> None:
         calls: list[str] = []
         states = iter([
@@ -331,6 +346,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_IMPERSONATION_REVISION)
                 if revision == runner.REVIEWED_ROLLBACK_59A_REVISION:
                     return Revision(runner.REVIEWED_MAINTENANCE_REVISION)
+                if revision == runner.REVIEWED_INCIDENT_60A_REVISION:
+                    return Revision(runner.REVIEWED_ROLLBACK_59A_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         def verify(_connection, **kwargs):
@@ -383,6 +400,7 @@ class BaselineAdoptionTests(unittest.TestCase):
         self.assertEqual(after, runner.EXPECTED_HEAD_REVISION)
         self.assertEqual(counts, {"user": 1})
         self.assertFalse(adopted)
+        self.assertEqual(runner.EXPECTED_HEAD_REVISION, runner.REVIEWED_INCIDENT_60A_REVISION)
         self.assertEqual(
             calls,
             [
@@ -750,6 +768,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_IMPERSONATION_REVISION)
                 if revision == runner.REVIEWED_ROLLBACK_59A_REVISION:
                     return Revision(runner.REVIEWED_MAINTENANCE_REVISION)
+                if revision == runner.REVIEWED_INCIDENT_60A_REVISION:
+                    return Revision(runner.REVIEWED_ROLLBACK_59A_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         with patch.object(

@@ -13,7 +13,7 @@ def test_step51_follows_canonical_foundations_and_remains_in_reviewed_head_chain
     runner = read("scripts/run_migrations.py")
     assert 'revision = "20260819_51a_update_control"' in migration
     assert 'down_revision = "20260819_50a_canonical"' in migration
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261023_59a_rollback"'
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261024_60a_incidents"'
     assert 'REVIEWED_CLIENTFLOW_DEPLOYMENT_REVISION = "20260819_51a_update_control"' in runner
     assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260929_58a_maintenance"' in runner
 

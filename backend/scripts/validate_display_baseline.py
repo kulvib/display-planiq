@@ -40,6 +40,7 @@ import service1.remote_desktop_session_models  # noqa: E402,F401 - registers rev
 import service1.client_activity_models  # noqa: E402,F401 - registers shared activity leases
 import service1.enrollment_models  # noqa: E402,F401 - registers canonical enrollment persistence
 import service1.clientflow_update_models  # noqa: E402,F401 - registers stable update/deployment authority
+import service1.incident_models  # noqa: E402,F401 - registers Step 60A operational incident tables
 METADATA = SQLModel.metadata
 
 MIGRATION = ROOT / "migrations" / "versions" / '20260712_30d_display_base_frozen_display_baseline.py'

@@ -40,7 +40,7 @@ def test_maintenance_model_is_singleton_and_migration_advances_schema_head():
     runner = open("backend/scripts/run_migrations.py", encoding="utf-8").read()
     assert 'revision = "20260929_58a_maintenance"' in migration
     assert 'down_revision = "20260929_57a_impersonation"' in migration
-    assert 'EXPECTED_HEAD_REVISION = "20261023_59a_rollback"' in contract
+    assert 'EXPECTED_HEAD_REVISION = "20261024_60a_incidents"' in contract
     assert 'REVIEWED_MAINTENANCE_REVISION = "20260929_58a_maintenance"' in runner
     assert 'maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION' in runner
 
