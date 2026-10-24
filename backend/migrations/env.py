@@ -12,6 +12,7 @@ import service1.client_domain_models  # noqa: F401 - registers shared ClientFlow
 import service1.terminal_v2_models  # noqa: F401 - registers adopted Terminal-v2 tables in metadata
 import service1.remote_desktop_v2_models  # noqa: F401 - registers isolated Remote Desktop tables in metadata
 import service1.client_activity_models  # noqa: F401 - registers shared activity leases
+import service1.incident_models  # noqa: F401 - registers operational incident history
 
 config = context.config
 if config.config_file_name is not None:

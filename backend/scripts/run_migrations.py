@@ -137,6 +137,46 @@ ROLLBACK_59A_INDEXES = frozenset({
     "ix_clientflow_rollback_event_client",
 })
 
+# Step 60A is strictly additive. Its reviewed bytes and all 59A bytes are
+# frozen independently; historical baseline/legacy comparisons reverse 60A
+# before stripping 59A. A new head is never silently adopted.
+REVIEWED_INCIDENT_60A_REVISION = "20261024_60a_incidents"
+REVIEWED_INCIDENT_60A_SOURCE_SHA256 = "4f5f0c0d1aef975bb63a35fca541785bc210e69425b817ad2d920998cde8c54e"
+INCIDENT_60A_TABLES = frozenset({"operational_incident", "operational_incident_event"})
+INCIDENT_60A_CONSTRAINTS = frozenset({
+    "operational_incident_pkey", "operational_incident_client_id_fkey",
+    "ck_operational_incident_domain", "ck_operational_incident_severity",
+    "operational_incident_event_pkey", "operational_incident_event_incident_id_fkey",
+    "ck_operational_incident_event_kind",
+})
+INCIDENT_60A_INDEXES = frozenset({
+    "operational_incident_pkey", "ix_operational_incident_started",
+    "ix_operational_incident_client", "ix_operational_incident_active",
+    "operational_incident_event_pkey", "ix_operational_incident_event_timeline",
+})
+
+
+def _require_reviewed_60a_extension() -> None:
+    source = ROOT / "migrations/versions/20261024_60a_operational_incidents.py"
+    try:
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError("Reviewed 60A-migration mangler") from exc
+    if EXPECTED_HEAD_REVISION != REVIEWED_INCIDENT_60A_REVISION or digest != REVIEWED_INCIDENT_60A_SOURCE_SHA256:
+        raise RuntimeError("60A-udvidelsen er ikke gennemgået for den aktuelle Alembic-kæde")
+
+
+def _without_incident_60a_schema(columns, constraints, indexes):
+    _require_reviewed_60a_extension()
+    if not INCIDENT_60A_TABLES <= columns.keys() or not INCIDENT_60A_CONSTRAINTS <= constraints.keys() or not INCIDENT_60A_INDEXES <= indexes.keys():
+        raise RuntimeError("Head-kontrakten mangler Step 60A-objekter")
+    return (
+        {name: dict(value) for name, value in columns.items() if name not in INCIDENT_60A_TABLES},
+        {name: value for name, value in constraints.items() if name not in INCIDENT_60A_CONSTRAINTS},
+        {name: value for name, value in indexes.items() if name not in INCIDENT_60A_INDEXES},
+    )
+
+
 
 def _require_reviewed_59a_extension() -> None:
     """Accept only the precisely frozen 59A addition to the reviewed 58A schema."""
@@ -146,7 +186,7 @@ def _require_reviewed_59a_extension() -> None:
     except OSError as exc:
         raise RuntimeError("Reviewed 59A-migration mangler") from exc
     if (
-        EXPECTED_HEAD_REVISION != REVIEWED_ROLLBACK_59A_REVISION
+        EXPECTED_HEAD_REVISION != REVIEWED_INCIDENT_60A_REVISION
         or digest != REVIEWED_ROLLBACK_59A_SOURCE_SHA256
     ):
         raise RuntimeError("59A-udvidelsen er ikke gennemgået for den aktuelle Alembic-kæde")
@@ -159,6 +199,7 @@ def _without_rollback_59a_schema(
 ) -> tuple[dict[str, dict], dict[str, str], dict[str, str]]:
     """Reverse exactly 59A's two new tables for frozen 58A/39A comparisons."""
     _require_reviewed_59a_extension()
+    columns, constraints, indexes = _without_incident_60a_schema(columns, constraints, indexes)
     if not ROLLBACK_59A_TABLES <= columns.keys():
         raise RuntimeError("Head-kontrakten mangler Step 59A-tabeller")
     if not ROLLBACK_59A_CONSTRAINTS <= constraints.keys():
@@ -992,6 +1033,8 @@ def _alembic_config(connection) -> tuple[Config, ScriptDirectory, str]:
 
 def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bool]:
     cfg, script, head = _alembic_config(connection)
+    _require_reviewed_59a_extension()
+    _require_reviewed_60a_extension()
     current_heads = MigrationContext.configure(connection).get_current_heads()
     if len(current_heads) > 1:
         raise RuntimeError(f"Databasen har flere Alembic-heads: {current_heads}")
@@ -1039,7 +1082,8 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     "Legacy-revision reconciliation er ikke gennemgået for dette repo-head"
                 )
             _require_reviewed_59a_extension()
-            if head != REVIEWED_ROLLBACK_59A_REVISION:
+            _require_reviewed_60a_extension()
+            if head != REVIEWED_INCIDENT_60A_REVISION:
                 raise RuntimeError(
                     "Legacy-revision reconciliation er ikke gennemgået for dette repo-head"
                 )
@@ -1066,6 +1110,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             impersonation_revision = script.get_revision(REVIEWED_IMPERSONATION_REVISION)
             maintenance_revision = script.get_revision(REVIEWED_MAINTENANCE_REVISION)
             head_revision = script.get_revision(head)
+            rollback_revision = script.get_revision(REVIEWED_ROLLBACK_59A_REVISION)
             if any(
                 item is None
                 for item in (
@@ -1075,7 +1120,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
                     clientflow_update_auth_revision, client_liveness_revision, display_authority_revision,
                     system_authority_revision, display_operational_parity_revision, enrollment_binding_revision,
-                    calendar_delivery_revision, impersonation_revision, maintenance_revision, head_revision,
+                    calendar_delivery_revision, impersonation_revision, maintenance_revision, rollback_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -1101,10 +1146,8 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or calendar_delivery_revision.down_revision != REVIEWED_ENROLLMENT_BINDING_REVISION
                 or impersonation_revision.down_revision != REVIEWED_CALENDAR_DELIVERY_REVISION
                 or maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION
-                or (
-                    head != REVIEWED_MAINTENANCE_REVISION
-                    and head_revision.down_revision != REVIEWED_MAINTENANCE_REVISION
-                )
+                or rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION
+                or head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION
             ):
                 raise RuntimeError(
                     "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A -> 55A -> 56A -> 57A -> 58A-kæde"

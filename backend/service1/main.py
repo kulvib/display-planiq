@@ -37,6 +37,7 @@ from .routers import clientflow_deployments
 from .routers import clientflow_update
 from .routers import websocket_tickets
 from .routers import maintenance
+from .routers import operational_incidents
 from .routers.remote_desktop_auth import router as remote_desktop_auth_router
 from .routers.remote_desktop_v2 import router as remote_desktop_v2_router
 from .routers.terminal import agent_router as terminal_agent_router, router as terminal_router
@@ -57,6 +58,7 @@ from .db import (
     database_runtime_topology,
 )
 from .models import Client, RefreshToken, User
+from .incident_service import scan_incidents_once, prune_resolved_incidents
 from .branding import PRODUCT_NAME
 from .schema_readiness import check_schema_readiness
 from .release_identity import ReleaseIdentityUnavailable, build_release_identity
@@ -261,6 +263,38 @@ async def season_maintenance_loop() -> None:
             log_safe_exception(logger, exc, event="season_maintenance_loop_failed")
 
 
+def reconcile_operational_incidents_once(*, prune: bool = False) -> None:
+    """Background reconciliation; DB writes are additive and transaction-scoped."""
+    with Session(engine) as session:
+        try:
+            summary = scan_incidents_once(session)
+            if prune and not summary["locked"]:
+                prune_resolved_incidents(session)
+            session.commit()
+            if summary["opened"] or summary["recovered"]:
+                logger.info(
+                    "operational_incident_transitions opened=%s recovered=%s",
+                    summary["opened"], summary["recovered"],
+                )
+        except Exception as exc:
+            session.rollback()
+            log_safe_exception(logger, exc, event="operational_incident_scan_failed")
+
+
+async def operational_incident_loop() -> None:
+    """One batch per minute, never another poll to any ClientFlow agent."""
+    scans = 0
+    while True:
+        try:
+            await asyncio.sleep(60)
+            scans += 1
+            await asyncio.to_thread(reconcile_operational_incidents_once, prune=(scans == 1 or scans % 1440 == 0))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log_safe_exception(logger, exc, event="operational_incident_loop_failed")
+
+
 async def refresh_token_cleanup_loop() -> None:
     """Kør refresh-token-oprydning periodisk uden at blokere event loopet."""
     while True:
@@ -294,12 +328,14 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(maintain_seasons_once)
     cleanup_task = asyncio.create_task(refresh_token_cleanup_loop())
     season_task = asyncio.create_task(season_maintenance_loop())
+    incident_task = asyncio.create_task(operational_incident_loop())
     try:
         yield
     finally:
         cleanup_task.cancel()
         season_task.cancel()
-        for task in (cleanup_task, season_task):
+        incident_task.cancel()
+        for task in (cleanup_task, season_task, incident_task):
             try:
                 await task
             except asyncio.CancelledError:
@@ -640,6 +676,7 @@ app.include_router(clientflow_rollbacks.router, prefix="/api")
 app.include_router(clientflow_update.router, prefix="/api")
 app.include_router(websocket_tickets.router, prefix="/api")
 app.include_router(maintenance.router, prefix="/api")
+app.include_router(operational_incidents.router, prefix="/api")
 app.include_router(livestream_media.router, prefix="/api")
 app.include_router(client_auth_compat_router, prefix="/api")
 app.include_router(shared_domain_router, prefix="/api")

@@ -1195,3 +1195,50 @@ EXPECTED_INDEXES.update({
 # Frozen SHA-256 of the entire expected schema, recalculated from the exact
 # canonical contract payload by the offline schema contract build step.
 EXPECTED_FINGERPRINT = "8d181a41c47ed0a53fd978fd294b7b314d57e1fc2b04f94b78e2d0d7b0e4bc55"
+
+# Step 60A: append-only, redacted operational incident episodes and transitions.
+# The Step 59A contract above and all historical frozen contracts remain intact.
+EXPECTED_HEAD_REVISION = "20261024_60a_incidents"
+EXPECTED_TABLES = set(EXPECTED_TABLES)
+EXPECTED_TABLES.update(("operational_incident", "operational_incident_event"))
+EXPECTED_COLUMNS["operational_incident"] = {
+    "id": _rbv(36),
+    "client_id": _rbi(),
+    "domain": _rbv(16),
+    "code": _rbv(96),
+    "title": _rbv(160),
+    "severity": _rbv(12),
+    "started_at": _rbts(),
+    "last_observed_at": _rbts(),
+    "resolved_at": _rbts(True),
+    "first_boot_id": _rbv(128, nullable=True),
+    "last_boot_id": _rbv(128, nullable=True),
+    "resolution_evidence": _rbv(32, nullable=True),
+}
+EXPECTED_COLUMNS["operational_incident_event"] = {
+    "id": _rbv(36),
+    "incident_id": _rbv(36),
+    "kind": _rbv(24),
+    "observed_at": _rbts(),
+    "boot_id": _rbv(128, nullable=True),
+}
+EXPECTED_CONSTRAINTS.update({
+    "operational_incident_pkey": "PRIMARY KEY (id)",
+    "operational_incident_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES client(id) ON DELETE CASCADE",
+    "ck_operational_incident_domain": "CHECK (domain::text = ANY (ARRAY['status'::character varying::text, 'display'::character varying::text, 'system'::character varying::text]))",
+    "ck_operational_incident_severity": "CHECK (severity::text = ANY (ARRAY['error'::character varying::text, 'critical'::character varying::text]))",
+    "operational_incident_event_pkey": "PRIMARY KEY (id)",
+    "operational_incident_event_incident_id_fkey": "FOREIGN KEY (incident_id) REFERENCES operational_incident(id) ON DELETE CASCADE",
+    "ck_operational_incident_event_kind": "CHECK (kind::text = ANY (ARRAY['opened'::character varying::text, 'reboot_observed'::character varying::text, 'recovered'::character varying::text]))",
+})
+EXPECTED_INDEXES.update({
+    "operational_incident_pkey": "CREATE UNIQUE INDEX operational_incident_pkey ON public.operational_incident USING btree (id)",
+    "ix_operational_incident_started": "CREATE INDEX ix_operational_incident_started ON public.operational_incident USING btree (started_at)",
+    "ix_operational_incident_client": "CREATE INDEX ix_operational_incident_client ON public.operational_incident USING btree (client_id, started_at)",
+    "ix_operational_incident_active": "CREATE UNIQUE INDEX ix_operational_incident_active ON public.operational_incident USING btree (client_id, domain, code) WHERE (resolved_at IS NULL)",
+    "operational_incident_event_pkey": "CREATE UNIQUE INDEX operational_incident_event_pkey ON public.operational_incident_event USING btree (id)",
+    "ix_operational_incident_event_timeline": "CREATE INDEX ix_operational_incident_event_timeline ON public.operational_incident_event USING btree (incident_id, observed_at)",
+})
+# Exact SHA-256 over the canonical JSON contract, recomputed when the 60A
+# reviewed migration and this append-only extension are changed.
+EXPECTED_FINGERPRINT = "d002b8e6abb91552cc66aeb0355e3954531e549a356c6f553671684d379d7df3"

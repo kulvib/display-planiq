@@ -14,6 +14,7 @@ import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import SecurityIcon from "@mui/icons-material/Security";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import HistoryIcon from "@mui/icons-material/History";
+import TroubleshootIcon from "@mui/icons-material/Troubleshoot";
 import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 import ConstructionIcon from "@mui/icons-material/Construction";
 import GridViewIcon from "@mui/icons-material/GridView";
@@ -32,6 +33,7 @@ import {
 } from "../../utils/layoutStyles";
 
 const LivestreamOverview = React.lazy(() => import("./LivestreamOverview"));
+const OperationalIncidents = React.lazy(() => import("./OperationalIncidents"));
 
 const DEFAULT_SECTION = "organisation";
 
@@ -51,6 +53,13 @@ const SECTIONS = [
     label: "Audit-log",
     icon: <HistoryIcon fontSize="small" />,
     superadminOnly: true,
+  },
+  {
+    key: "incidents",
+    label: "Driftsfejl",
+    icon: <TroubleshootIcon fontSize="small" />,
+    superadminOnly: true,
+    viewerAllowed: false,
   },
   {
     key: "installation",
@@ -271,6 +280,15 @@ export default function AdminPage() {
             <Alert severity="error">
               Kun superadministratorer og Se adgang kan se audit-log.
             </Alert>
+          ))}
+
+        {activeSection === "incidents" &&
+          (isSuperadmin ? (
+            <React.Suspense fallback={<Typography>Indlæser fejlhistorik …</Typography>}>
+              <OperationalIncidents />
+            </React.Suspense>
+          ) : (
+            <Alert severity="error">Kun superadministratorer kan se driftsfejl.</Alert>
           ))}
 
         {activeSection === "installation" &&
