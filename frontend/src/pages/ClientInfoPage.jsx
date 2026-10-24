@@ -71,7 +71,7 @@ import { clientMatchesSearch, organizationNamesById } from "../utils/clientSearc
 import { clientListPollDelay } from "../utils/controlRoomPolling.mjs";
 import { receiveBrowserCountdown, formatBrowserCountdownStatus } from "./clientdetailspage/browserCountdown.mjs";
 import { calendarRebootView } from "./clientdetailspage/calendarRebootStatus.mjs";
-import { browserFullscreenLabel } from "../utils/browserFullscreen.mjs";
+import { visibleBrowserFullscreen } from "../utils/browserFullscreen.mjs";
 import { sameClientHealthIssues } from "../utils/clientHealthIssues.mjs";
 import { browserStatusTone } from "../utils/controlRoomPresentation.mjs";
 
@@ -557,7 +557,7 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
     : browserTone === "success" && runtimeState.color !== "warning" ? "success"
     : "neutral";
   const label = `${onlineText} / ${stateText} / ${browserStatus}`;
-  const fullscreenLabel = browserFullscreenLabel(isOnline ? client?.browser_fullscreen : "unknown");
+  const fullscreenLabel = visibleBrowserFullscreen(isOnline, client?.chrome_running, client?.browser_fullscreen);
   const fullscreenChipLabel = fullscreenLabel === "Ukendt" ? "Fuldskærm: Ukendt" : fullscreenLabel;
 
   return (
@@ -591,12 +591,14 @@ const ClientStatusCell = memo(function ClientStatusCell({ isOnline, client }) {
           })}
         />
       </Tooltip>
-      <Chip
-        size="small"
-        label={fullscreenChipLabel}
-        title={`Kiosk browser fuldskærm: ${fullscreenLabel}`}
-        sx={compactDarkChipSx(fullscreenLabel === "Fuldskærm" ? "success" : fullscreenLabel === "Ikke fuldskærm" ? "warning" : "info")}
-      />
+      {fullscreenLabel !== null && (
+        <Chip
+          size="small"
+          label={fullscreenChipLabel}
+          title={`Kiosk browser fuldskærm: ${fullscreenLabel}`}
+          sx={compactDarkChipSx(fullscreenLabel === "Fuldskærm" ? "success" : fullscreenLabel === "Ikke fuldskærm" ? "warning" : "info")}
+        />
+      )}
     </Box>
   );
 });

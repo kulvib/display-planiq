@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND } from '../src/pages/clientdetailspage/terminal/wifiSupportCommands.mjs';
+import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND, WIFI_CHECKPOINT_TEST_COMMAND } from '../src/pages/clientdetailspage/terminal/wifiSupportCommands.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const dialog = readFileSync(path.join(HERE, '../src/pages/clientdetailspage/terminal/ClientTerminalDialog.jsx'), 'utf8');
@@ -68,4 +68,15 @@ test('all 15 original specialized support commands remain available', () => {
     'Livestream logs', 'Terminal logs', 'Remote Desktop logs',
   ];
   for (const label of labels) assert.ok(dialog.includes(`label: "${label}"`), `Missing existing command: ${label}`);
+});
+
+test('safe remote WiFi test requires NetworkManager checkpoint and a human confirmation', () => {
+  requireValidScript(WIFI_CHECKPOINT_TEST_COMMAND, 'CLIENTFLOW_WIFI_CHECKPOINT');
+  assert.match(dialog, /label: "Test gemt WiFi \(auto-rollback\)".*adminOnly: true/);
+  assert.match(WIFI_CHECKPOINT_TEST_COMMAND, /device checkpoint --timeout 120/);
+  assert.match(WIFI_CHECKPOINT_TEST_COMMAND, /nmcli connection up uuid "\$uuid" ifname "\$iface" <\/dev\/tty/);
+  assert.match(WIFI_CHECKPOINT_TEST_COMMAND, /autoconnect.*'no'/);
+  assert.match(WIFI_CHECKPOINT_TEST_COMMAND, /approval.*'TEST'/);
+  assert.doesNotMatch(WIFI_CHECKPOINT_TEST_COMMAND, /(?:show-password|show-secrets|connection modify|nmcli connection delete|nmcli radio wifi)/);
+  assert.doesNotMatch(WIFI_CHECKPOINT_TEST_COMMAND, /--timeout 0/);
 });

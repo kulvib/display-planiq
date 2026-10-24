@@ -167,3 +167,58 @@ installed=0
 printf '%s\\n' 'WIFI_PROFILE_STAGED=PASS' "PROFILE_UUID=$uuid" 'AUTOCONNECT=no' 'ACTIVE_CONNECTION_UNCHANGED=yes'
 echo 'WiFi er IKKE aktiveret. Planlæg omkobling med rollback før netværksskift.'
 CLIENTFLOW_WIFI_STAGE`;
+
+
+// Explicit opt-in connectivity test. NetworkManager owns the rollback timer;
+// the terminal connection is not needed for rollback if the uplink disappears.
+export const WIFI_CHECKPOINT_TEST_COMMAND = `cat <<'CLIENTFLOW_WIFI_CHECKPOINT' | sudo bash
+set -euo pipefail
+set +x
+export LC_ALL=C
+
+echo '=== ClientFlow: WiFi-test med automatisk rollback ==='
+echo 'Kræver en allerede gemt ClientFlow WiFi-profil og fysisk fallback ved første test.'
+echo 'NetworkManager gendanner netværket efter 120 sekunder, medmindre du skriver Yes.'
+if [[ "$(id -u)" -ne 0 || ! -r /dev/tty ]]; then
+  echo 'FEJL: Autoriseret Admin-terminal med interaktiv TTY kræves.'
+  exit 1
+fi
+if ! command -v nmcli >/dev/null 2>&1; then
+  echo 'FEJL: nmcli mangler.'
+  exit 1
+fi
+if ! nmcli device checkpoint --help 2>&1 | grep -q -- '--timeout'; then
+  echo 'FEJL: NetworkManager understøtter ikke den nødvendige checkpoint/rollback.'
+  exit 1
+fi
+echo '== Gemte profiler (ingen hemmeligheder) =='
+nmcli -f NAME,UUID,TYPE,DEVICE,AUTOCONNECT connection show
+read -r -p 'UUID for ClientFlow WiFi-profil: ' uuid </dev/tty
+if [[ ! "$uuid" =~ ^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$ ]]; then
+  echo 'FEJL: Ugyldig UUID.'
+  exit 1
+fi
+profile_name="$(nmcli -g connection.id connection show uuid "$uuid" 2>/dev/null)"
+profile_type="$(nmcli -g connection.type connection show uuid "$uuid" 2>/dev/null)"
+autoconnect="$(nmcli -g connection.autoconnect connection show uuid "$uuid" 2>/dev/null)"
+if [[ "$profile_name" != 'ClientFlow WiFi - '* || "$profile_type" != '802-11-wireless' || "$autoconnect" != 'no' ]]; then
+  echo 'FEJL: Kun oprettede, inaktive ClientFlow WiFi-profiler kan testes.'
+  exit 1
+fi
+read -r -p 'WiFi-interface (fx wlp2s0): ' iface </dev/tty
+if [[ -z "$iface" ]] || ! nmcli -t -f DEVICE,TYPE device status | grep -Fxq "$iface:wifi"; then
+  echo 'FEJL: Interface findes ikke eller er ikke WiFi.'
+  exit 1
+fi
+read -r -p 'Skriv TEST for at starte en netværkstest med automatisk rollback: ' approval </dev/tty
+if [[ "$approval" != 'TEST' ]]; then
+  echo 'AFBRUDT: Ingen ændringer.'
+  exit 0
+fi
+# A genuine NetworkManager checkpoint (not a shell sleep/revert promise).
+# Explicit </dev/tty is essential: the support-command wrapper consumes stdin.
+# NetworkManager itself asks for 'Yes' to commit, otherwise rolls back.
+echo 'NetworkManager spørger efter Yes, hvis forbindelsen kan bekræftes.'
+nmcli device checkpoint --timeout 120 "$iface" -- nmcli connection up uuid "$uuid" ifname "$iface" </dev/tty
+echo 'WiFi-test afsluttet. Kontroller forbindelse og routing med netværksdiagnosen.'
+CLIENTFLOW_WIFI_CHECKPOINT`;

@@ -230,3 +230,13 @@ def test_source_projection_and_gui_status_share_the_same_waiting_internet_label(
     assert 'if state == "waiting_internet":' in gui
     assert "Kiosk browser afventer internetforbindelse…" in backend
     assert "Kiosk browser afventer internetforbindelse…" in gui
+
+
+def test_kiosk_probe_origin_rejects_embedded_credentials_and_bad_ports():
+    # The fallback is an origin-only reachability check: auth-bearing URLs
+    # must never be normalized into a request carrying those credentials.
+    assert display_internet._kiosk_origin('https://user:secret@example.com/display?token=abc') is None
+    assert display_internet._kiosk_origin('https://user@example.com/') is None
+    assert display_internet._kiosk_origin('https://example.com:invalid/foo') is None
+    assert display_internet._kiosk_origin('https://[2001:db8::1]:443/x?sig=secret') == 'https://[2001:db8::1]:443/'
+    assert display_internet._kiosk_origin('https://example.org/x?q=secret#fragment') == 'https://example.org/'

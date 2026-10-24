@@ -27,10 +27,16 @@ class _NoRedirect(HTTPRedirectHandler):
 
 def _kiosk_origin(kiosk_url: str | None) -> str | None:
     parsed = urlsplit(kiosk_url or "")
-    if parsed.scheme != "https" or not parsed.hostname:
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         return None
-    # Do not probe the kiosk path: it can contain tokens or client identifiers.
-    return f"https://{parsed.netloc}/"
+    # The health probe must never forward userinfo, query, fragment or path.
+    # Use the parsed hostname and validated port, including bracketed IPv6.
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return f"https://{host}{':' + str(port) if port is not None else ''}/"
 
 
 def probe_internet(kiosk_url: str | None) -> bool:
