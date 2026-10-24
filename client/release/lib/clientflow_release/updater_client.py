@@ -8,6 +8,7 @@ from clientflow_release_format.bundle import BundleFormatError, verify_bundle_st
 
 from .constants import INSTALL_MODE_UPDATE
 from .updater_config import UpdaterConfig
+from .rollback_outbox import RollbackReceiptQueue
 from .updater_state import DeploymentSnapshot, UpdaterStateStore
 from .updater_transport import UpdaterHTTPError, UpdaterTransport
 
@@ -182,8 +183,23 @@ class StableUpdaterClient:
         access_token = self.transport.issue_access_token()
         return access_token, self.transport.get_active_deployment(access_token)
 
+    def _report_rollback_receipts(self, access_token: str) -> None:
+        queue = RollbackReceiptQueue(self.config.state_root)
+        for receipt in queue.pending():
+            try:
+                self.transport.report_rollback_result(access_token, receipt)
+            except UpdaterHTTPError as exc:
+                # 409 means Status has not yet confirmed the old runtime. The
+                # signed rollback outcome stays durable and retries next tick.
+                if exc.status != 409:
+                    raise
+                print(f"CLIENTFLOW_ROLLBACK_REPORT_PENDING event={receipt['event_id']} status=409", flush=True)
+                continue
+            queue.acknowledge(receipt)
+
     def run_once(self) -> dict[str, Any]:
         access_token, deployment = self._access_token_and_active_deployment()
+        self._report_rollback_receipts(access_token)
         if deployment is None:
             self.state.clear_inactive()
             return {"status": "idle", "deployment_id": None, "artifact": None}

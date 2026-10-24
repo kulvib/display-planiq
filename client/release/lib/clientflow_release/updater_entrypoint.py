@@ -19,6 +19,17 @@ from .updater_config import UpdaterConfig
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args == ["export-rollback-reports"]:
+        try:
+            import os
+            if os.geteuid() != 0:
+                raise RuntimeError("Root-only eksport kræver root")
+            from .rollback_outbox import export_completed_rollbacks
+            print(json.dumps(export_completed_rollbacks(), sort_keys=True))
+            return 0
+        except Exception as exc:
+            print(f"clientflow-updater: outbox export: {type(exc).__name__}", file=sys.stderr)
+            return 1
     if args:
         if args != ["repair-first-activation"]:
             print("clientflow-updater: ukendt operation", file=sys.stderr)

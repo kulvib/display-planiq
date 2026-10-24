@@ -1260,6 +1260,7 @@ def transaction_main(argv: list[str] | None = None) -> int:
     recover.add_argument("--expected-failed-release-id", required=True)
     recover.add_argument("--expected-previous-release-id", required=True)
     recover.add_argument("--expected-release-approval-reference", required=True)
+    sub.add_parser("promote-rollback-host")
     sub.add_parser("status")
     args = parser.parse_args(argv)
     if args.operation == "stage":
@@ -1284,6 +1285,10 @@ def transaction_main(argv: list[str] | None = None) -> int:
             reason=args.reason,
             permit_file=args.permit_file,
         )
+    elif args.operation == "promote-rollback-host":
+        _require_root(Layout())
+        from .transaction import promote_durable_rollback_host
+        result = promote_durable_rollback_host()
     elif args.operation == "report-rollback":
         _require_root(Layout())
         from .rollback_reporter import report_completed_rollback

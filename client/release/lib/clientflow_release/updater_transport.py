@@ -202,6 +202,22 @@ class UpdaterTransport:
             raise UpdaterTransportError("Update token bootstrap deployment skal være et objekt eller null")
         return token, True, dict(deployment) if isinstance(deployment, dict) else None
 
+    def report_rollback_result(self, access_token: str, receipt: dict[str, Any]) -> dict[str, Any]:
+        """Authenticated, bounded exact-path rollback report with DPoP auth."""
+        response = self._json_request(
+            method="POST",
+            path=f"/api/clientflow-update/rollback-permits/{receipt['permit_id']}/events",
+            access_token=access_token,
+            payload={
+                "event_id": receipt["event_id"],
+                "outcome": receipt["outcome"],
+                "occurred_at": receipt["occurred_at"],
+            },
+        )
+        if not isinstance(response, dict) or response.get("status") != receipt["outcome"]:
+            raise UpdaterTransportError("Backend kvitterede ikke det eksakte rollback-resultat")
+        return response
+
     def get_active_deployment(self, access_token: str) -> dict[str, Any] | None:
         return self._json_request(
             method="GET",

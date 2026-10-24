@@ -30,6 +30,7 @@ from .filesystem import (
 )
 from .runtime_prepare import prepare_runtime
 from .rollback_verifier import verify_for_transaction
+from clientflow_release_format.rollback_permit import SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE
 from clientflow_release_format.rollback_permit import RollbackPermitError
 
 _RELEASE_ID_RE = re.compile(r"^clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*$")
@@ -164,6 +165,7 @@ def _initial_state() -> dict[str, Any]:
         "activation_intent": None,
         "installed": {},
         "history": [],
+        "rollback_reports": {},
     }
 
 
@@ -1103,6 +1105,96 @@ def _activation_intent(
     return intent, True
 
 
+_STABLE_ROLLBACK_UNITS = (
+    "planiq-rollback-outbox-export.service", "planiq-rollback-outbox-export.timer",
+)
+
+
+def promote_durable_rollback_host(*, layout: Layout = Layout()) -> dict[str, Any]:
+    """Root-only, lock-free handoff invoked from the NEW active release unit.
+
+    Older update controllers execute older transaction code: the staged 1242+
+    release therefore owns this health-gated systemd activation step. It must
+    NOT take TransactionLock (the old activation still holds that lock).
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Stable rollback reporter promotion kræver root")
+    release_id = _read_active_release_id(layout)
+    if release_id is None:
+        raise TransactionError("Stable rollback handoff kræver aktivt release-symlink")
+    seq = int(release_id.rsplit("-seq-", 1)[1])
+    if seq < SIGNED_ROLLBACK_MIN_SOURCE_SEQUENCE:
+        raise TransactionError("Stable rollback handoff kræver release 1242+")
+    source_root = layout.releases / release_id
+    manifest = load_secure_json(source_root / "release-manifest.json", forbidden_mode_bits=0o022)
+    _validate_prepared_release_tree(source_root, manifest)
+    source = source_root / "release/updater/clientflow-updater.pyz"
+    metadata = source.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or not metadata.st_mode & stat.S_IXUSR:
+        raise TransactionError("Stable updater i immutable release er ikke eksekverbar")
+    unit_sources = [source_root / "release/stable-systemd" / name for name in _STABLE_ROLLBACK_UNITS]
+    for unit in unit_sources:
+        if not stat.S_ISREG(unit.lstat().st_mode):
+            raise TransactionError("Immutable stable reporter unit mangler")
+    ensure_real_directory(layout.stable_support_root, mode=0o755)
+    ensure_real_directory(layout.stable_updater_root, mode=0o755)
+    marker = layout.stable_updater_root / "rollback-promotion.json"
+    if marker.exists() or marker.is_symlink():
+        value = load_secure_json(marker, max_bytes=4096)
+        if value.get("schema_version") != 1 or type(value.get("release_sequence")) is not int:
+            raise TransactionError("Stable reporter promotion-journal er ugyldig")
+        if value["release_sequence"] > seq:
+            return {"status": "newer_stable_updater_preserved", "release_sequence": value["release_sequence"]}
+    source_size, source_sha = sha256_file(source)
+    _atomic_copy(source, layout.stable_updater_pyz, mode=0o555)
+    if sha256_file(layout.stable_updater_pyz) != (source_size, source_sha):
+        raise TransactionError("Stable updater promotion matcher ikke verificeret release")
+    outbox_root = layout.path("/var/lib/planiq-rollback-outbox")
+    if layout.root == Path("/"):
+        from .rollback_outbox import _root_outbox_directory
+        _root_outbox_directory(outbox_root, gid=pwd.getpwnam("clientflow-updater").pw_gid)
+    else:
+        outbox_root.mkdir(parents=True, exist_ok=True)
+    ensure_real_directory(layout.unit_root, mode=0o755)
+    for name, unit in zip(_STABLE_ROLLBACK_UNITS, unit_sources):
+        atomic_write_bytes(layout.unit_root / name, unit.read_bytes(), mode=0o644)
+    if layout.root == Path("/"):
+        _run(["/usr/bin/systemctl", "daemon-reload"])
+        _run(["/usr/bin/systemctl", "enable", "--now", _STABLE_ROLLBACK_UNITS[1]])
+    # Marker only after the complete handoff; partial failures retry next boot
+    # or during activation recovery. Never downgrade to a previous version.
+    atomic_write_json(marker, {"schema_version": 1, "release_sequence": seq,
+                               "release_id": release_id, "updater_sha256": source_sha}, mode=0o600)
+    return {"status": "stable_rollback_reporter_ready", "release_sequence": seq,
+            "updater_sha256": source_sha}
+
+
+
+def _record_durable_rollback_outcome(
+    state: dict[str, Any], *, permit_id: str | None, target: str, outcome: str,
+) -> None:
+    if permit_id is None:
+        return
+    if outcome not in {"succeeded", "failed"}:
+        raise TransactionError("Rollback outcome har ugyldig terminal status")
+    import uuid
+    reports = state.setdefault("rollback_reports", {})
+    if not isinstance(reports, dict):
+        raise TransactionError("Rollback rapportjournal er ugyldig")
+    receipt = {
+        "permit_id": permit_id,
+        "event_id": str(uuid.uuid5(
+            uuid.NAMESPACE_URL, f"planiq-clientflow-rollback-{outcome}:" + permit_id,
+        )),
+        "outcome": outcome,
+        "occurred_at": _now(),
+        "to_release_id": target,
+    }
+    if permit_id in reports and reports[permit_id] != receipt:
+        raise TransactionError("Rollback tilladelsen har flere modstridende resultater")
+    reports[permit_id] = receipt
+
+
 def _activate_release(
     layout: Layout,
     state: dict[str, Any],
@@ -1187,6 +1279,11 @@ def _activate_release(
 
         state["previous_release_id"] = previous
         state["active_release_id"] = release_id
+        # Commit the outcome in the same fsynced write as active_release_id.
+        _record_durable_rollback_outcome(
+            state, permit_id=manual_rollback_permit_id,
+            target=release_id, outcome="succeeded",
+        )
         state["staged_release_id"] = None
         state["activation_intent"] = None
         installed[release_id]["activated_at"] = _now()
@@ -1245,6 +1342,10 @@ def _activate_release(
                 activation_failure=activation_failure,
                 rollback_failure=_safe_failure_details(rollback_error, rollback_step),
             )
+            _record_durable_rollback_outcome(
+                state, permit_id=manual_rollback_permit_id,
+                target=release_id, outcome="failed",
+            )
             save_state(layout, state)
             raise TransactionError("Aktivering og automatisk rollback fejlede") from rollback_error
         state["active_release_id"] = previous
@@ -1257,6 +1358,10 @@ def _activate_release(
             restored_release_id=previous,
             error=type(activation_error).__name__,
             activation_failure=activation_failure,
+        )
+        _record_durable_rollback_outcome(
+            state, permit_id=manual_rollback_permit_id,
+            target=release_id, outcome="failed",
         )
         save_state(layout, state)
         raise TransactionError("Aktivering fejlede; tidligere release blev automatisk gendannet") from activation_error

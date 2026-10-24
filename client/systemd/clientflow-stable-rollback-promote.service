@@ -1,0 +1,36 @@
+[Unit]
+Description=ClientFlow signed rollback reporting stable-host promotion
+After=local-fs.target
+Before=clientflow-status-agent.service clientflow-updater.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=clientflow-updater
+ExecStart=/opt/clientflow/active/release/bin/clientflow-release-transaction promote-rollback-host
+StateDirectory=planiq-rollback-outbox
+StateDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=/usr/lib/clientflow /etc/systemd/system /var/lib/planiq-rollback-outbox
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=clientflow.target
