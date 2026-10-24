@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { browserFullscreenLabel, normalizeBrowserFullscreen } from "../src/utils/browserFullscreen.mjs";
+import { browserFullscreenLabel, normalizeBrowserFullscreen, visibleBrowserFullscreen } from "../src/utils/browserFullscreen.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (name) => fs.readFileSync(path.join(here, "..", name), "utf8");
@@ -28,7 +28,22 @@ test("fullscreen is visible in the local GUI, Control Room and detail UI", () =>
   const details = read("src/pages/clientdetailspage/ClientDetailsInfoSection.jsx");
   const hot = read("src/pages/clientdetailspage/ClientDetailsPage.jsx");
   assert.match(gui, /"Fuldskærm", "browser_fullscreen"/);
-  assert.match(list, /browserFullscreenLabel\(/);
+  assert.match(list, /visibleBrowserFullscreen\(/);
   assert.match(details, /label: "Fuldskærm"/);
   assert.match(hot, /setLiveBrowserFullscreen\(data\?\.browser_fullscreen/);
+});
+
+test("hide fullscreen when browser is stopped, offline or unverified; show in Control Room", () => {
+  for (const online of [false, null, undefined]) {
+    assert.equal(visibleBrowserFullscreen(online, true, "fullscreen"), null);
+  }
+  for (const running of [false, null, undefined, "true"]) {
+    assert.equal(visibleBrowserFullscreen(true, running, "fullscreen"), null);
+  }
+  assert.equal(visibleBrowserFullscreen(true, true, "fullscreen"), "Fuldskærm");
+  assert.equal(visibleBrowserFullscreen(true, true, "windowed"), "Ikke fuldskærm");
+  assert.equal(visibleBrowserFullscreen(true, true, "unknown"), "Ukendt");
+  assert.match(read("src/pages/ClientInfoPage.jsx"), /fullscreenLabel !== null/);
+  assert.match(read("src/pages/clientdetailspage/ClientDetailsPage.jsx"), /fullscreenLabel !== null/);
+  assert.match(read("src/pages/clientdetailspage/ClientDetailsPage.jsx"), /visibleBrowserFullscreen\(clientOnline, client\?\.chrome_running/);
 });

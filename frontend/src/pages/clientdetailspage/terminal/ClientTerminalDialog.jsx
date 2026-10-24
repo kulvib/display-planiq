@@ -46,7 +46,7 @@ import {
 import { compactDarkChipSx } from "../../../utils/chipStyles";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import { shouldAutoOpenTerminalPty } from "./terminalOpenPolicy.mjs";
-import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND } from "./wifiSupportCommands.mjs";
+import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND, WIFI_CHECKPOINT_TEST_COMMAND } from "./wifiSupportCommands.mjs";
 
 function nowTime() {
   return new Date().toLocaleTimeString("da-DK", { hour12: false });
@@ -121,6 +121,9 @@ systemctl --no-pager --full status \
   clientflow-remote-desktop-capture.socket \
   clientflow-remote-desktop-input-broker.socket \
   clientflow-time-integrity.timer \
+  planiq-rollback-outbox-export.timer \
+  planiq-rollback-outbox-export.service \
+  clientflow-stable-rollback-promote.service \
   2>/dev/null || true
 
 echo
@@ -146,7 +149,19 @@ for f in \
   /var/lib/clientflow/livestream/producer-status.json \
   /var/lib/clientflow/livestream-uploader/status.json; do
   echo "--- $f"
-  cat "$f" 2>/dev/null | python3 -m json.tool || true
+  python3 - "$f" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1], encoding='utf-8'))
+    if isinstance(data, dict):
+        for key in ('state', 'status', 'desired_state', 'reason', 'updated_at', 'last_error'):
+            if key in data:
+                value = data[key]
+                # Errors may contain authenticated URLs; show only a bounded state indicator.
+                print(f'{key}: {"til stede" if key == "last_error" and value else value}')
+except (OSError, ValueError):
+    print('Ingen læsbar status')
+PY
 done
 CLIENTFLOW_CMD`;
 
@@ -179,19 +194,27 @@ systemctl --no-pager --full status \
   2>/dev/null || true
 
 echo
-echo "== Canonical Display state =="
-for f in \
-  /var/lib/clientflow/display-runtime/configuration.json \
-  /var/lib/clientflow/display-runtime/display-resolution-desired.json \
-  /var/lib/clientflow/display-runtime/runtime-status.json \
-  /var/lib/clientflow/display-runtime/local-gui-status.json; do
-  echo "--- $f"
-  if [[ -r "$f" ]]; then
-    python3 -m json.tool "$f" 2>/dev/null || cat "$f" 2>/dev/null || true
-  else
-    echo "Ikke tilgængelig"
-  fi
-done
+echo "== Sanitiseret Display runtime =="
+python3 - <<'PY'
+import json
+from pathlib import Path
+for path, keys in (
+    ('/var/lib/clientflow/display-runtime/configuration.json', ('configuration_revision', 'configuration_schema_version', 'browser_refresh_interval_sec')),
+    ('/var/lib/clientflow/display-runtime/display-resolution-desired.json', ('preset', 'mode', 'width', 'height', 'rotation')),
+    ('/var/lib/clientflow/display-runtime/runtime-status.json',
+     ('state','step','browser_requested','browser_pid','internet_access','internet_check_updated_at',
+      'browser_fullscreen','browser_fullscreen_updated_at','updated_at')),
+):
+    try:
+        obj = json.loads(Path(path).read_text())
+        if not isinstance(obj, dict):
+            raise ValueError('unexpected status type')
+        print(Path(path).name)
+        for key in keys:
+            print(f'{key}: {obj.get(key, "ukendt")}')
+    except (OSError, ValueError) as exc:
+        print(Path(path).name, 'kan ikke læses:', type(exc).__name__)
+PY
 
 echo
 echo "== Installeret browser =="
@@ -226,6 +249,30 @@ systemctl --no-pager --full status clientflow-updater.timer clientflow-updater.s
 echo
 echo "== Seneste updater-log =="
 journalctl -u clientflow-updater.service -n 120 --no-pager -l 2>/dev/null || true
+CLIENTFLOW_CMD`;
+
+const ROLLBACK_OUTBOX_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
+set -u
+echo '== Stabil rollbackrapportering / systemd =='
+systemctl --no-pager --full status \
+  planiq-rollback-outbox-export.timer \
+  planiq-rollback-outbox-export.service \
+  clientflow-stable-rollback-promote.service 2>/dev/null || true
+echo '== Seneste service-log =='
+journalctl -u planiq-rollback-outbox-export.service -u clientflow-stable-rollback-promote.service \
+  -n 80 --no-pager -l 2>/dev/null || true
+echo '== Køstatus (kun antal filer; aldrig payload/hemmeligheder) =='
+python3 - <<'PY'
+from pathlib import Path
+for directory in (Path('/var/lib/planiq-rollback-outbox'),):
+    if directory.is_dir():
+        print(directory.name, 'filer:', sum(1 for f in directory.iterdir() if f.is_file()))
+    else:
+        print(directory.name, 'ikke tilgængelig')
+# Receipt acknowledgements are not shown: their payload is operational security data.
+ack = Path('/var/lib/clientflow/updater/rollback-acknowledged.json')
+print('Acknowledgement journal:', 'til stede' if ack.is_file() else 'ikke tilgængelig')
+PY
 CLIENTFLOW_CMD`;
 
 const UBUNTU_APT_HEALTH_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
@@ -314,7 +361,7 @@ except Exception as exc:
 
 url = str(credential.get("backend_url") or "").strip()
 host = urlparse(url).hostname or ""
-print("Backend URL:", url or "ikke konfigureret")
+print("Backend scheme:", urlparse(url).scheme or "ikke konfigureret")
 print("Backend host:", host or "ikke konfigureret")
 if host:
     try:
@@ -348,6 +395,7 @@ const SUPPORT_COMMAND_GROUPS = [
     commands: [
       { label: "ClientFlow samlet status", command: CLIENTFLOW_CANONICAL_STATUS_COMMAND, adminOnly: true },
       { label: "Display / kiosk browser", command: DISPLAY_BROWSER_DIAGNOSTICS_COMMAND, adminOnly: true },
+      { label: "Rollbackrapportering / outbox", command: ROLLBACK_OUTBOX_DIAGNOSTICS_COMMAND, adminOnly: true, description: "Kontroller systemd-timer, stabil eksport, rapportering og køfiler uden at vise tokenindhold." },
       { label: "Aktiv release / updater", command: RELEASE_UPDATER_DIAGNOSTICS_COMMAND, adminOnly: true },
       { label: "Livestream v2 status", command: LIVESTREAM_CANONICAL_STATUS_COMMAND, adminOnly: true },
       { label: "Terminal status", command: TERMINAL_CANONICAL_STATUS_COMMAND, adminOnly: true },
@@ -363,6 +411,7 @@ const SUPPORT_COMMAND_GROUPS = [
       { label: "Netværk, DNS, tid og backend", command: NETWORK_TIME_DIAGNOSTICS_COMMAND, adminOnly: true },
       { label: "WiFi / NetworkManager diagnose", command: WIFI_DIAGNOSTICS_COMMAND, adminOnly: true, description: "Kun læsning: netværk, WiFi, signal, DNS og hændelser (ingen adgangskoder)." },
       { label: "Tilføj WiFi-profil (uden aktivering)", command: WIFI_STAGE_PROFILE_COMMAND, adminOnly: true, description: "Interaktiv opsætning: gem WPA2/WPA3-personlig WiFi-profil med autoconnect slået fra. Skifter ikke aktivt netværk." },
+      { label: "Test gemt WiFi (auto-rollback)", command: WIFI_CHECKPOINT_TEST_COMMAND, adminOnly: true, description: "Test en ny ClientFlow WiFi-profil via NetworkManager checkpoint, 120 sekunders rollback og eksplicit bekræftelse. Kun ved godkendt servicevindue." },
     ],
   },
   {

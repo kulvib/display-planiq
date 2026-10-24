@@ -18,6 +18,7 @@ import { useTheme } from "@mui/material/styles";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { calendarRebootView } from "./calendarRebootStatus.mjs";
+import { visibleBrowserFullscreen } from "../../utils/browserFullscreen.mjs";
 import { browserStatusTone, calendarRebootIsActionable, currentClientState, currentClientStateTone } from "../../utils/controlRoomPresentation.mjs";
 
 const ClientDetailsInfoSection = lazy(() => import("./ClientDetailsInfoSection"));
@@ -772,6 +773,7 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
   const dailyReboot = calendarRebootView(client?.calendar_daily_reboot);
   const currentState = currentClientState(clientState);
   const browserLabel = clientOnline ? (liveChromeStatus || "Browser ukendt") : "Browser offline";
+  const fullscreenLabel = visibleBrowserFullscreen(clientOnline, client?.chrome_running, client?.browser_fullscreen);
 
   return (
     <Box
@@ -841,6 +843,13 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
           </Tooltip>
         )}
         <DashboardChip dark label={`Browser: ${browserLabel}`} color={browserStatusTone(clientOnline, client?.chrome_color, browserLabel)} />
+        {fullscreenLabel !== null && (
+          <DashboardChip
+            dark
+            label={fullscreenLabel === "Ukendt" ? "Fuldskærm: Ukendt" : fullscreenLabel}
+            color={fullscreenLabel === "Fuldskærm" ? "success" : fullscreenLabel === "Ikke fuldskærm" ? "warning" : "info"}
+          />
+        )}
         {networkUnavailable && (
           <DashboardChip dark label={`Netværk: ${networkMessage || "diagnostik melder fejl"}`} color="error" />
         )}
