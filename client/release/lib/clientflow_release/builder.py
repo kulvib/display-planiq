@@ -48,6 +48,7 @@ UPDATER_MODULES = (
     "updater_config.py",
     "updater_entrypoint.py",
     "updater_state.py",
+    "rollback_outbox.py",
     "updater_transport.py",
 )
 
@@ -127,6 +128,7 @@ def _create_payload(
     source_mappings = (
         (Path("client/config-examples"), PurePosixPath(root) / "client-runtime/config-examples"),
         (Path("client/libexec"), PurePosixPath(root) / "client-runtime/libexec"),
+        (Path("client/stable-systemd"), PurePosixPath(root) / "release/stable-systemd"),
         (
             Path("frontend/public/brand/planiq-display"),
             PurePosixPath(root) / "client-runtime/brand/planiq-display",

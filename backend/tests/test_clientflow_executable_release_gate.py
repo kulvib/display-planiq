@@ -31,6 +31,10 @@ def _release_tree(tmp_path: Path) -> Path:
         (root / "client-runtime/libexec" / name).chmod(0o755)
     (root / "release/updater").mkdir(parents=True)
     (root / "release/updater/clientflow-updater.pyz").write_text("updater\n", encoding="utf-8")
+    wrapper = root / "release/bin/clientflow-release-transaction"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    wrapper.chmod(0o755)
     return root
 
 
@@ -39,6 +43,13 @@ def test_release_systemd_contract_accepts_complete_canonical_tree(tmp_path):
     assert summary["unit_count"] == len(list((ROOT / "client/systemd").iterdir()))
     assert "/opt/clientflow/active/runtime/bin/clientflow-calendar" in summary["exec_paths"]
     assert "/usr/bin/python3" in summary["exec_paths"]
+
+
+def test_release_systemd_contract_rejects_missing_stable_rollback_promotion_wrapper(tmp_path):
+    root = _release_tree(tmp_path)
+    (root / "release/bin/clientflow-release-transaction").unlink()
+    with pytest.raises(SystemdContractError, match="clientflow-release-transaction"):
+        validate_release_systemd_contract(root)
 
 
 def test_release_systemd_contract_rejects_missing_runtime_entrypoint(tmp_path):

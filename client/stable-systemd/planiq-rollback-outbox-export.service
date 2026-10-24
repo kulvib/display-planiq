@@ -1,0 +1,32 @@
+[Unit]
+Description=PlanIQ root-only release rollback outbox publisher
+ConditionPathExists=/var/lib/clientflow/release/state.json
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/lib/clientflow/updater/clientflow-updater.pyz export-rollback-reports
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/planiq-rollback-outbox
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=

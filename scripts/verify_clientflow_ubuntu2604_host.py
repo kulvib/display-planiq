@@ -130,6 +130,10 @@ def _source_contract(repo: Path) -> dict[str, object]:
         shutil.copytree(repo / "client/libexec", release_root / "client-runtime/libexec")
         (release_root / "release/updater").mkdir(parents=True)
         (release_root / "release/updater/clientflow-updater.pyz").write_text("source-gate\n", encoding="utf-8")
+        wrapper = release_root / "release/bin/clientflow-release-transaction"
+        wrapper.parent.mkdir(parents=True)
+        wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        wrapper.chmod(0o755)
         (release_root / "runtime/bin").mkdir(parents=True)
         for name in CLIENTFLOW_ENTRYPOINTS:
             path = release_root / "runtime/bin" / name
@@ -172,6 +176,10 @@ def _source_contract(repo: Path) -> dict[str, object]:
             target = root / "opt/clientflow/releases/ci/client-runtime/libexec" / path.name
             target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             target.chmod(0o755)
+        synthetic_wrapper = root / "opt/clientflow/releases/ci/release/bin/clientflow-release-transaction"
+        synthetic_wrapper.parent.mkdir(parents=True)
+        synthetic_wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        synthetic_wrapper.chmod(0o755)
         for absolute in ("/bin/sh", "/usr/bin/python3"):
             target = root / absolute.lstrip("/")
             target.parent.mkdir(parents=True, exist_ok=True)

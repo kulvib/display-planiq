@@ -37,6 +37,8 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
     if len(reason.strip()) < 8:
         raise RuntimeError("Wipe kræver en konkret begrundelse")
     if layout.root == Path("/"):
+        subprocess.run(["/usr/bin/systemctl", "disable", "--now", "planiq-rollback-outbox-export.timer"], check=False)
+        subprocess.run(["/usr/bin/systemctl", "stop", "planiq-rollback-outbox-export.service"], check=False)
         subprocess.run(["/usr/bin/systemctl", "disable", "--now", "clientflow-updater.timer"], check=False)
         subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-updater.service"], check=False)
         subprocess.run(["/usr/bin/systemctl", "stop", "clientflow-update-controller.service"], check=False)
@@ -44,6 +46,11 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
         _disable_power_lifecycle_reporters(layout)
         subprocess.run(["/usr/bin/systemctl", "disable", "clientflow.target"], check=False)
     _remove_definitions(layout)
+    for unit_name in ("planiq-rollback-outbox-export.service", "planiq-rollback-outbox-export.timer"):
+        path = layout.unit_root / unit_name
+        if path.is_symlink():
+            raise RuntimeError("Stable rollback service definition er symlink")
+        path.unlink(missing_ok=True)
     sudoers_root = layout.path("/etc/sudoers.d")
     if sudoers_root.is_dir() and not sudoers_root.is_symlink():
         for path in sorted(sudoers_root.glob("clientflow*")):
@@ -55,6 +62,7 @@ def wipe(*, reason: str, confirm: str, layout: Layout = Layout()) -> None:
         "/opt/clientflow",
         "/etc/clientflow",
         "/var/lib/clientflow",
+        "/var/lib/planiq-rollback-outbox",
         "/run/clientflow",
         "/usr/lib/clientflow",
     ):

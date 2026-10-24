@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic durable rollback receipt export
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=planiq-rollback-outbox-export.service
+
+[Install]
+WantedBy=timers.target
