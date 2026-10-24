@@ -179,4 +179,9 @@ def test_migration_and_schema_contract_include_impersonation_refresh_binding():
     assert 'REVIEWED_IMPERSONATION_REVISION = "20260929_57a_impersonation"' in runner
     assert 'REVIEWED_MAINTENANCE_REVISION = "20260929_58a_maintenance"' in runner
     assert 'maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION' in runner
-    assert 'head != REVIEWED_MAINTENANCE_REVISION' in runner
+    # Step 58A remains the reviewed historical anchor, but the current head
+    # has two independent, source-pinned successors: 59A -> 60A.
+    assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD != REVIEWED_MAINTENANCE_REVISION' in runner
+    assert 'head != REVIEWED_INCIDENT_60A_REVISION' in runner
+    assert 'rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION' in runner
+    assert 'head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION' in runner

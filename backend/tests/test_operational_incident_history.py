@@ -100,7 +100,11 @@ def test_redaction_allowlist_never_copies_client_error_or_network_secrets():
     db, active = FakeSession(), []
     run(db, active, domain="display", payload=payload)
     assert secret not in repr(db.objects)
-    assert signals_for_report("display", "online", {"runtime": {"state": "running"}}) is None
+    # A healthy, explicitly observed browser state is valid recovery evidence,
+    # not a missing/untrustworthy observation. Other unobserved incidents stay open.
+    assert signals_for_report("display", "online", {"runtime": {"state": "running"}}) == {}
+    assert run(db, active, when=T1 + timedelta(minutes=1), domain="display", payload={"runtime": {"state": "running"}}) == (0, 1)
+    assert {row.code for row in active if row.resolved_at is None} == {"kiosk_lockdown_failed"}
     assert signals_for_report("display", "online", {"runtime": {"state": "waiting_internet"}, "kiosk_lockdown": {"status": "applied"}}) == {}
 
 
