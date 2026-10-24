@@ -1,6 +1,7 @@
 """Security, recovery and retention gates for the reviewed 60A incident history."""
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import sys
@@ -159,3 +160,25 @@ def test_60a_migration_matches_model_security_and_ondelete():
     assert "raise RuntimeError" in migration
     assert "ck_operational_incident_domain" in migration
     assert "ck_operational_incident_event_kind" in migration
+
+
+def test_60a_model_registration_is_shared_by_platform_validator_and_alembic():
+    """Both entry points must explicitly register 60A tables before metadata binding."""
+    for relative in ("scripts/validate_display_baseline.py", "migrations/env.py"):
+        source = ROOT / "backend" / relative
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        imports = [
+            index for index, node in enumerate(tree.body)
+            if isinstance(node, ast.Import)
+            and any(alias.name == "service1.incident_models" for alias in node.names)
+        ]
+        metadata = [
+            index for index, node in enumerate(tree.body)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id in {"METADATA", "target_metadata"}
+                    for target in node.targets)
+        ]
+        assert len(imports) == 1, f"Explicit incident-model registration missing: {relative}"
+        assert len(metadata) == 1 and imports[0] < metadata[0], (
+            f"Incident models must be registered before SQLModel.metadata is used: {relative}"
+        )
