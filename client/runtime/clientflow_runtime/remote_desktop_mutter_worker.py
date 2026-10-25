@@ -401,7 +401,9 @@ class FramePipeline:
 class Worker:
     def __init__(self) -> None:
         self.cast = MutterScreenCast()
-        self.keyboard = MutterKeyboard()
+        # Capture must remain available even when keyboard injection dependencies
+        # (e.g. libxkbcommon) are missing or disabled in the kiosk session.
+        self.keyboard: MutterKeyboard | None = None
         self.pipeline = FramePipeline()
         self.node_id: int | None = None
         self.monitor: str | None = None
@@ -416,7 +418,9 @@ class Worker:
 
     def close(self) -> None:
         self.stop_capture()
-        self.keyboard.close()
+        if self.keyboard is not None:
+            self.keyboard.close()
+            self.keyboard = None
 
     def _start_stream(self, requested_monitor: str | None) -> None:
         self.pipeline.close()
@@ -468,6 +472,8 @@ class Worker:
         text = str(request.get("text") or "")
         if len(text) > 1000:
             raise ValueError("Tekstinput er for langt")
+        if self.keyboard is None:
+            self.keyboard = MutterKeyboard()
         self.keyboard.type_text(text)
         return {"ok": True, "action": "text", "characters": len(text)}
 
