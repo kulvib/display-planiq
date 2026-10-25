@@ -45,6 +45,7 @@ import PersonOffIcon from "@mui/icons-material/PersonOff";
 import RestoreIcon from "@mui/icons-material/Restore";
 import SaveIcon from "@mui/icons-material/Check";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
+import PeopleAltIcon from "@mui/icons-material/PeopleAlt";
 
 import { useAuth } from "../../auth/AuthProvider";
 import * as service from "./userAdminService";
@@ -1408,10 +1409,17 @@ export default function UserAdministration() {
       />
       <Box sx={pageShellSx}>
         <Paper sx={pagePaperSx}>
-          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={2}>
-            <Typography variant="h6">Brugeradministration</Typography>
-            <AdminRefreshButton onClick={() => void loadData()} loading={userLoading} ariaLabel="Opdater brugere" />
-          </Stack>
+          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, mb: 2, flexWrap: "wrap" }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5, minWidth: 0 }}>
+              <PeopleAltIcon color="primary" />
+              <Typography variant="h5" sx={{ fontWeight: 700, color: "#f8fafc" }}>
+                Brugeradministration
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", justifyContent: "flex-end", flexShrink: 0 }}>
+              <AdminRefreshButton onClick={() => void loadData()} loading={userLoading} ariaLabel="Opdater brugere" />
+            </Stack>
+          </Box>
           <Divider sx={{ my: 2, borderColor: COLORS.border }} />
           {userError && (
             <Alert severity="error" sx={{ mb: 2 }} role="alert" action={

@@ -20,7 +20,7 @@ export default class AccessErrorBoundary extends React.Component {
     if (this.state.failed) {
       return (
         <Stack spacing={2}>
-          <Alert severity="error">Adgang-siden kunne ikke vises. Prøv igen. Hvis fejlen fortsætter, kontrollér browserkonsollen og API-kaldet til brugerlisten.</Alert>
+          <Alert severity="error">Brugeradministration kunne ikke vises. Prøv igen. Hvis fejlen fortsætter, kontrollér browserkonsollen og API-kaldet til brugerlisten.</Alert>
           <Button onClick={this.retry} variant="outlined" sx={{ alignSelf: "flex-start" }}>Prøv igen</Button>
         </Stack>
       );

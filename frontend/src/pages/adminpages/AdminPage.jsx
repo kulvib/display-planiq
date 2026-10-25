@@ -46,7 +46,7 @@ const SECTIONS = [
   },
   {
     key: "access",
-    label: "Adgang",
+    label: "Brugeradministration",
     icon: <SecurityIcon fontSize="small" />,
   },
   {
