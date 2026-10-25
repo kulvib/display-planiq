@@ -26,11 +26,16 @@ test('Control Room surfaces 15-second warning while continuing to observe stream
   assert.doesNotMatch(controlRoom, /HEALTH_STARTUP_POLL_MS\s*=\s*15_000/);
 });
 
-test('Driftsfejl Opdater is an accessible clickable compact chip', () => {
-  assert.match(incidents, /compactDarkChipSx/);
-  assert.match(incidents, /<Chip\s+label="Opdater"/);
-  assert.match(incidents, /clickable\s+onClick=\{reload\}/);
-  assert.match(incidents, /disabled=\{loading\}/);
-  assert.match(incidents, /aria-label="Opdater driftsfejl"/);
-  assert.doesNotMatch(incidents, /<Button startIcon=\{<RefreshIcon/);
+test('Driftsfejl Opdater follows the Audit-log reference while remaining accessible and loading-safe', () => {
+  const shared = read('src/components/AdminRefreshButton.jsx');
+  const audit = read('src/pages/adminpages/AuditLog.jsx');
+  assert.match(incidents, /<AdminRefreshButton\s+onClick=\{reload\}\s+loading=\{loading\}\s+ariaLabel="Opdater driftsfejl"/);
+  assert.match(audit, /<AdminRefreshButton[\s\S]*?loading=\{loading\}[\s\S]*?onClick=\{\(\) => setRefreshTick/);
+  assert.match(shared, /variant="contained"/);
+  assert.match(shared, /startIcon=\{<RefreshIcon \/>\}/);
+  assert.match(shared, /loading=\{loading\}/);
+  assert.match(shared, /disabled=\{disabled \|\| loading\}/);
+  assert.match(shared, /aria-label=\{ariaLabel\}/);
+  assert.match(shared, />\s*Opdater\s*<\/Button>/);
+  assert.doesNotMatch(incidents, /<Chip\s+label="Opdater"/);
 });

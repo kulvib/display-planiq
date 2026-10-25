@@ -4,10 +4,9 @@ import {
   Paper, Stack, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TextField, Typography,
 } from "@mui/material";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import TroubleshootIcon from "@mui/icons-material/Troubleshoot";
 import client from "../../api/client";
-import { compactDarkChipSx } from "../../utils/chipStyles";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 
 const paper = {
   p: { xs: 1.5, md: 2 },
@@ -105,15 +104,10 @@ export default function OperationalIncidents() {
               Historik over verificerede fejlrapporter fra Status, Display og System. En genstart løser aldrig automatisk en fejl.
             </Typography>
           </Box>
-          <Chip
-            label="Opdater"
-            icon={<RefreshIcon fontSize="small" />}
-            variant="outlined"
-            clickable
+          <AdminRefreshButton
             onClick={reload}
-            disabled={loading}
-            aria-label="Opdater driftsfejl"
-            sx={compactDarkChipSx("primary", { cursor: loading ? "default" : "pointer" })}
+            loading={loading}
+            ariaLabel="Opdater driftsfejl"
           />
         </Stack>
         <Divider sx={{ my: 2, borderColor: "rgba(148,163,184,.17)" }} />

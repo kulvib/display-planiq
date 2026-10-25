@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { getMaintenanceStatus, updateMaintenanceStatus } from "../../auth/maintenanceApi";
 import { requireMaintenanceStatus } from "../../auth/maintenanceIntegrity";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 
 function toLocalInput(value) {
   if (!value) return "";
@@ -132,12 +133,15 @@ export default function MaintenanceAdministration() {
   const statusKnown = state !== null;
   return (
     <Stack spacing={2.2}>
-      <Box>
-        <Typography variant="h5" sx={{ fontWeight: 900 }}>Vedligeholdelse</Typography>
-        <Typography sx={{ color: "rgba(203,213,225,0.72)", mt: 0.5 }}>
-          Luk menneskelig brugeradgang kontrolleret under release- eller databasearbejde. ClientFlow-klienter, health-endpoints og superadministratoradgang fortsætter.
-        </Typography>
-      </Box>
+      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "flex-start" }} gap={2}>
+        <Box>
+          <Typography variant="h5" sx={{ fontWeight: 900 }}>Vedligeholdelse</Typography>
+          <Typography sx={{ color: "rgba(203,213,225,0.72)", mt: 0.5 }}>
+            Luk menneskelig brugeradgang kontrolleret under release- eller databasearbejde. ClientFlow-klienter, health-endpoints og superadministratoradgang fortsætter.
+          </Typography>
+        </Box>
+        <AdminRefreshButton onClick={() => void load()} loading={loading} disabled={saving} ariaLabel="Opdater vedligeholdelsesstatus" />
+      </Stack>
       {error && <Alert severity="error">{error}</Alert>}
       {success && <Alert severity="success">{success}</Alert>}
       {!statusKnown && loading ? (
@@ -159,7 +163,6 @@ export default function MaintenanceAdministration() {
             ) : (
               <Button variant="contained" color="warning" disabled={saving || loading} onClick={() => { setConfirmError(""); setPendingEnabled(true); }}>Aktivér vedligeholdelse</Button>
             ))}
-            <Button variant="outlined" disabled={saving || loading} onClick={() => void load()}>{loading ? "Henter…" : "Genindlæs status"}</Button>
           </Stack>
           <Typography variant="caption" sx={{ color: "rgba(203,213,225,0.68)" }}>
             Aktivering og deaktivering kræver ny adgangskodebekræftelse og registreres i auditloggen.

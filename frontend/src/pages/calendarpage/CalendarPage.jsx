@@ -1,4 +1,5 @@
 import AppSnackbar from "../../components/AppSnackbar";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 import React, {
   useState,
   useEffect,
@@ -24,7 +25,6 @@ import {
   Stack,
   Chip,
 } from "@mui/material";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import {
@@ -1108,7 +1108,7 @@ export default function CalendarPage() {
           direction={{ xs: "column", md: "row" }}
           spacing={1.5}
           sx={{
-            alignItems: { xs: "stretch", md: "flex-end" },
+            alignItems: { xs: "stretch", md: "flex-start" },
             justifyContent: "space-between"
           }}>
           <Stack direction="row" spacing={1.35} sx={{
@@ -1139,26 +1139,11 @@ export default function CalendarPage() {
 
           <Tooltip title="Opdater klienter">
             <span>
-              <Button
-                startIcon={
-                  loadingClients ? (
-                    <CircularProgress size={20} color="inherit" />
-                  ) : (
-                    <RefreshIcon />
-                  )
-                }
+              <AdminRefreshButton
                 onClick={() => fetchClients(true)}
-                disabled={loadingClients}
-                variant="contained"
-                sx={{
-                  minHeight: 42,
-                  borderRadius: 2,
-                  fontWeight: 900,
-                  width: { xs: "100%", md: "auto" },
-                }}
-              >
-                {loadingClients ? "Opdaterer..." : "Opdater"}
-              </Button>
+                loading={loadingClients}
+                ariaLabel="Opdater kalenderens klienter"
+              />
             </span>
           </Tooltip>
         </Stack>

@@ -20,6 +20,7 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { Link } from "react-router-dom";
 import { apiUrl, authHeaders, authenticatedFetch, getControlRoomClients, getOrganizations } from "../../api";
 import { compactDarkChipSx } from "../../utils/chipStyles";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
@@ -359,7 +360,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       elevation={0}
       sx={{
         overflow: "hidden",
-        borderRadius: 2.5,
+        borderRadius: 2,
         background: "rgba(15,23,42,0.78)",
         border: "1px solid rgba(148,163,184,0.16)",
       }}
@@ -589,7 +590,7 @@ export default function LivestreamOverview() {
         elevation={0}
         sx={{
           p: 2,
-          borderRadius: 2.5,
+          borderRadius: 2,
           background: "rgba(15,23,42,0.72)",
           border: "1px solid rgba(148,163,184,0.16)",
         }}
@@ -604,13 +605,11 @@ export default function LivestreamOverview() {
               </Typography>
             </Box>
           </Stack>
-          <Button onClick={() => void load()} disabled={loading} variant="outlined" sx={{ textTransform: "none" }}>
-            Opdater
-          </Button>
+          <AdminRefreshButton onClick={() => void load()} loading={loading} ariaLabel="Opdater livestreams" />
         </Stack>
       </Paper>
 
-      <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2.5, background: "rgba(15,23,42,0.72)", border: "1px solid rgba(148,163,184,0.16)" }}>
+      <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, background: "rgba(15,23,42,0.72)", border: "1px solid rgba(148,163,184,0.16)" }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
           <TextField
             type="search"

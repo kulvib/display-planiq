@@ -21,13 +21,13 @@ import {
 } from "@mui/material";
 import AddCircleOutlinedIcon from "@mui/icons-material/AddCircleOutlined";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import BlockIcon from "@mui/icons-material/Block";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import DevicesIcon from "@mui/icons-material/Devices";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { useAuth } from "../../auth/AuthProvider";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 import {
   createEnrollmentToken,
   getEnrollmentTokens,
@@ -373,22 +373,12 @@ export default function EnrollmentTokensPage() {
             sx={{ minWidth: { md: 280 } }}
           />
 
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            loading={loading}
-            loadingPosition="start"
-            onClick={loadTokens}
-            disabled={loading}
-          >
-            Opdater
-          </Button>
-
           {canManageTokens && (
             <Button variant="contained" startIcon={<AddCircleOutlinedIcon />} onClick={() => setCreateOpen(true)}>
               Opret kode
             </Button>
           )}
+          <AdminRefreshButton onClick={loadTokens} loading={loading} ariaLabel="Opdater installationskoder" />
         </Stack>
 
         <TokenSection title="Aktive koder" count={activeTokens.length} emptyText="Ingen aktive installationskoder.">
