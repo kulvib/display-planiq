@@ -133,15 +133,17 @@ export default function MaintenanceAdministration() {
   const statusKnown = state !== null;
   return (
     <Stack spacing={2.2}>
-      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "flex-start" }} gap={2}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 900 }}>Vedligeholdelse</Typography>
-          <Typography sx={{ color: "rgba(203,213,225,0.72)", mt: 0.5 }}>
-            Luk menneskelig brugeradgang kontrolleret under release- eller databasearbejde. ClientFlow-klienter, health-endpoints og superadministratoradgang fortsætter.
-          </Typography>
+      <Paper elevation={0} sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
+        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+          <Box sx={{ minWidth: 0, flex: "1 1 280px" }}>
+            <Typography variant="h5" sx={{ fontWeight: 900 }}>Vedligeholdelse</Typography>
+            <Typography sx={{ color: "rgba(203,213,225,0.72)", mt: 0.5 }}>
+              Luk menneskelig brugeradgang kontrolleret under release- eller databasearbejde. ClientFlow-klienter, health-endpoints og superadministratoradgang fortsætter.
+            </Typography>
+          </Box>
+          <AdminRefreshButton onClick={() => void load()} loading={loading} disabled={saving} ariaLabel="Opdater vedligeholdelsesstatus" />
         </Box>
-        <AdminRefreshButton onClick={() => void load()} loading={loading} disabled={saving} ariaLabel="Opdater vedligeholdelsesstatus" />
-      </Stack>
+      </Paper>
       {error && <Alert severity="error">{error}</Alert>}
       {success && <Alert severity="success">{success}</Alert>}
       {!statusKnown && loading ? (

@@ -95,9 +95,9 @@ export default function OperationalIncidents() {
   return (
     <Stack spacing={2}>
       <Paper sx={paper}>
-        <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" gap={1.5} alignItems={{ sm: "center" }}>
-          <Box>
-            <Typography variant="h6" fontWeight={900} display="flex" gap={1} alignItems="center">
+        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+          <Box sx={{ minWidth: 0, flex: "1 1 280px" }}>
+            <Typography variant="h5" fontWeight={900} display="flex" gap={1} alignItems="center">
               <TroubleshootIcon /> Driftsfejl og genopretning
             </Typography>
             <Typography variant="body2" sx={{ color: "#cbd5e1", mt: 0.8 }}>
@@ -109,7 +109,7 @@ export default function OperationalIncidents() {
             loading={loading}
             ariaLabel="Opdater driftsfejl"
           />
-        </Stack>
+        </Box>
         <Divider sx={{ my: 2, borderColor: "rgba(148,163,184,.17)" }} />
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
           <TextField size="small" select label="Status" value={status} onChange={change(setStatus)} sx={{ minWidth: 185 }}>

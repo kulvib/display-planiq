@@ -21,6 +21,7 @@ import GridViewIcon from "@mui/icons-material/GridView";
 
 import OrganizationAdministration from "./OrganizationAdministration";
 import UserAdministration from "./UserAdministration";
+import AccessErrorBoundary from "./AccessErrorBoundary";
 import EnrollmentTokensPage from "./EnrollmentTokensPage";
 import AuditLog from "./AuditLog";
 import MaintenanceAdministration from "./MaintenanceAdministration";
@@ -267,7 +268,9 @@ export default function AdminPage() {
 
         {activeSection === "access" && (
           <Box>
-            <UserAdministration />
+            <AccessErrorBoundary>
+              <UserAdministration />
+            </AccessErrorBoundary>
           </Box>
         )}
 

@@ -1242,8 +1242,10 @@ export default function UserAdministration() {
   const canStatus = Boolean(selectedUser) && isAdmin && !selectedIsMe;
   const canPermanent = Boolean(selectedUser) && isSuperadmin && !selectedIsMe && selectedUser.is_active === false && !selectedRoleIsSuperadmin;
 
-  if (authLoading) return null;
-  if (!isAdmin && !isSuperadmin) return null;
+  if (authLoading) return <Box sx={{ p: 2 }} role="status">Kontrollerer adgang til brugeradministration …</Box>;
+  if (!isAdmin && !isSuperadmin) {
+    return <Alert severity="error">Brugeradministration kræver administrator- eller superadministratoradgang. Kontrollér den aktive session.</Alert>;
+  }
 
   return (
     <>
@@ -1410,6 +1412,13 @@ export default function UserAdministration() {
             <AdminRefreshButton onClick={() => void loadData()} loading={userLoading} ariaLabel="Opdater brugere" />
           </Stack>
           <Divider sx={{ my: 2, borderColor: COLORS.border }} />
+          {userError && (
+            <Alert severity="error" sx={{ mb: 2 }} role="alert" action={
+              <Button color="inherit" size="small" onClick={() => void loadData()} disabled={userLoading}>Prøv igen</Button>
+            }>
+              Brugerlisten kunne ikke hentes: {userError}
+            </Alert>
+          )}
 
           <Box
             component="form"
