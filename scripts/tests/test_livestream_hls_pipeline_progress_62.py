@@ -1,4 +1,4 @@
-"""Phase 62 contract: bounded preview encoding and actionable pipeline progress."""
+"""Phase 62 HLS progress instrumentation with phase 65A native-geometry guard."""
 from __future__ import annotations
 
 import ast
@@ -18,7 +18,7 @@ def _functions(*names):
     return selected
 
 
-def test_preview_caps_letterbox_encode_and_hls_contract(tmp_path):
+def test_native_geometry_pipeline_encode_progress_and_hls_contract(tmp_path):
     class Pipeline:
         pass
 
@@ -35,8 +35,7 @@ def test_preview_caps_letterbox_encode_and_hls_contract(tmp_path):
     desc = descriptions[0]
     for fragment in (
         'pipewiresrc name=capture_source path=63',
-        'videoscale add-borders=true',
-        'width=1280,height=720,framerate=10/1',
+        'video/x-raw,format=I420,framerate=10/1',
         'x264enc name=h264_encoder tune=zerolatency speed-preset=veryfast',
         'mpegtsmux name=ts_mux',
         'hlssink target-duration=2 playlist-length=8',
@@ -45,6 +44,13 @@ def test_preview_caps_letterbox_encode_and_hls_contract(tmp_path):
         assert fragment in desc
     assert str(tmp_path / 'index.m3u8') in desc
     assert str(tmp_path / 'segment-%09d.ts') in desc
+    # Fixed geometry is not part of the format negotiation: the active Mutter
+    # monitor may be ultrawide, portrait, 16:10 or any supported native size.
+    assert 'videoscale' not in desc
+    assert 'add-borders' not in desc
+    assert 'width=' not in desc and 'height=' not in desc
+    for name in ('capture_source', 'h264_encoder', 'ts_mux'):
+        assert f'name={name}' in desc
 
 
 def test_stage_progress_reports_frames_without_frames_or_tokens(tmp_path):
@@ -106,7 +112,10 @@ def test_stage_progress_reports_frames_without_frames_or_tokens(tmp_path):
     assert len(removed) == 3
 
 
-def test_capture_requires_videoscale():
+def test_capture_requires_only_native_pipeline_elements():
     tree = ast.parse(CAPTURE.read_text(encoding='utf-8'))
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_require_elements')
-    assert 'videoscale' in ast.unparse(fn)
+    required = ast.unparse(fn)
+    assert 'videoscale' not in required
+    for element in ('pipewiresrc', 'queue', 'videoconvert', 'videorate', 'x264enc', 'h264parse', 'mpegtsmux', 'hlssink'):
+        assert element in required
