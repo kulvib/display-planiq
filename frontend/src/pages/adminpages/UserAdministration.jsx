@@ -1,4 +1,5 @@
 import AppSnackbar from "../../components/AppSnackbar";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 import * as React from "react";
 import {
   Alert,
@@ -241,7 +242,7 @@ const detailGridSx = {
 const editableInlineFieldSx = {
   bgcolor: COLORS.panelSoft,
   border: `1px solid ${COLORS.borderStrong}`,
-  borderRadius: 1.25,
+  borderRadius: 1,
   px: 1,
   py: 0.45,
   transition: "background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease",
@@ -1404,7 +1405,10 @@ export default function UserAdministration() {
       />
       <Box sx={pageShellSx}>
         <Paper sx={pagePaperSx}>
-          <Typography variant="h6">Brugeradministration</Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={2}>
+            <Typography variant="h6">Brugeradministration</Typography>
+            <AdminRefreshButton onClick={() => void loadData()} loading={userLoading} ariaLabel="Opdater brugere" />
+          </Stack>
           <Divider sx={{ my: 2, borderColor: COLORS.border }} />
 
           <Box

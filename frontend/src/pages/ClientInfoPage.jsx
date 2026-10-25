@@ -32,7 +32,6 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import RestoreFromTrashIcon from "@mui/icons-material/RestoreFromTrash";
 import AddIcon from "@mui/icons-material/Add";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import LocationOnIcon from "@mui/icons-material/LocationOn";
 import DevicesIcon from "@mui/icons-material/Devices";
@@ -41,6 +40,7 @@ import ErrorIcon from "@mui/icons-material/Error";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { compactDarkChipSx } from "../utils/chipStyles";
+import AdminRefreshButton from "../components/AdminRefreshButton";
 import { isPageVisible } from "../utils/pageVisibility";
 import { realtimeSnapshotDelayMs } from "../utils/realtimeSnapshotPacing.mjs";
 import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../utils/controlRoomRealtimeLifecycle.mjs";
@@ -1701,26 +1701,12 @@ export default function ClientInfoPage() {
 
           <Tooltip title="Opdater hele siden">
             <span>
-              <Button
-                startIcon={
-                  refreshing ? (
-                    <CircularProgress size={20} color="inherit" />
-                  ) : (
-                    <RefreshIcon />
-                  )
-                }
+              <AdminRefreshButton
                 onClick={handleRefresh}
-                disabled={refreshing || savingSort}
-                variant="contained"
-                sx={{
-                  minHeight: 42,
-                  borderRadius: 2,
-                  fontWeight: 900,
-                  width: { xs: "100%", md: "auto" },
-                }}
-              >
-                {refreshing ? "Opdaterer..." : "Opdater"}
-              </Button>
+                loading={refreshing}
+                disabled={savingSort}
+                ariaLabel="Opdater hele Control Room"
+              />
             </span>
           </Tooltip>
         </Stack>

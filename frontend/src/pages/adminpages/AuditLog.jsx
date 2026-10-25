@@ -25,7 +25,6 @@ import {
   Typography,
 } from "@mui/material";
 import HistoryIcon from "@mui/icons-material/History";
-import RefreshIcon from "@mui/icons-material/Refresh";
 import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
 import VisibilityIcon from "@mui/icons-material/Visibility";
@@ -39,6 +38,7 @@ import { compactDarkChipSx } from "../../utils/chipStyles";
 import { embeddedPageShellSx } from "../../utils/layoutStyles";
 import { getRoleLabel } from "../../utils/roleUtils";
 import AppSnackbar from "../../components/AppSnackbar";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 
 
 const pageShellSx = { ...embeddedPageShellSx, color: "#f8fafc" };
@@ -813,16 +813,11 @@ export default function AuditLog() {
           >
             Eksportér CSV
           </Button>
-          <Button
-            variant="contained"
-            startIcon={<RefreshIcon />}
+          <AdminRefreshButton
             loading={loading}
-            loadingPosition="start"
             onClick={() => setRefreshTick((v) => v + 1)}
-            disabled={loading}
-          >
-            Opdater
-          </Button>
+            ariaLabel="Opdater audit-log"
+          />
         </Stack>
       </Box>
 

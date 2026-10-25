@@ -60,6 +60,7 @@ import {
 } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
+import AdminRefreshButton from "../../components/AdminRefreshButton";
 import { useSeasonClock, useSeasonSelection } from "../../season/SeasonProvider";
 import { embeddedPageShellSx } from "../../utils/layoutStyles";
 
@@ -817,9 +818,7 @@ export default function OrganizationAdministration() {
                   ))}
                 </Select>
               </FormControl>
-              <Button size="small" variant="outlined" onClick={fetchOrganizations} disabled={loading} loading={loading} sx={{ borderRadius: 2, fontWeight: 850 }}>
-                Opdater
-              </Button>
+              <AdminRefreshButton onClick={fetchOrganizations} loading={loading} ariaLabel="Opdater organisationer" />
             </Stack>
           </Stack>
 
