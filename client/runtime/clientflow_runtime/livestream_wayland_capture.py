@@ -44,7 +44,6 @@ def _require_elements() -> None:
         "pipewiresrc",
         "queue",
         "videoconvert",
-        "videoscale",
         "videorate",
         "x264enc",
         "h264parse",
@@ -268,16 +267,17 @@ def _build_pipeline(
     max_files = playlist_size + 2
     keepalive_ms = max(1, round(1000 / fps))
 
-    # A control-room preview does not need to software-encode a 4K/8K native
-    # monitor. Cap encoded frames at 1280x720 and letterbox non-16:9 desktops
-    # instead of distorting the screen. Preserve the configured FPS and bitrate.
-    # Keepalive repeats static frames without a user interaction.
+    # Preserve the selected Mutter monitor's native geometry (including portrait,
+    # 16:10 and ultrawide). The earlier fixed 1280x720 caps were an unverified
+    # startup workaround and must not change the image aspect ratio. Stage names
+    # remain stable for read-only 62A buffer-progress diagnostics. No new source,
+    # authorization, or media transport is introduced here.
     description = (
         f"pipewiresrc name=capture_source path={node_id} do-timestamp=true on-disconnect=error "
         f"keepalive-time={keepalive_ms} "
         "! queue max-size-buffers=8 leaky=downstream "
-        "! videoconvert ! videoscale add-borders=true ! videorate "
-        f"! video/x-raw,format=I420,width=1280,height=720,framerate={fps}/1 "
+        "! videoconvert ! videorate "
+        f"! video/x-raw,format=I420,framerate={fps}/1 "
         f"! x264enc name=h264_encoder tune=zerolatency speed-preset={preset} key-int-max={key_interval} "
         f"bframes=0 bitrate={bitrate_kbit} "
         "! h264parse config-interval=-1 "
