@@ -24,3 +24,13 @@ test("incident view distinguishes active, stale and recovery states", () => {
   assert.match(page, /\.get\(`\/api\/superadmin\/operational-incidents/);
   assert.doesNotMatch(page, /localStorage|sessionStorage/);
 });
+
+test("fleet report coverage is gated, does not claim scanner execution, and distinguishes missing reports", () => {
+  assert.match(backend, /@router\.get\("\/report-coverage"\)[\s\S]*?Depends\(get_current_superadmin_user\)/);
+  assert.match(page, /Dækning af klientrapporter/);
+  assert.match(page, /rapportdækningen kunne ikke hentes/i);
+  assert.match(page, /fejldetektorens baggrundsscanner kører/);
+  assert.match(page, /domain\.missing/);
+  assert.match(page, /domain\.stale/);
+  assert.match(page, /operational-incidents\/report-coverage/);
+});

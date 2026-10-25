@@ -186,3 +186,65 @@ def test_60a_model_registration_is_shared_by_platform_validator_and_alembic():
         assert len(metadata) == 1 and imports[0] < metadata[0], (
             f"Incident models must be registered before SQLModel.metadata is used: {relative}"
         )
+
+
+def test_service_failures_do_not_recover_on_inactive_or_unknown_state():
+    db, active = FakeSession(), []
+    mandatory = "clientflow-display-runtime.service"
+    optional = "clientflow-remote-desktop-agent.service"
+    assert run(db, active, payload={"services": {mandatory: "inactive", optional: "failed"}}) == (2, 0)
+    assert run(db, active, when=T1 + timedelta(minutes=1), payload={"services": {
+        mandatory: "activating", optional: "inactive"
+    }}) == (0, 0)
+    assert len([x for x in active if x.resolved_at is None]) == 2
+    assert run(db, active, when=T1 + timedelta(minutes=2), payload={"services": {
+        mandatory: "active", optional: "active"
+    }}) == (0, 2)
+    assert len([x for x in active if x.resolved_at is None]) == 0
+
+
+def test_browser_loss_of_internet_does_not_close_prior_runtime_fault():
+    db, active = FakeSession(), []
+    assert run(db, active, domain="display", payload={"runtime": {"state": "failed"}}) == (1, 0)
+    assert run(db, active, domain="display", when=T1 + timedelta(minutes=1),
+               payload={"runtime": {"state": "waiting_internet"}}) == (0, 0)
+    assert run(db, active, domain="display", when=T1 + timedelta(minutes=2),
+               payload={"runtime": {"state": "stopped", "browser_requested": False}}) == (0, 0)
+    assert active[0].resolved_at is None
+    assert run(db, active, domain="display", when=T1 + timedelta(minutes=3),
+               payload={"runtime": {"state": "running"}}) == (0, 1)
+
+
+def test_kiosk_lockdown_drift_is_critical_until_applied():
+    db, active = FakeSession(), []
+    assert run(db, active, domain="display", payload={"kiosk_lockdown": {"status": "drifted"}}) == (1, 0)
+    assert active[0].severity == "critical"
+    assert run(db, active, domain="display", when=T1 + timedelta(minutes=1),
+               payload={"kiosk_lockdown": {"status": "applying"}}) == (0, 0)
+    assert active[0].resolved_at is None
+    assert run(db, active, domain="display", when=T1 + timedelta(minutes=2),
+               payload={"kiosk_lockdown": {"status": "applied"}}) == (0, 1)
+
+
+
+def test_older_clock_observation_never_closes_active_fault_or_opens_new_episode():
+    db, active = FakeSession(), []
+    assert run(db, active, when=T1 + timedelta(minutes=8)) == (1, 0)
+    # Reordered/clock-skewed report cannot retroactively resolve the episode.
+    assert run(db, active, when=T1 + timedelta(minutes=1),
+               payload={"services": {"clientflow-status-agent.service": "active"}}) == (0, 0)
+    assert active[0].resolved_at is None
+    assert run(db, active, when=T1 + timedelta(minutes=9),
+               payload={"services": {"clientflow-status-agent.service": "active"}}) == (0, 1)
+
+def test_superadmin_real_role_check_denies_regular_admin():
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from fastapi import HTTPException
+    from service1.auth import get_current_superadmin_user
+
+    regular_admin = SimpleNamespace(is_superadmin=False, is_admin=True, role="admin")
+    with patch("service1.auth.get_current_user", return_value=regular_admin):
+        with pytest.raises(HTTPException) as exc:
+            get_current_superadmin_user(request=None, token="test", session=None)
+    assert exc.value.status_code == 403

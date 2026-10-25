@@ -106,3 +106,91 @@ def test_incomplete_heartbeat_does_not_clear_active_incident():
         s.commit()
         assert scan_incidents_once(s, now=T0 + timedelta(minutes=1, seconds=1))["recovered"] == 0
         assert s.exec(select(OperationalIncident)).one().resolved_at is None
+
+
+def test_one_batch_handles_100_clients_without_per_client_queries_or_duplicate_events():
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as s:
+        for i in range(100):
+            client = Client(name=f"fleet-{i}", status="approved")
+            s.add(client)
+            s.flush()
+            credential = ClientDomainCredential(
+                id=str(uuid.uuid4()), client_id=int(client.id),
+                domain="status", secret_hash="test-only", created_at=T0,
+            )
+            s.add(credential)
+            s.flush()
+            s.add(ClientDomainStatus(
+                id=str(uuid.uuid4()), client_id=int(client.id), domain="status",
+                schema_version=1, observed_state="online",
+                status_payload={"services": {"clientflow-browser-guard.service": "inactive"}},
+                boot_id=BOOT_A, credential_id=credential.id, reported_at=T0,
+            ))
+        s.commit()
+
+    with Session(engine) as s:
+        selects = []
+        def count_select(_conn, _cursor, statement, _args, _context, _executemany):
+            if statement.lstrip().upper().startswith("SELECT"):
+                selects.append(statement)
+        event.listen(engine, "before_cursor_execute", count_select)
+        try:
+            summary = scan_incidents_once(s, now=T0 + timedelta(seconds=1))
+            assert summary == {"locked": 0, "observations": 100, "opened": 100, "recovered": 0}
+            assert len(selects) == 2
+        finally:
+            event.remove(engine, "before_cursor_execute", count_select)
+        s.commit()
+        assert scan_incidents_once(s, now=T0 + timedelta(seconds=2))["opened"] == 0
+        s.commit()
+    with Session(engine) as s:
+        assert len(s.exec(select(OperationalIncident)).all()) == 100
+        assert len(s.exec(select(OperationalIncidentEvent)).all()) == 100
+
+
+def test_coverage_endpoint_uses_two_projected_queries_without_status_payload_or_writes():
+    from fastapi import Response
+    from service1.models import utcnow
+    from service1.routers.operational_incidents import operational_report_coverage
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    now = utcnow()
+    with Session(engine) as s:
+        for i in range(2):
+            client = Client(name=f"coverage-{i}", status="approved")
+            s.add(client)
+            s.flush()
+            credential = ClientDomainCredential(
+                id=str(uuid.uuid4()), client_id=int(client.id),
+                domain="status", secret_hash="test-only", created_at=now,
+            )
+            s.add(credential)
+            s.flush()
+            s.add(ClientDomainStatus(
+                id=str(uuid.uuid4()), client_id=int(client.id), domain="status",
+                schema_version=1, observed_state="online",
+                status_payload={"wifi_password": "DO_NOT_SELECT_ME"},
+                boot_id=BOOT_A, credential_id=credential.id,
+                reported_at=now if i == 0 else now - timedelta(hours=3),
+            ))
+        s.commit()
+
+    with Session(engine) as s:
+        sql = []
+        def capture(_conn, _cursor, statement, _args, _ctx, _executemany):
+            sql.append(statement)
+        event.listen(engine, "before_cursor_execute", capture)
+        try:
+            response = Response()
+            result = operational_report_coverage(response=response, session=s, _user=object())
+        finally:
+            event.remove(engine, "before_cursor_execute", capture)
+        assert response.headers["Cache-Control"] == "no-store"
+        assert len([s for s in sql if s.lstrip().upper().startswith("SELECT")]) == 2
+        assert not any("status_payload" in statement.lower() for statement in sql)
+        assert result["approved_clients"] == 2
+        assert result["domains"][0] == {"domain": "status", "fresh": 1, "stale": 1, "missing": 0}
+        assert result["domains"][1] == {"domain": "display", "fresh": 0, "stale": 0, "missing": 2}

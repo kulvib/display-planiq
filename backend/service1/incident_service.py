@@ -52,6 +52,12 @@ def reconcile_observation(
     boot = _boot_id(boot_id)
     current = {row.code: row for row in active if row.client_id == client_id and row.domain == domain and row.resolved_at is None}
     opened = recovered = 0
+    # A clock rollback or an out-of-order durable observation is not evidence
+    # of recovery. Keep the existing episode open instead of giving it a
+    # resolved_at earlier than the last confirmed fault. Normal same-timestamp
+    # idempotent scans remain permitted.
+    if any(reported_at < max(row.started_at, row.last_observed_at) for row in current.values()):
+        return 0, 0
     for code, signal in signals.items():
         old = current.get(code)
         if old is None:
