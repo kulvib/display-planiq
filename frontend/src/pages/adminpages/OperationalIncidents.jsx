@@ -38,6 +38,8 @@ export default function OperationalIncidents() {
   const [events, setEvents] = useState({});
   const [operations, setOperations] = useState([]);
   const [operationError, setOperationError] = useState("");
+  const [coverage, setCoverage] = useState(null);
+  const [coverageError, setCoverageError] = useState("");
   const [detailsError, setDetailsError] = useState("");
 
   const reload = useCallback(() => setRefreshKey((key) => key + 1), []);
@@ -58,6 +60,14 @@ export default function OperationalIncidents() {
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
   }, [status, severity, clientId, page, refreshKey]);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    client.get("/api/superadmin/operational-incidents/report-coverage", { signal: abort.signal })
+      .then(({ data }) => { if (!abort.signal.aborted) { setCoverage(data); setCoverageError(""); } })
+      .catch(() => { if (!abort.signal.aborted) { setCoverage(null); setCoverageError("Rapportdækningen kunne ikke hentes."); } });
+    return () => abort.abort();
+  }, [refreshKey]);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -110,6 +120,27 @@ export default function OperationalIncidents() {
           </TextField>
           <TextField size="small" label="Klient-ID" value={clientId} onChange={change(setClientId)} placeholder="Alle klienter" />
         </Stack>
+      </Paper>
+      <Paper sx={paper}>
+        <Typography fontWeight={800} mb={0.7}>Dækning af klientrapporter</Typography>
+        <Typography variant="body2" sx={{ color: "#cbd5e1", mb: 1.5 }}>
+          Viser modtagne rapporter fra godkendte klienter (frisk: højst 180 sekunder).
+          Manglende rapporter er ikke i sig selv en registreret fejl. Denne kontrol beviser ikke, at fejldetektorens baggrundsscanner kører.
+        </Typography>
+        {coverageError && <Alert severity="warning">{coverageError}</Alert>}
+        {coverage && <>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            Godkendte klienter: <strong>{coverage.approved_clients}</strong>
+          </Typography>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {(coverage.domains || []).map((domain) => <Chip
+              key={domain.domain}
+              color={!coverage.approved_clients || domain.missing || domain.stale ? "warning" : "success"}
+              variant="outlined"
+              label={`${domain.domain}: ${domain.fresh} friske · ${domain.stale} forsinkede · ${domain.missing} mangler`}
+            />)}
+          </Stack>
+        </>}
       </Paper>
       {error && <Alert severity="error">{error}</Alert>}
       {detailsError && <Alert severity="warning">{detailsError}</Alert>}

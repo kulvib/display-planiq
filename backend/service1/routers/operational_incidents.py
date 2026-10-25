@@ -13,6 +13,8 @@ from sqlmodel import Session, select
 from ..auth import get_current_superadmin_user
 from ..db import get_session
 from ..incident_models import OperationalIncident, OperationalIncidentEvent
+from ..incident_coverage import coverage_summary
+from ..client_domain_models import ClientDomainStatus
 from ..models import Client, Organization, utcnow
 
 router = APIRouter(prefix="/superadmin/operational-incidents", tags=["operational-incidents"])
@@ -44,6 +46,30 @@ class IncidentEventItem(BaseModel):
     boot_id_changed: bool = False
 
 
+@router.get("/report-coverage")
+def operational_report_coverage(
+    response: Response,
+    session: Session = Depends(get_session),
+    _user=Depends(get_current_superadmin_user),
+):
+    """Aggregate data coverage, not a new client poll or background scan.
+
+    Two bounded SELECT statements, no raw JSON status payload, no client IDs,
+    no secrets and no reclassification of offline/missing reports as healthy.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    approved_filter = (Client.status == "approved", Client.deleted_at.is_(None))
+    approved = session.exec(
+        select(func.count(Client.id)).where(*approved_filter)
+    ).one()
+    report_rows = session.exec(
+        select(ClientDomainStatus.domain, ClientDomainStatus.reported_at)
+        .join(Client, Client.id == ClientDomainStatus.client_id)
+        .where(*approved_filter, ClientDomainStatus.domain.in_(("status", "display", "system")))
+    ).all()
+    return coverage_summary(int(approved), report_rows, now=utcnow())
+
+
 @router.get("")
 def list_operational_incidents(
     response: Response,
@@ -69,7 +95,6 @@ def list_operational_incidents(
     count = session.exec(select(func.count(OperationalIncident.id)).where(*filters)).one()
     # Current agent verification is correlated to the exact source domain; no
     # active incident is shown as "resolved" merely because a client rebooted.
-    from ..client_domain_models import ClientDomainStatus
     statement = (
         select(OperationalIncident, Client.name, Organization.name, ClientDomainStatus.reported_at)
         .join(Client, Client.id == OperationalIncident.client_id)
