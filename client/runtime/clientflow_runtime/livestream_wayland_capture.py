@@ -44,6 +44,7 @@ def _require_elements() -> None:
         "pipewiresrc",
         "queue",
         "videoconvert",
+        "videoscale",
         "videorate",
         "x264enc",
         "h264parse",
@@ -267,19 +268,20 @@ def _build_pipeline(
     max_files = playlist_size + 2
     keepalive_ms = max(1, round(1000 / fps))
 
-    # No width/height cap is applied: Mutter's monitor stream stays at native
-    # resolution. videorate establishes the approved 10 fps cadence while
-    # pipewiresrc keepalive repeats the last frame on a static desktop.
+    # A control-room preview does not need to software-encode a 4K/8K native
+    # monitor. Cap encoded frames at 1280x720 and letterbox non-16:9 desktops
+    # instead of distorting the screen. Preserve the configured FPS and bitrate.
+    # Keepalive repeats static frames without a user interaction.
     description = (
-        f"pipewiresrc path={node_id} do-timestamp=true on-disconnect=error "
+        f"pipewiresrc name=capture_source path={node_id} do-timestamp=true on-disconnect=error "
         f"keepalive-time={keepalive_ms} "
         "! queue max-size-buffers=8 leaky=downstream "
-        "! videoconvert ! videorate "
-        f"! video/x-raw,format=I420,framerate={fps}/1 "
-        f"! x264enc tune=zerolatency speed-preset={preset} key-int-max={key_interval} "
+        "! videoconvert ! videoscale add-borders=true ! videorate "
+        f"! video/x-raw,format=I420,width=1280,height=720,framerate={fps}/1 "
+        f"! x264enc name=h264_encoder tune=zerolatency speed-preset={preset} key-int-max={key_interval} "
         f"bframes=0 bitrate={bitrate_kbit} "
         "! h264parse config-interval=-1 "
-        "! mpegtsmux "
+        "! mpegtsmux name=ts_mux "
         f"! hlssink target-duration={segment_seconds} playlist-length={playlist_size} "
         f"max-files={max_files} location=\"{location}\" playlist-location=\"{playlist}\""
     )
@@ -289,28 +291,81 @@ def _build_pipeline(
     return pipeline
 
 
-def _run_pipeline(pipeline: Gst.Pipeline) -> None:
+def _run_pipeline(pipeline: Gst.Pipeline, output: Path) -> None:
+    """Log bounded stage progress without copying pixels or exposing screenshots.
+
+    The watchdog in livestream_producer owns the 25s startup deadline. These
+    counters distinguish missing PipeWire buffers, slow encoding and stalled
+    HLS muxing even when GStreamer emits no ERROR bus message.
+    """
+    counters = {"source": 0, "encoded": 0, "muxed": 0}
+    probes = []
+
+    def count_buffer(_pad, _info, stage):
+        counters[stage] += 1
+        return Gst.PadProbeReturn.OK
+
+    for name, stage in (
+        ("capture_source", "source"),
+        ("h264_encoder", "encoded"),
+        ("ts_mux", "muxed"),
+    ):
+        element = pipeline.get_by_name(name)
+        if element is None:
+            raise RuntimeError(f"GStreamer progress element missing: {name}")
+        pad = element.get_static_pad("src")
+        if pad is None:
+            raise RuntimeError(f"GStreamer progress pad missing: {name}")
+        probe_id = pad.add_probe(Gst.PadProbeType.BUFFER, count_buffer, stage)
+        probes.append((pad, probe_id))
+
     bus = pipeline.get_bus()
-    state_result = pipeline.set_state(Gst.State.PLAYING)
-    if state_result == Gst.StateChangeReturn.FAILURE:
-        raise RuntimeError("GStreamer could not enter PLAYING state")
+    started = time.monotonic()
+    last_report = started
+    ready_seen = False
     try:
+        state_result = pipeline.set_state(Gst.State.PLAYING)
+        if state_result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("GStreamer could not enter PLAYING state")
         while not _STOP:
             message = bus.timed_pop_filtered(
                 Gst.SECOND,
                 Gst.MessageType.ERROR | Gst.MessageType.EOS,
             )
-            if message is None:
-                continue
-            if message.type == Gst.MessageType.ERROR:
-                error, debug = message.parse_error()
-                raise RuntimeError(f"GStreamer error: {error.message}; debug={debug or ''}")
-            if message.type == Gst.MessageType.EOS:
-                if not _STOP:
-                    raise RuntimeError("GStreamer stream ended unexpectedly")
-                break
+            if message is not None:
+                if message.type == Gst.MessageType.ERROR:
+                    error, debug = message.parse_error()
+                    raise RuntimeError(f"GStreamer error: {error.message}; debug={debug or ''}")
+                if message.type == Gst.MessageType.EOS:
+                    if not _STOP:
+                        raise RuntimeError("GStreamer stream ended unexpectedly")
+                    break
+            now = time.monotonic()
+            if not ready_seen and (output / "index.m3u8").is_file() and any(output.glob("segment-*.ts")):
+                ready_seen = True
+                print(f"clientflow_hls_first_segment elapsed_s={now - started:.2f}", flush=True)
+            if not ready_seen and now - last_report >= 5:
+                last_report = now
+                print(
+                    "clientflow_hls_progress "
+                    f"elapsed_s={int(now - started)} "
+                    f"source_buffers={counters['source']} "
+                    f"encoded_buffers={counters['encoded']} "
+                    f"muxed_buffers={counters['muxed']}",
+                    flush=True,
+                )
     finally:
         pipeline.set_state(Gst.State.NULL)
+        for pad, probe_id in probes:
+            pad.remove_probe(probe_id)
+        print(
+            "clientflow_hls_final "
+            f"elapsed_s={int(time.monotonic() - started)} "
+            f"source_buffers={counters['source']} "
+            f"encoded_buffers={counters['encoded']} "
+            f"muxed_buffers={counters['muxed']}",
+            flush=True,
+        )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -367,7 +422,7 @@ def main() -> int:
             args.segment_seconds,
             args.playlist_size,
         )
-        _run_pipeline(pipeline)
+        _run_pipeline(pipeline, output)
         return 0
     finally:
         capture.close()

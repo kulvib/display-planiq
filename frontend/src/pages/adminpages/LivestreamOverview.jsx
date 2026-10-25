@@ -27,6 +27,7 @@ import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSessi
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
 const HEALTH_STARTUP_POLL_MS = 2_000;
+const HEALTH_STARTUP_WARNING_MS = 15_000;
 
 function isRequestTimeout(error) {
   return error?.name === "TimeoutError" || /signal.*timed out|timeout/i.test(String(error?.message || ""));
@@ -180,6 +181,14 @@ function LivestreamTile({ client, pageMediaActive }) {
     }
 
     let cancelled = false;
+    let mediaReady = false;
+    let startupWarned = false;
+    const startupWarning = window.setTimeout(() => {
+      if (!cancelled && !mediaReady) {
+        startupWarned = true;
+        setMessage("Ingen livestream-video efter 15 sekunder – undersøger fortsat streamen automatisk …");
+      }
+    }, HEALTH_STARTUP_WARNING_MS);
     if (isTouchHandset) viewerIdRef.current = makeViewerId(client.id);
     const sessionViewerId = viewerIdRef.current;
     activeRef.current = true;
@@ -213,6 +222,8 @@ function LivestreamTile({ client, pageMediaActive }) {
           hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(hlsUrl));
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (cancelled) return;
+            mediaReady = true;
+            window.clearTimeout(startupWarning);
             setState("live");
             setMessage("");
             video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
@@ -230,7 +241,9 @@ function LivestreamTile({ client, pageMediaActive }) {
               return;
             }
             setState("starting");
-            setMessage("Venter på friske segmenter …");
+            setMessage(startupWarned
+              ? "Streamen er endnu ikke klar – kontroller skærmoptagelsen på klienten."
+              : "Venter på friske segmenter …");
           });
           return;
         }
@@ -241,6 +254,8 @@ function LivestreamTile({ client, pageMediaActive }) {
           video.muted = true;
           video.autoplay = true;
           video.playsInline = true;
+          mediaReady = true;
+          window.clearTimeout(startupWarning);
           setState("live");
           setMessage("");
           video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
@@ -329,6 +344,7 @@ function LivestreamTile({ client, pageMediaActive }) {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(startupWarning);
       stopLocalWork(true);
     };
   }, [client.id, clientOnline, shouldRun, mobileViewerActive, isTouchHandset, stopLocalWork, updateLatency]);

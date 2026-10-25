@@ -13,6 +13,7 @@ import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
+const HEALTH_STARTUP_WARNING_MS = 15_000;
 const HEALTH_STABLE_POLL_MS = 10_000;
 const AUTO_RECONNECT_DELAY_MS = 2000;
 const STALE_SEGMENT_RESTART_AFTER_SECONDS = 90;
@@ -730,6 +731,7 @@ export default function ClientDetailsLivestreamSection({
   const [streamStale, setStreamStale]           = useState(false);
   const [autoStartStatus, setAutoStartStatus]   = useState("");
   const [autoStartError, setAutoStartError]     = useState("");
+  const [startupWarningVisible, setStartupWarningVisible] = useState(false);
   const [healthInfo, setHealthInfo]             = useState(null);
   const [viewerContactEstablished, setViewerContactEstablished] = useState(false);
   const [viewerContactActiveViewers, setViewerContactActiveViewers] = useState(null);
@@ -802,6 +804,17 @@ export default function ClientDetailsLivestreamSection({
     const parentKey = streamKey ?? "none";
     return `${parentKey}:${localRefreshKey}`;
   }, [streamKey, localRefreshKey]);
+
+  // Show a non-blocking warning if first HLS media is not ready after 15 seconds.
+  // The timer never stops, restarts or changes a client-side producer.
+  useEffect(() => {
+    setStartupWarningVisible(false);
+    if (!clientId || !pageVisible || !mobileViewerActive || inactivityStopped || clientOnline === false || manifestReady) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setStartupWarningVisible(true), HEALTH_STARTUP_WARNING_MS);
+    return () => window.clearTimeout(timer);
+  }, [clientId, effectiveRefreshKey, pageVisible, mobileViewerActive, inactivityStopped, clientOnline, manifestReady]);
 
   const displayRuntimeSignature = useMemo(
     () => getDisplayRuntimeSignature(client),
@@ -1755,6 +1768,8 @@ export default function ClientDetailsLivestreamSection({
     ? (inactivityStopMessage || INACTIVITY_STOP_MESSAGE)
     : autoStartError
     ? autoStartError
+    : startupWarningVisible && !manifestReady
+      ? "Ingen livestream-video efter 15 sekunder – forsøger fortsat automatisk. Kontroller skærmoptagelsen på klienten."
     : autoStartStatus
       ? autoStartStatus
       : streamStale
@@ -1980,6 +1995,14 @@ export default function ClientDetailsLivestreamSection({
     }
 
     if (!serverReady || !manifestReady) {
+      if (startupWarningVisible) {
+        return {
+          severity: "warning",
+          title: "Livestream er endnu ikke klar",
+          detail: "Ingen video efter 15 sekunder – klientens skærmoptagelse eller forbindelse kan være forsinket.",
+          persistent: true,
+        };
+      }
       if (viewerContactEstablished) {
         const viewerText = Number.isFinite(viewerContactActiveViewers)
           ? `${viewerContactActiveViewers} aktiv${viewerContactActiveViewers === 1 ? "" : "e"} viewer${viewerContactActiveViewers === 1 ? "" : "e"}`
@@ -2023,6 +2046,7 @@ export default function ClientDetailsLivestreamSection({
     manifestReady,
     serverReady,
     streamStale,
+    startupWarningVisible,
     viewerContactActiveViewers,
     viewerContactEstablished,
   ]);

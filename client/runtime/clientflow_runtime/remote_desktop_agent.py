@@ -12,13 +12,13 @@ from typing import Any, Protocol
 import uuid
 
 import websockets
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from .atomic import atomic_write_json
 from .config import DomainCredential
 from .constants import Domain
 from .logging_utils import configure_logging
-from .remote_desktop_net import DomainTransport, backoff_seconds
+from .remote_desktop_net import DomainTransport, TransportError, backoff_seconds
 from .remote_desktop_files import FileArea
 from .status import report_status
 from .unix_rpc import RpcError, call
@@ -549,7 +549,19 @@ class RemoteDesktopAgent:
                         await self._process_channel_message(channel, raw)
             except KeyboardInterrupt:
                 return
-            except (ConnectionClosed, OSError, RuntimeError, json.JSONDecodeError):
+            except TransportError as exc:
+                # A token-fetch failure happens before the WebSocket handshake.
+                # HTTPS fallback requires that very same token, so attempting it
+                # immediately duplicates 5xx traffic and obscures the cause.
+                # The outer bounded backoff retries normally; never skip auth.
+                self.logger.warning(
+                    "remote_desktop_token_or_transport_unavailable",
+                    extra={"event": channel, "status_code": exc.status_code},
+                )
+            except (WebSocketException, OSError, RuntimeError, json.JSONDecodeError):
+                # InvalidStatusCode (e.g. proxy HTTP 500) is a WebSocketException,
+                # NOT ConnectionClosed/RuntimeError. It previously escaped this
+                # loop, killing the agent rather than trying HTTPS fallback.
                 self.logger.warning("remote_desktop_websocket_unavailable_using_https_fallback", extra={"event": channel}, exc_info=True)
                 try:
                     await self._http_channel_once(channel)

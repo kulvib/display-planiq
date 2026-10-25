@@ -1,7 +1,10 @@
 """Remote Desktop-owned HTTP authentication boundary for the installed agent."""
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -9,6 +12,7 @@ from ..db import engine
 from ..remote_desktop_v2 import issue_remote_desktop_token_response
 
 router = APIRouter(tags=["remote-desktop-auth"])
+logger = logging.getLogger("clientflow.remote_desktop.auth")
 
 
 class RemoteDesktopTokenBody(BaseModel):
@@ -22,12 +26,18 @@ class RemoteDesktopTokenBody(BaseModel):
 def remote_desktop_token(body: RemoteDesktopTokenBody):
     if body.domain != "remote_desktop":
         raise HTTPException(status_code=404, detail="Domæne-endpoint ikke fundet")
-    with Session(engine) as session:
-        response = issue_remote_desktop_token_response(
-            session,
-            client_id=body.client_id,
-            credential_id=body.credential_id,
-            client_secret=body.client_secret,
-        )
-        session.commit()
-        return response
+    try:
+        with Session(engine) as session:
+            response = issue_remote_desktop_token_response(
+                session,
+                client_id=body.client_id,
+                credential_id=body.credential_id,
+                client_secret=body.client_secret,
+            )
+            session.commit()
+            return response
+    except SQLAlchemyError as exc:
+        # Do not log the submitted secret, SQL query parameters or credentials.
+        # A transient DB failure is not an invalid domain credential (401).
+        logger.warning("remote_desktop_token_database_unavailable error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Remote Desktop tokenservice midlertidigt utilgængelig") from None
