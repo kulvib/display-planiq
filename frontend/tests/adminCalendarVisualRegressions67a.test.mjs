@@ -48,8 +48,8 @@ test('operations and maintenance refresh share Audit-log aligned header treatmen
   assert.match(maintenance, /<Paper elevation=\{0\} sx=\{\{ p: \{ xs: 1\.5, md: 2 \}/);
 });
 
-test('Adgang remains reachable for superadmin and API errors remain actionable', () => {
-  assert.match(admin, /key: "access",\s*label: "Adgang"/);
+test('Brugeradministration remains reachable for superadmin and API errors remain actionable', () => {
+  assert.match(admin, /key: "access",\s*label: "Brugeradministration"/);
   assert.match(admin, /activeSection === "access"[\s\S]*?<AccessErrorBoundary>[\s\S]*?<UserAdministration/);
   assert.match(access, /const isSuperadmin = Boolean\(auth\?\.isSuperadmin/);
   assert.match(access, /if \(!isAdmin && !isSuperadmin\)/);

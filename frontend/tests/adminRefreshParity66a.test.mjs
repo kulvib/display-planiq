@@ -8,7 +8,7 @@ const button = read('src/components/AdminRefreshButton.jsx');
 const pages = [
   ['Audit-log', 'adminpages/AuditLog.jsx', /onClick=\{\(\) => setRefreshTick/, /loading=\{loading\}/],
   ['Organisation', 'adminpages/OrganizationAdministration.jsx', /onClick=\{fetchOrganizations\}/, /loading=\{loading\}/],
-  ['Adgang', 'adminpages/UserAdministration.jsx', /onClick=\{\(\) => void loadData\(\)\}/, /loading=\{userLoading\}/],
+  ['Brugeradministration', 'adminpages/UserAdministration.jsx', /onClick=\{\(\) => void loadData\(\)\}/, /loading=\{userLoading\}/],
   ['Driftsfejl', 'adminpages/OperationalIncidents.jsx', /onClick=\{reload\}/, /loading=\{loading\}/],
   ['Installation', 'adminpages/EnrollmentTokensPage.jsx', /onClick=\{loadTokens\}/, /loading=\{loading\}/],
   ['Livestreams', 'adminpages/LivestreamOverview.jsx', /onClick=\{\(\) => void load\(\)\}/, /loading=\{loading\}/],
@@ -57,7 +57,7 @@ test('Refresh controls sit to the right of their headings, not in content or des
   assert.ok(incidents.indexOf('Driftsfejl og genopretning') < incidents.indexOf('<AdminRefreshButton'));
   assert.ok(installation.indexOf('Installationskoder</Typography>') < installation.indexOf('<AdminRefreshButton'));
   assert.ok(overview.indexOf('Livestream oversigt') < overview.indexOf('<AdminRefreshButton'));
-  assert.ok(access.indexOf('Brugeradministration</Typography>') < access.indexOf('<AdminRefreshButton'));
+  assert.ok(access.indexOf('Brugeradministration\n') < access.indexOf('<AdminRefreshButton'));
   assert.ok(maintenance.indexOf('Vedligeholdelse</Typography>') < maintenance.indexOf('<AdminRefreshButton'));
   assert.ok(clientList.indexOf('Control Room\n') < clientList.indexOf('<AdminRefreshButton'));
   assert.ok(calendar.indexOf('Kalender\n') < calendar.indexOf('<AdminRefreshButton'));
