@@ -253,7 +253,8 @@ const ClientSelectorInline = React.memo(function ClientSelectorInline({
           gridTemplateColumns: {
             xs: "1fr",
             sm: "1fr 1fr",
-            md: "repeat(5, 1fr)",
+            md: "repeat(3, minmax(0, 1fr))",
+            xl: "repeat(5, minmax(0, 1fr))",
           },
           gap: { xs: 1, sm: 2, md: 2 },
         }}
@@ -261,10 +262,16 @@ const ClientSelectorInline = React.memo(function ClientSelectorInline({
         {filteredClients.map((client) => (
           <Box
             key={client.id}
+            component="label"
+            htmlFor={`calendar-client-${client.id}`}
             sx={{
               display: "flex",
               alignItems: "center",
-              px: { xs: 0.5, sm: 1 },
+              boxSizing: "border-box",
+              width: "100%",
+              minWidth: 0,
+              overflow: "hidden",
+              px: { xs: 1, sm: 1.25 },
               py: { xs: 0.5, sm: 0.5 },
               background: selected.includes(client.id)
                 ? "rgba(56,189,248,0.14)"
@@ -273,27 +280,28 @@ const ClientSelectorInline = React.memo(function ClientSelectorInline({
               cursor: disabled ? "not-allowed" : "pointer",
               border: "1px solid rgba(148,163,184,0.12)",
               color: "rgba(226,232,240,0.92)",
+              "&:focus-within": {
+                outline: "2px solid #38bdf8",
+                outlineOffset: 2,
+              },
               ":hover": {
                 background: disabled
                   ? "rgba(15,23,42,0.28)"
                   : "rgba(56,189,248,0.10)",
               },
             }}
-            onClick={() => {
-              if (disabled) return;
-              onChange(
-                selected.includes(client.id)
-                  ? selected.filter((sid) => sid !== client.id)
-                  : [...selected, client.id],
-              );
-            }}
           >
             <Checkbox
-              edge="start"
+              id={`calendar-client-${client.id}`}
               checked={selected.includes(client.id)}
-              tabIndex={-1}
+              onChange={(event) => {
+                if (disabled) return;
+                onChange(event.target.checked
+                  ? [...selected, client.id]
+                  : selected.filter((sid) => sid !== client.id));
+              }}
               disableRipple
-              sx={{ p: 0, pr: 1, minWidth: { xs: 32, sm: 28 } }}
+              sx={{ p: 0, mr: 1, ml: 0, flex: "0 0 auto" }}
               disabled={disabled}
             />
             {selectedOrganization ? (
@@ -309,7 +317,7 @@ const ClientSelectorInline = React.memo(function ClientSelectorInline({
                 {client.locality || client.name || "Ingen lokalitet"}
               </Typography>
             ) : (
-              <Box sx={{ width: "100%" }}>
+              <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
                 <Typography
                   variant="body2"
                   sx={{
