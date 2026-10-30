@@ -53,7 +53,7 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected_tuple <= source_tuple
     # 1240 remains a non-default, update-only pilot while 1241 is staged source.
     # The default 1239 selector must never silently become an update target.
-    assert source_sequence == catalog_sequence == 1241
+    assert source_sequence == 1242 and catalog_sequence == 1241
     assert selected_tuple < source_tuple
     pilot = catalog["releases"][1]
     assert pilot["release_sequence"] == catalog_sequence
