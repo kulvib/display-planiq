@@ -33,10 +33,12 @@ def fixture(tmp_path: Path, *, version: str = "1.3.41", seq: int = 1242, trusted
     return repo
 
 
-def test_current_source_is_safely_blocked() -> None:
+def test_current_source_is_staged_but_never_published() -> None:
     result = inspect_source(ROOT)
     assert result["phase"] == "source_stage_only"
-    assert result["source_stage_ready"] is False
+    assert result["source_stage_ready"] is True
+    assert result["manual_rollback_mode"] == "disabled"
+    assert result["requires_operator_signer_identity_verification"] is False
     assert result["publish_authorized"] is False
     assert result["activation_authorized"] is False
     assert {c["name"] for c in result["checks"]} == {"release_version", "release_sequence", "manual_rollback_safety_mode"}
