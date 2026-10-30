@@ -1,7 +1,7 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1241,
+  "catalog_sequence": 1242,
   "latest_stable": "1.3.38",
   "default_install_version": "1.3.38",
   "retention_policy": {
@@ -74,6 +74,42 @@
         "1.3.39/1240 pilot is closed after recovery_failed; historic deployment records and immutable stored bundle are not modified. ClientFlow 1.3.38 remains sole fresh-install/stable/default target. No automatic rollout, no remote rollback. Local recovery is a separate mechanism; physical 1.3.40 acceptance pending."
       ],
       "release_id": "clientflow-1.3.40-seq-1241",
+      "artifact_type": "runtime_release",
+      "install_modes": [
+        "in_place_update"
+      ],
+      "min_current_version": "1.3.38",
+      "max_current_version": "1.3.38"
+    },
+    {
+      "version": "1.3.41",
+      "client_version": "1.3.41",
+      "release_sequence": 1242,
+      "revision": "clientflow-1.3.41-seq-1242",
+      "status": "supported",
+      "installable": false,
+      "update_allowed": true,
+      "rollback_allowed": false,
+      "requires_explicit_downgrade": false,
+      "requires_reboot": true,
+      "ubuntu_compatibility": {
+        "policy": "ubuntu-desktop-lts-minimum",
+        "minimum_lts_version": "26.04",
+        "maximum_certified_version": "26.04",
+        "certified_versions": [
+          "26.04"
+        ],
+        "architecture": "amd64",
+        "desktop": "gnome",
+        "display_stack": "wayland",
+        "requires_platform_preflight": true
+      },
+      "notes": [
+        "Approved ClientFlow 1.3.41/1242 is immutably published in Render release-store: SHA-256 5b6603f9169870e867d340a567df1194c57dfb254b306328c07f1366023aabce, size 223610880 bytes, source commit 33fb7bafa9cd37b8ab3bebb437c1e4d81a50460d, candidate SHA-256 d240a32595d4d33f33bfbff39b071f2bb6fba3e98a281b8718b30c3b43ca8633, approval CF-1.3.41-1242-PILOT-20261030. Reproducible builds, manual approval, Ubuntu 26.04 executable gate, Render publication and independent immutable-store re-read passed.",
+        "Manual single-reserve-client pilot only, exact 1.3.38 to 1.3.41 update with CLIENTFLOW_1242_PILOT_CLIENT_ID set to the approved non-Heidi1 client ID. Feature disabled by default, and cannot run while CLIENTFLOW_1241_PILOT_CLIENT_ID=1. No repair, downgrade, silent rollout or fleet update. Backend verifies exact approved SHA/size/source/approval before and after per-client lock.",
+        "ClientFlow 1.3.41/1242 has manual rollback disabled by immutable trust mode; automatic failed-activation recovery is separate and requires physical testing on spare Ubuntu 26.04 host with local rescue. Livestream and Remote Desktop remain physically unverified; physical pilot acceptance is PENDING. Stable/default fresh install stays 1.3.38 and Heidi1 remains on 1.3.40."
+      ],
+      "release_id": "clientflow-1.3.41-seq-1242",
       "artifact_type": "runtime_release",
       "install_modes": [
         "in_place_update"

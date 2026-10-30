@@ -20,7 +20,7 @@ CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 def test_catalog_1239_promotes_exact_1338_fresh_install_identity() -> None:
     data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
-    assert data["catalog_sequence"] == 1241
+    assert data["catalog_sequence"] == 1242
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert data["retention_policy"] == {
@@ -28,7 +28,7 @@ def test_catalog_1239_promotes_exact_1338_fresh_install_identity() -> None:
         "keep_blocked_metadata": False,
     }
 
-    assert len(data["releases"]) == 2
+    assert len(data["releases"]) == 3
     release = data["releases"][0]
     assert release["version"] == "1.3.38"
     assert release["client_version"] == "1.3.38"
@@ -69,8 +69,8 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
     assert source_version == "1.3.41"
     assert release_input["release_sequence"] == 1242
     assert release_input["runtime_python"] == "3.13.14"
-    assert data["catalog_sequence"] == 1241
-    assert data["catalog_sequence"] + 1 == release_input["release_sequence"]
+    assert data["catalog_sequence"] == 1242
+    assert data["catalog_sequence"] == release_input["release_sequence"]
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert release["release_id"] == "clientflow-1.3.38-seq-1239"
@@ -88,6 +88,11 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
     assert all(item["release_sequence"] != 1240 for item in data["releases"])
+    new_pilot = data["releases"][2]
+    assert new_pilot["release_id"] == "clientflow-1.3.41-seq-1242"
+    assert new_pilot["install_modes"] == ["in_place_update"]
+    assert new_pilot["installable"] is False and new_pilot["rollback_allowed"] is False
+    assert new_pilot["min_current_version"] == new_pilot["max_current_version"] == "1.3.38"
 
     # SHA-256 and approval provenance belong to the immutable published bundle,
     # never to the catalog selector (which holds policy only).

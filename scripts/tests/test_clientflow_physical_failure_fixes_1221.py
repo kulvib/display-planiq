@@ -59,13 +59,13 @@ def test_approved_1338_1239_fresh_install_selector_keeps_update_blocked():
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(_source(CATALOG))
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["release_sequence"] == 1239
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
     assert selected["installable"] is True
     assert selected["update_allowed"] is False
     assert selected["install_modes"] == ["fresh_install"]

@@ -94,11 +94,11 @@ def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
             encoding="utf-8"
         )
     )
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
     selected = catalog["releases"][0]
-    assert release_input["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert release_input["release_sequence"] == catalog["catalog_sequence"]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False

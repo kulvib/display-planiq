@@ -40,27 +40,32 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
         assert sequence_gap in {0, 1}
     assert len(source_tuple) == 3
 
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     selected = catalog["releases"][0]
     assert selected["version"] == catalog["latest_stable"]
     assert selected["version"] == catalog["default_install_version"]
     assert selected["release_sequence"] == 1239
-    assert catalog_sequence == 1241
+    assert catalog_sequence == 1242
     assert selected["release_id"] == f"clientflow-{selected['version']}-seq-{selected['release_sequence']}"
     assert selected["revision"] == selected["release_id"]
 
     selected_tuple = tuple(int(part) for part in selected["version"].split("."))
     assert selected_tuple <= source_tuple
-    # 1240 remains a non-default, update-only pilot while 1241 is staged source.
+    # 1240 remains revoked; 1241 and 1242 are update-only and never the default.
     # The default 1239 selector must never silently become an update target.
-    assert source_sequence == 1242 and catalog_sequence == 1241
+    assert source_sequence == 1242 and catalog_sequence == 1242
     assert selected_tuple < source_tuple
     pilot = catalog["releases"][1]
-    assert pilot["release_sequence"] == catalog_sequence
+    assert pilot["release_sequence"] == 1241
     assert pilot["version"] == "1.3.40"
     assert pilot["release_id"] == "clientflow-1.3.40-seq-1241"
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["installable"] is False and pilot["rollback_allowed"] is False
+    new_pilot = catalog["releases"][2]
+    assert new_pilot["release_sequence"] == catalog_sequence
+    assert new_pilot["release_id"] == "clientflow-1.3.41-seq-1242"
+    assert new_pilot["install_modes"] == ["in_place_update"]
+    assert new_pilot["installable"] is False and new_pilot["rollback_allowed"] is False
 
 
 def test_51f_promoted_1338_is_fresh_install_only_and_requires_reboot() -> None:

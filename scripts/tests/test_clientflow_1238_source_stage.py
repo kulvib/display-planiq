@@ -15,16 +15,16 @@ def test_source_identity_promoted_only_after_exact_release_approval():
         "minimum_ubuntu_lts": "26.04", "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     approved = catalog["releases"][0]
     assert approved["release_id"] == "clientflow-1.3.38-seq-1239"
     assert approved["install_modes"] == ["fresh_install"]
     assert approved["installable"] is True
     assert approved["update_allowed"] is False
     assert approved["rollback_allowed"] is False
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     pilot = catalog["releases"][1]
     assert pilot["release_id"] == "clientflow-1.3.40-seq-1241"
     assert pilot["release_sequence"] == 1241

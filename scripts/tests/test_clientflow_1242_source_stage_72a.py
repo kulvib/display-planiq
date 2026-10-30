@@ -23,7 +23,7 @@ def _json(name: str) -> dict:
     return json.loads((ROOT / name).read_text(encoding="utf-8"))
 
 
-def test_exact_source_identity_and_retain_approved_production_catalog() -> None:
+def test_exact_source_identity_and_strict_1242_pilot_catalog() -> None:
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.41"
     source = _json("client/release/release-input.json")
     assert source == {
@@ -34,15 +34,16 @@ def test_exact_source_identity_and_retain_approved_production_catalog() -> None:
         "runtime_python": "3.13.14",
     }
     catalog = _json("backend/service1/clientflow_release_catalog.json")
-    assert catalog["catalog_sequence"] == 1241
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1242
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert [x["release_id"] for x in catalog["releases"]] == [
         "clientflow-1.3.38-seq-1239", "clientflow-1.3.40-seq-1241",
+        "clientflow-1.3.41-seq-1242",
     ]
-    assert not any(x["release_sequence"] >= 1242 for x in catalog["releases"])
-    stable, pilot = catalog["releases"]
+    assert sum(x["release_sequence"] == 1242 for x in catalog["releases"]) == 1
+    stable, pilot = catalog["releases"][:2]
     assert stable["status"] == "stable" and stable["installable"] is True
     assert stable["install_modes"] == ["fresh_install"]
     assert stable["update_allowed"] is False and stable["rollback_allowed"] is False
@@ -50,6 +51,11 @@ def test_exact_source_identity_and_retain_approved_production_catalog() -> None:
     assert pilot["install_modes"] == ["in_place_update"]
     assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
     assert pilot["rollback_allowed"] is False
+    new_pilot = catalog["releases"][2]
+    assert new_pilot["release_id"] == "clientflow-1.3.41-seq-1242"
+    assert new_pilot["install_modes"] == ["in_place_update"]
+    assert new_pilot["installable"] is False and new_pilot["rollback_allowed"] is False
+    assert new_pilot["min_current_version"] == new_pilot["max_current_version"] == "1.3.38"
 
 
 def test_keyless_1242_source_preflight_is_not_publication_or_activation_approval() -> None:

@@ -1,0 +1,29 @@
+Branch: release/clientflow-1.3.41-1242-reserve-pilot-catalog-73a
+Source: fresh main ZIP display-planiq-main(20261030-165420).zip
+Gate: source 1.3.41 / 1242 already approved and immutably published. This branch changes backend catalog/authorization only.
+Deploy default: CLIENTFLOW_1242_PILOT_CLIENT_ID MUST remain unset. No physical deployment until separate approval and green CI/smoke.
+Do not replace client TAR, release signer, rollback trust, build workflows, fresh-install authority or Heidi1.
+
+Changed/added files (repository-relative paths):
+CLIENTFLOW_1.3.41_1242_RESERVE_PILOT_CATALOG_73A.md
+SHA256SUMS.txt
+backend/service1/clientflow_pilot_1241.py
+backend/service1/clientflow_pilot_1242.py
+backend/service1/clientflow_release_catalog.json
+backend/service1/routers/clientflow_deployments.py
+backend/tests/test_clientflow_1241_single_client_pilot.py
+backend/tests/test_clientflow_1242_single_reserve_pilot.py
+backend/tests/test_clientflow_release_catalog_1212.py
+backend/tests/test_clientflow_release_identity_51f.py
+scripts/tests/test_clientflow_1235_physical_acceptance_blockers_stage1.py
+scripts/tests/test_clientflow_1236_quicksettings_guard_release_stage.py
+scripts/tests/test_clientflow_1237_candidate_stage.py
+scripts/tests/test_clientflow_1238_source_stage.py
+scripts/tests/test_clientflow_1239_catalog_promotion.py
+scripts/tests/test_clientflow_1239_source_stage.py
+scripts/tests/test_clientflow_1240_source_stage.py
+scripts/tests/test_clientflow_1241_source_stage.py
+scripts/tests/test_clientflow_1242_source_stage_72a.py
+scripts/tests/test_clientflow_physical_failure_fixes_1221.py
+scripts/tests/test_clientflow_source_freeze_security_hygiene.py
+CHANGED_FILES_1242_RESERVE_PILOT_73A.txt
