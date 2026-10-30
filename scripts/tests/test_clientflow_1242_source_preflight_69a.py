@@ -39,7 +39,7 @@ def test_current_source_is_safely_blocked() -> None:
     assert result["source_stage_ready"] is False
     assert result["publish_authorized"] is False
     assert result["activation_authorized"] is False
-    assert {c["name"] for c in result["checks"]} == {"release_version", "release_sequence", "immutable_public_rollback_trust"}
+    assert {c["name"] for c in result["checks"]} == {"release_version", "release_sequence", "manual_rollback_safety_mode"}
 
 
 def test_valid_public_trust_does_not_authorize_production(tmp_path: Path) -> None:
@@ -52,14 +52,19 @@ def test_valid_public_trust_does_not_authorize_production(tmp_path: Path) -> Non
     assert result["publish_authorized"] is False
     assert result["activation_authorized"] is False
     assert result["requires_operator_signer_identity_verification"]
+    assert result["manual_rollback_mode"] == "signed"
     assert result["requires_physical_pilot"]
     assert before == after
 
 
-def test_disabled_trust_cannot_be_overridden_by_matching_identity(tmp_path: Path) -> None:
+def test_disabled_trust_is_explicit_safe_source_mode_without_signer(tmp_path: Path) -> None:
     result = inspect_source(fixture(tmp_path, trusted=False))
-    assert not result["source_stage_ready"]
-    assert not next(c for c in result["checks"] if c["name"] == "immutable_public_rollback_trust")["passed"]
+    assert result["source_stage_ready"]
+    assert result["manual_rollback_mode"] == "disabled"
+    assert not result["requires_operator_signer_identity_verification"]
+    assert result["publish_authorized"] is False
+    assert result["activation_authorized"] is False
+    assert all(c["passed"] for c in result["checks"])
 
 
 def test_identity_mismatch_fails_closed_even_with_valid_public_trust(tmp_path: Path) -> None:
@@ -69,13 +74,14 @@ def test_identity_mismatch_fails_closed_even_with_valid_public_trust(tmp_path: P
 
 
 def test_cli_exits_2_when_unready_and_does_not_emit_secret_material(tmp_path: Path) -> None:
-    repo = fixture(tmp_path, trusted=False)
+    repo = fixture(tmp_path, version="1.3.40", seq=1241, trusted=False)
     completed = subprocess.run([sys.executable, str(ROOT / "scripts/clientflow_1242_source_preflight.py"), "--repo-root", str(repo)], capture_output=True, text=True, check=False)
     assert completed.returncode == 2
     report = json.loads(completed.stdout)
     assert report["source_stage_ready"] is False
     assert "public_key_b64" not in completed.stdout
     assert "CLIENTFLOW_ROLLBACK_SIGNING_KEY_PEM_B64" not in completed.stdout
+    assert "public_key_b64" not in completed.stdout
 
 
 def test_cli_source_ready_is_not_release_approval(tmp_path: Path) -> None:

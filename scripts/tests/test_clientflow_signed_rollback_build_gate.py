@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 import pytest
@@ -17,6 +18,8 @@ for item in (ROOT / "backend", ROOT / "client/release/lib"):
 
 from clientflow_release.builder import build  # noqa: E402
 from clientflow_release.rollback_trust_build import validate_release_rollback_trust  # noqa: E402
+from clientflow_release.rollback_verifier import verify_for_transaction  # noqa: E402
+from clientflow_release_format.rollback_permit import RollbackPermitError  # noqa: E402
 
 
 PUBLIC_KEY = bytes.fromhex(
@@ -62,14 +65,15 @@ def test_current_1241_is_backward_compatible() -> None:
 
 def test_next_release_needs_trust_before_any_build_output(tmp_path: Path) -> None:
     repo, trust, policy = _fixture(tmp_path)
-    trust.update(enabled=False, keys=[])
+    # Inconsistent disabled trust fails before a candidate directory is made.
+    trust.update(enabled=False)
     _save(repo, trust, policy)
     (repo / "client/VERSION").write_text("1.3.41", encoding="utf-8")
     (repo / "client/release/release-input.json").write_text(
         json.dumps({"release_sequence": 1242}), encoding="utf-8"
     )
     output = tmp_path / "out"
-    with pytest.raises(ValueError, match="aktiveret immutable rollback-trust"):
+    with pytest.raises(ValueError, match="Deaktiveret manuel rollback"):
         build(repo, output, runtime_inputs=None, allow_dirty=True)
     assert not output.exists()
 
@@ -79,10 +83,61 @@ def test_valid_pinned_1242_trust(tmp_path: Path) -> None:
     validate_release_rollback_trust(repo, 1242)
 
 
+def test_explicit_keyless_1242_mode_disables_manual_rollback(tmp_path: Path) -> None:
+    repo, trust, policy = _fixture(tmp_path)
+    trust.update(enabled=False, keys=[])
+    _save(repo, trust, policy)
+    validate_release_rollback_trust(repo, 1242)
+
+
+def test_1242_disabled_mode_rejects_unsigned_root_manual_rollback(tmp_path: Path) -> None:
+    release_id = "clientflow-1.3.41-seq-1242"
+    legacy = "clientflow-1.3.40-seq-1241"
+    layout = SimpleNamespace(releases=tmp_path / "installed")
+    trust_path = layout.releases / release_id / "release/rollback-trust.json"
+    trust_path.parent.mkdir(parents=True)
+    trust_path.write_text(
+        json.dumps({"schema_version": 1, "enabled": False, "keys": []}),
+        encoding="utf-8",
+    )
+    trust_path.chmod(0o644)
+    for permit_file in (None, tmp_path / "untrusted-permit.json"):
+        with pytest.raises(RollbackPermitError, match="kræver aktiveret rollback-trust"):
+            verify_for_transaction(
+                layout, {}, active=release_id, target=legacy,
+                approval="approved", reason="Test af usigneret rollback", permit_file=permit_file,
+            )
+    trust_path.unlink()
+    with pytest.raises(RollbackPermitError, match="mangler obligatorisk rollback-trust"):
+        verify_for_transaction(
+            layout, {}, active=release_id, target=legacy,
+            approval="approved", reason="Test af manglende trust", permit_file=None,
+        )
+
+
+def test_legacy_manual_rollback_behavior_remains_unchanged(tmp_path: Path) -> None:
+    layout = SimpleNamespace(releases=tmp_path / "installed")
+    legacy = "clientflow-1.3.40-seq-1241"
+    # Older installed immutable releases retain their former local behavior.
+    assert verify_for_transaction(
+        layout, {}, active=legacy, target="clientflow-1.3.38-seq-1239",
+        approval="approved", reason="Historisk lokal manuel rollback", permit_file=None,
+    ) is None
+
+
+def test_disabled_mode_still_rejects_invalid_policy(tmp_path: Path) -> None:
+    repo, trust, policy = _fixture(tmp_path)
+    trust.update(enabled=False, keys=[])
+    policy["minimum_safe_release_sequence"] = False
+    _save(repo, trust, policy)
+    with pytest.raises(ValueError, match="Central releasepolitik"):
+        validate_release_rollback_trust(repo, 1242)
+
+
 @pytest.mark.parametrize(
     "change",
     [
-        "disabled",
+        "disabled_with_keys",
         "missing",
         "no_keys",
         "bad_key_id",
@@ -97,8 +152,8 @@ def test_valid_pinned_1242_trust(tmp_path: Path) -> None:
 def test_future_release_rejects_unsafe_trust(tmp_path: Path, change: str) -> None:
     repo, trust, policy = _fixture(tmp_path)
     key = trust["keys"][0]
-    if change == "disabled":
-        trust.update(enabled=False, keys=[])
+    if change == "disabled_with_keys":
+        trust.update(enabled=False)
     elif change == "missing":
         (repo / "client/release/rollback-trust.json").unlink()
         with pytest.raises(ValueError):

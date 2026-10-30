@@ -43,11 +43,19 @@ def inspect_source(repo: Path) -> dict:
         from clientflow_release.rollback_trust_build import validate_release_rollback_trust
 
         validate_release_rollback_trust(repo, 1242)
-    except (ImportError, OSError, UnicodeError, ValueError) as exc:
+        # This is only an observation of the *source* trust mode; never infer
+        # presence of a private key or readiness of the backend signer.
+        trust = json.loads((repo / "client/release/rollback-trust.json").read_text(encoding="utf-8"))
+        mode = "signed" if trust["enabled"] is True else "disabled"
+    except (ImportError, OSError, UnicodeError, ValueError, KeyError, TypeError) as exc:
         # No key bytes, raw configuration, environment variables, or payloads.
-        record("immutable_public_rollback_trust", False, f"Build-gate afviser trust: {type(exc).__name__}")
+        record("manual_rollback_safety_mode", False, f"Build-gate afviser rollback-mode: {type(exc).__name__}")
+        mode = "invalid"
     else:
-        record("immutable_public_rollback_trust", True, "Offentlig Ed25519-trust opfylder release-build-gaten")
+        if mode == "disabled":
+            record("manual_rollback_safety_mode", True, "Manuel rollback er blokeret fra sekvens 1242; automatisk recovery bevares")
+        else:
+            record("manual_rollback_safety_mode", True, "Signeret manuel rollback kræver separat signer- og pilotgodkendelse")
 
     passed = all(bool(c["passed"]) for c in checks)
     return {
@@ -56,7 +64,8 @@ def inspect_source(repo: Path) -> dict:
         "source_stage_ready": passed,
         "publish_authorized": False,
         "activation_authorized": False,
-        "requires_operator_signer_identity_verification": True,
+        "manual_rollback_mode": mode,
+        "requires_operator_signer_identity_verification": mode == "signed",
         "requires_physical_pilot": True,
         "checks": checks,
     }
