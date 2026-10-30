@@ -20,10 +20,10 @@ def test_1334_1235_stage1_history_is_preserved_after_exact_release_promotion() -
     assert "Not source-frozen" in historical_stage
 
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     assert catalog["releases"][0]["release_id"] == "clientflow-1.3.38-seq-1239"
     assert catalog["releases"][0]["install_modes"] == ["fresh_install"]
     assert catalog["releases"][0]["update_allowed"] is False

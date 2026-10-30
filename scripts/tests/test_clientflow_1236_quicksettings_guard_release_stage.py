@@ -23,10 +23,10 @@ def test_1236_historical_evidence_is_retained_after_1239_promotion() -> None:
     assert release["architecture"] == "amd64"
 
     catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     published = catalog["releases"][0]
     assert published["release_id"] == "clientflow-1.3.38-seq-1239"
     pilot = catalog["releases"][1]

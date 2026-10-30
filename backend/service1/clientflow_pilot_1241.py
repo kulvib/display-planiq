@@ -44,6 +44,8 @@ def require_pilot_1241(
     """
     if os.environ.get(PILOT_FLAG) != "1":
         raise ClientFlowPilotDenied("ClientFlow 1241-piloten er ikke aktiveret i backend")
+    if os.environ.get("CLIENTFLOW_1242_PILOT_CLIENT_ID"):
+        raise ClientFlowPilotDenied("1241-piloten må ikke være aktiv samtidig med 1242-piloten")
     if type(client_id) is not int or client_id != PILOT_CLIENT_ID:
         raise ClientFlowPilotDenied("ClientFlow 1241 er kun autoriseret for pilotklient 1")
     if (

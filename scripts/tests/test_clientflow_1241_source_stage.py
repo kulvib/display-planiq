@@ -24,18 +24,18 @@ def test_exact_1241_source_is_promoted_only_for_single_client_pilot():
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
-    assert catalog["catalog_sequence"] == 1241
+    assert source["release_sequence"] == catalog["catalog_sequence"]
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
     }
-    assert len(catalog["releases"]) == 2
-    assert all(item["release_sequence"] <= 1241 for item in catalog["releases"])
+    assert len(catalog["releases"]) == 3
+    assert all(item["release_sequence"] <= 1242 for item in catalog["releases"])
     assert all(item["version"] != "1.3.39" for item in catalog["releases"])
 
-    stable, failed_pilot = catalog["releases"]
+    stable, failed_pilot = catalog["releases"][:2]
     assert all(item["release_sequence"] != 1240 for item in catalog["releases"])
     assert stable["release_id"] == "clientflow-1.3.38-seq-1239"
     assert stable["status"] == "stable"

@@ -137,10 +137,11 @@ def test_1241_pilot_rejects_repair_downgrade_and_unreasoned_authority(monkeypatc
 
 def test_1241_catalog_and_fresh_install_are_separate_authorities():
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert all(item["release_sequence"] != 1240 for item in catalog["releases"])
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
+    assert catalog["releases"][2]["release_id"] == "clientflow-1.3.41-seq-1242"
     assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
     pilot = _pilot()
     assert pilot["install_modes"] == ["in_place_update"]
@@ -157,10 +158,10 @@ def test_1241_catalog_and_fresh_install_are_separate_authorities():
 def test_1241_guard_is_exercised_twice_on_each_deployment_authorization():
     source = (ROOT / "backend/service1/routers/clientflow_deployments.py").read_text()
     create = source[source.index("def create_clientflow_deployment("):source.index("@router.get(",source.index("def create_clientflow_deployment("))]
-    assert create.count("require_pilot_1241(") == 2
-    assert create.index("require_pilot_1241(") < create.index("deployment_release_snapshot(release)")
-    assert create.index("lock_system_client(") < create.rindex("require_pilot_1241(")
-    assert create.rindex("require_pilot_1241(") < create.index("create_authorized_deployment(")
+    assert create.count("_require_exact_scoped_pilot(") == 2
+    assert create.index("_require_exact_scoped_pilot(") < create.index("deployment_release_snapshot(release)")
+    assert create.index("lock_system_client(") < create.rindex("_require_exact_scoped_pilot(")
+    assert create.rindex("_require_exact_scoped_pilot(") < create.index("create_authorized_deployment(")
     assert "locked_version = _canonical_runtime_version" in create
     assert "artifact=artifact" in create
 

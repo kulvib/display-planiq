@@ -21,9 +21,9 @@ def test_source_1237_is_promoted_only_after_immutable_publication() -> None:
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1241
+    assert catalog["catalog_sequence"] == 1242
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["release_sequence"] == 1239

@@ -20,10 +20,10 @@ def test_1239_source_identity_matches_published_catalog_after_approval():
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    assert catalog["catalog_sequence"] == 1241
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1242
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     selected = catalog["releases"][0]
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["release_sequence"] == 1239

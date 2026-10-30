@@ -17,11 +17,11 @@ def test_exact_promotion_preserves_no_update_no_rollback_and_historical_evidence
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.41"
     assert source["release_sequence"] == 1242
-    assert catalog["catalog_sequence"] == 1241
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1242
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
-    assert len(catalog["releases"]) == 2
+    assert len(catalog["releases"]) == 3
     release = catalog["releases"][0]
     assert release["release_id"] == release["revision"] == RELEASE
     assert release["version"] == release["client_version"] == "1.3.38"
