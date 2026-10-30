@@ -11,17 +11,38 @@ New API endpoints:
 - `POST /api/clientflow-rollback-permits/{permit_id}/revoke`: superadmin revocation/audit.
 - `POST /api/clientflow-update/rollback-permits/{permit_id}/events`: existing update-credential DPoP and authenticated canonical Status prerequisite for `succeeded`. The backend does **not** claim a successful physical rollback until this report.
 
-**Release-build preflight:** Beginning with release sequence 1242, the canonical
-candidate builder refuses to package a release unless its checked-in
-`client/release/rollback-trust.json` is enabled, has 1–3 correctly pinned Ed25519
-public keys, and pins security floors no lower than the repository's current
-backend release-security policy. This is a build-time fail-closed check; it
-does **not** provision the signer, prove access to its private key, enable the
-feature in Render, or establish automatic rollback-result reporting. A newly
-approved signed-release pilot must separately verify the deployed signing
-key ID against the immutable bundle before permitting actual rollback.
+**Release-build preflight (71A decision):** From source release sequence 1242,
+`client/release/rollback-trust.json` must contain a valid *explicit* manual
+rollback mode. There are exactly two permitted cases:
 
-The backend feature is **OFF** by default. Never set `CLIENTFLOW_SIGNED_ROLLBACK_ENABLED=true` or configure signing key in production until a newly built and accepted ClientFlow source release with a matching pinned public key is installed. The checked-in `client/release/rollback-trust.json` is **disabled with no keys**. Existing installed 1.3.40 and earlier immutable bundles remain unchanged and follow their existing *local* manual rollback contract. For new source releases with sequence 1242 or higher, missing or disabled rollback-trust is a blocking error: no fallback to unsigned root rollback is permitted. No central policy can retroactively make those older local binaries verify signed permits.
+- `enabled=false`, `keys=[]`: **manual rollback from that new source release is
+  disabled**, including for root and including when a permit is supplied. The
+  source release can still be built and approved through the existing keyless
+  GitHub CI/reproducibility/approval process. The immutable client verifier
+  rejects manual rollback rather than falling back to historical unsigned mode.
+- `enabled=true`, 1–3 valid pinned Ed25519 public keys: the signed manual
+  rollback feature may be piloted only after separate signer identification,
+  policy verification, physical acceptance and explicit approval. Backend
+  signing is still disabled by default.
+
+Malformed trust, missing trust, disabled trust containing keys, invalid policy
+or unsafe signed trust must fail the builder before writing release artifacts.
+The central policy remains validated in either mode. No private signing key is
+required for the disabled mode. This **does not** change the canonical GitHub
+source/CI/reproducibility/approval/publication gates, and does not authorize
+publication or activation.
+
+Existing installed 1.3.40 and older immutable bundles remain unchanged and
+follow their historical local rollback contract. New source releases at
+sequence 1242+ never have unsigned manual rollback. The separate automatic
+failed-activation/update recovery transaction remains available and must pass
+its existing regression and physical tests.
+
+**The backend signer stays OFF.** Never set
+`CLIENTFLOW_SIGNED_ROLLBACK_ENABLED=true` or configure any private key in
+production for the disabled mode. A future signed-rollbacks project needs
+its own approvals; do not change a shipped immutable release's trust mode
+retroactively. No central policy can make older binaries verify signed permits.
 
 The local root command for a future trust-enabled release uses `clientflow-release-transaction rollback --release-id ... --expected-release-approval-reference ... --reason ... --permit-file /root/<root-only-permit>.json`. The permit file must be a regular, root-owned, mode 0600 file, and the signing key cannot be overridden on the command line. Operator must verify release, SHA, reason and expiry before triggering rollback.
 

@@ -1,8 +1,9 @@
-"""Release-build gate for pinned Ed25519 manual-rollback trust.
+"""Release-build gate for explicit manual-rollback safety mode.
 
-New immutable releases MUST carry trustworthy, enabled public keys before
-candidate publication. This validates the exact source artifact, not an
-environment variable or an operator-provided permit.
+From sequence 1242 onwards a source release chooses one immutable mode:
+- disabled with no keys: manual rollback is blocked by the client verifier;
+- signed with pinned Ed25519 keys: permits must verify against those keys.
+The release builder never reads a backend signer, environment override or permit.
 """
 
 from __future__ import annotations
@@ -40,11 +41,12 @@ def _read_object(path: Path, *, limit: int) -> dict:
 
 
 def validate_release_rollback_trust(repo: Path, sequence: int) -> None:
-    """Block seq >=1242 release builds unless exact immutable trust is pinned.
+    """Require explicit, fail-closed manual-rollback mode from seq 1242.
 
-    Releases below the transition retain their historical unsigned rollback
-    semantics. The backend signing key and activation flag are deliberately
-    never read by the release builder.
+    A disabled, keyless trust document is an explicit opt-out of *manual*
+    rollback, not a request to allow unsigned rollback. The runtime verifier
+    independently rejects that mode for sources at or after seq 1242.
+    Historical sources below the transition retain their old local behavior.
     """
     if type(sequence) is not int or sequence <= 0:
         raise ValueError("Release-sekvensen er ugyldig")
@@ -63,13 +65,10 @@ def validate_release_rollback_trust(repo: Path, sequence: int) -> None:
         set(trust) != {"schema_version", "enabled", "keys"}
         or type(trust["schema_version"]) is not int
         or trust["schema_version"] != 1
-        or trust["enabled"] is not True
+        or type(trust["enabled"]) is not bool
         or not isinstance(trust["keys"], list)
-        or not 1 <= len(trust["keys"]) <= 3
     ):
-        raise ValueError(
-            "Ny ClientFlow-release kræver aktiveret immutable rollback-trust"
-        )
+        raise ValueError("Ny ClientFlow-release kræver eksplicit sikker rollback-mode")
 
     if (
         set(policy) != {"schema_version", "revision", "minimum_safe_release_sequence", "revoked_release_ids"}
@@ -90,6 +89,16 @@ def validate_release_rollback_trust(repo: Path, sequence: int) -> None:
         raise ValueError(
             "Central releasepolitik er ugyldig under rollback trust release-build"
         )
+
+    # The installed >=1242 verifier raises for this exact disabled/no-keys
+    # document, including when the caller presents no permit. Do not silently
+    # convert disabled to legacy unsigned root rollback.
+    if trust["enabled"] is False:
+        if trust["keys"]:
+            raise ValueError("Deaktiveret manuel rollback må ikke indeholde nøgler")
+        return
+    if not 1 <= len(trust["keys"]) <= 3:
+        raise ValueError("Signeret manuel rollback kræver 1-3 pinned Ed25519-nøgler")
 
     seen: set[str] = set()
     for key in trust["keys"]:
