@@ -7,6 +7,7 @@ history, cancellation and immutable release snapshots.
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -21,6 +22,8 @@ from ..clientflow_deployments import (
     ClientFlowDeploymentConflict,
     ClientFlowDeploymentNotFound,
     active_deployment,
+    acknowledge_recovery,
+    unacknowledged_recovery_failure,
     cancel_deployment,
     create_authorized_deployment,
 )
@@ -66,6 +69,18 @@ class ClientFlowDeploymentCreate(BaseModel):
 
 class ClientFlowDeploymentCancel(BaseModel):
     reason: Optional[str] = PydanticField(default=None, max_length=500)
+
+
+class ClientFlowRecoveryAcknowledgement(BaseModel):
+    restored_version: str = PydanticField(..., min_length=5, max_length=40)
+    reason: str = PydanticField(..., min_length=12, max_length=500)
+    confirmed_local_recovery: bool = False
+
+
+class ClientFlowRecoveryGateRead(BaseModel):
+    blocked: bool
+    deployment_id: Optional[str] = None
+    failed_target_version: Optional[str] = None
 
 
 class ClientFlowDeploymentRead(BaseModel):
@@ -236,6 +251,13 @@ def create_clientflow_deployment(
 ):
     client = _client_or_404(session, client_id)
     _require_deployable_client(session, client)
+    # Fast rejection before artifact resolution; authoritative recheck occurs
+    # in the persistence layer under the per-client row lock.
+    if unacknowledged_recovery_failure(session, client_id=client_id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Recovery fejlede tidligere. Verificér klienten lokalt og kvittér som superadministrator før ny opdatering",
+        )
     requested_version = str(body.target_version or "").strip()
     repair_binding = None
     if body.pre_first_activation_repair:
@@ -371,6 +393,84 @@ def create_clientflow_deployment(
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="Klienten har allerede en aktiv ClientFlow-deployment") from exc
+
+
+@router.get("/clients/{client_id}/clientflow-recovery-gate", response_model=ClientFlowRecoveryGateRead)
+def clientflow_recovery_gate(
+    client_id: int,
+    session: Session = Depends(get_session),
+    _user=Depends(get_current_superadmin_user),
+):
+    _client_or_404(session, client_id)
+    failure = unacknowledged_recovery_failure(session, client_id=client_id)
+    return ClientFlowRecoveryGateRead(
+        blocked=failure is not None,
+        deployment_id=failure.id if failure else None,
+        failed_target_version=failure.target_version if failure else None,
+    )
+
+
+@router.post("/clientflow-deployments/{deployment_id}/acknowledge-recovery", response_model=ClientFlowDeploymentRead)
+def acknowledge_clientflow_recovery(
+    deployment_id: str,
+    body: ClientFlowRecoveryAcknowledgement,
+    request: Request,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_superadmin_user),
+):
+    """Explicit *human* recovery verification; never infer from a terminal DB state.
+
+    Requires the operator to have inspected the local immutable release state,
+    healthy services and NeedDaemonReload=no, as the status agent alone cannot
+    attest to on-disk transaction intent. No keys/tokens or raw logs are stored.
+    """
+    if body.confirmed_local_recovery is not True:
+        raise HTTPException(status_code=409, detail="Lokal recovery-kontrol skal bekræftes eksplicit")
+    reason = body.reason.strip()
+    if len(reason) < 12:
+        raise HTTPException(status_code=400, detail="Begrundelse skal være mindst 12 tegn")
+    restored_version = body.restored_version.strip().lstrip("vV")
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", restored_version) is None:
+        raise HTTPException(status_code=400, detail="Gendannet versionsnummer er ugyldigt")
+    deployment = _deployment_or_404(session, deployment_id)
+    client = _client_or_404(session, deployment.client_id)
+    lock_system_client(session, int(client.id))
+    _require_deployable_client(session, client)
+    if _canonical_runtime_version(session, client) != restored_version:
+        raise HTTPException(status_code=409, detail="Status-agentens friske version matcher ikke den dokumenterede recovery")
+    try:
+        deployment = acknowledge_recovery(
+            session,
+            deployment_id=deployment_id,
+            actor_user_id=int(user.id),
+            restored_version=restored_version,
+            reason=reason,
+        )
+        add_audit_log(
+            session,
+            action="clientflow_recovery_locally_verified",
+            request=request,
+            actor=user,
+            target_organization_id=client.organization_id,
+            entity_type="clientflow_deployment",
+            entity_id=client.id,
+            entity_label=f"{client.name} · lokal recovery",
+            severity="critical",
+            is_critical=True,
+            details={
+                "client_id": client.id,
+                "deployment_id": deployment.id,
+                "failed_target_version": deployment.target_version,
+                "restored_version": restored_version,
+                "reason": reason,
+            },
+        )
+        session.commit()
+        session.refresh(deployment)
+        return deployment
+    except (ClientFlowDeploymentConflict, ClientFlowDeploymentNotFound) as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/clients/{client_id}/clientflow-deployments", response_model=list[ClientFlowDeploymentRead])

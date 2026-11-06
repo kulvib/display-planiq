@@ -1,0 +1,24 @@
+PlanIQ Display - ClientFlow 1.3.38 recovery incident, 2026-11-06
+CHANGES-ONLY UPLOAD. Unzip into a new GitHub branch, preserving file paths.
+Canonical source: user-supplied display-planiq-main(20261106-172111).zip
+Original ZIP SHA256: a58f7d3dc82eaff0fe25d69071037148e8832b58d18ab41340180942bafaf7fe
+Immutable ClientFlow 1.3.41/1242 release files, catalog and manifest UNCHANGED.
+No migration, production change, pilot enablement or updater timer restart.
+Suggested branch: fix/clientflow-1338-recovery-quarantine-20261106
+
+Local: 63 selected Python tests and 5 Node tests passed. JSX parsed without errors.
+Database integration tests cannot run locally: sqlmodel 0.0.39 unavailable; CI must run.
+Full CI, PostgreSQL and physical Ubuntu 26.04 acceptance gates remain mandatory.
+
+CHANGED PATHS:
+CLIENTFLOW_1338_1242_RECOVERY_INCIDENT_20261106.md
+backend/service1/clientflow_deployments.py
+backend/service1/routers/clientflow_deployments.py
+backend/tests/test_clientflow_recovery_quarantine_20261106.py
+backend/tests/test_clientflow_update_recovery_contract.py
+frontend/src/api/api.js
+frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx
+frontend/tests/clientflowRecoveryGate.test.mjs
+scripts/clientflow_1338_controller_bridge.sh
+scripts/clientflow_local_recovery_attestation.sh
+scripts/tests/test_clientflow_1338_bridge_safety_20261106.py
