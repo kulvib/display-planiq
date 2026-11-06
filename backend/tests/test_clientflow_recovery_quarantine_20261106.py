@@ -160,3 +160,34 @@ def test_bridge_and_attestation_scripts_are_fail_closed_and_do_not_reset_release
     assert "save_state" not in bridge + attestation
     assert "systemctl daemon-reload" not in attestation
     assert "systemctl restart" not in attestation
+
+
+def test_http_preflight_denies_unacknowledged_recovery_before_artifact(monkeypatch):
+    """The new recovery guard remains fail-closed independently of pilot fixtures."""
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from service1.routers import clientflow_deployments as router
+
+    client = SimpleNamespace(id=CLIENT_ID, status="approved", deleted_at=None)
+    monkeypatch.setattr(router, "_client_or_404", lambda *_: client)
+    monkeypatch.setattr(router, "_require_deployable_client", lambda *_: None)
+    monkeypatch.setattr(
+        router, "unacknowledged_recovery_failure",
+        lambda *_a, **_kw: SimpleNamespace(id="failed-deployment"),
+    )
+    monkeypatch.setattr(
+        router, "deployment_release_snapshot",
+        lambda *_: pytest.fail("artifact must not be fetched while recovery gate blocks"),
+    )
+    monkeypatch.setattr(
+        router, "_canonical_runtime_version",
+        lambda *_: pytest.fail("canonical status must not authorize a quarantined deployment"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        router.create_clientflow_deployment(
+            client_id=CLIENT_ID,
+            body=router.ClientFlowDeploymentCreate(target_version="1.3.41", reason="isolated test"),
+            request=object(), session=object(), user=SimpleNamespace(id=5),
+        )
+    assert exc.value.status_code == 409
+    assert "Recovery fejlede tidligere" in str(exc.value.detail)

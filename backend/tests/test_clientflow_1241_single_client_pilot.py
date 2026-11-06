@@ -173,6 +173,9 @@ def test_http_deployment_authority_is_denied_for_nonpilot_client(monkeypatch):
 
     monkeypatch.setenv(PILOT_FLAG, "1")
     client = SimpleNamespace(id=2, status="approved", deleted_at=None, ubuntu_version="26.04.1")
+    # This test isolates pilot scoping; the separate recovery-gate tests
+    # exercise fail-closed DB authorization with a real SQLModel session.
+    monkeypatch.setattr(router, "unacknowledged_recovery_failure", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(router, "_client_or_404", lambda *_: client)
     monkeypatch.setattr(router, "_require_deployable_client", lambda *_: None)
     monkeypatch.setattr(router, "_canonical_runtime_version", lambda *_: "1.3.38")
@@ -195,6 +198,9 @@ def test_http_deployment_pins_artifact_and_rechecks_locked_status(monkeypatch):
     monkeypatch.setenv(PILOT_FLAG, "1")
     client = SimpleNamespace(id=1, status="approved", deleted_at=None, ubuntu_version="26.04.1",
                              organization_id=7, name="Viborg1")
+    # This test isolates pilot scoping; the separate recovery-gate tests
+    # exercise fail-closed DB authorization with a real SQLModel session.
+    monkeypatch.setattr(router, "unacknowledged_recovery_failure", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(router, "_client_or_404", lambda *_: client)
     monkeypatch.setattr(router, "_require_deployable_client", lambda *_: None)
     monkeypatch.setattr(router, "lock_system_client", lambda *_: None)

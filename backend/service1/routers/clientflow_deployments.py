@@ -252,7 +252,7 @@ def create_clientflow_deployment(
     client = _client_or_404(session, client_id)
     _require_deployable_client(session, client)
     # Fast rejection before artifact resolution; authoritative recheck occurs
-    # inside create_authorized_deployment() under the per-client row lock.
+    # in the persistence layer under the per-client row lock.
     if unacknowledged_recovery_failure(session, client_id=client_id) is not None:
         raise HTTPException(
             status_code=409,
