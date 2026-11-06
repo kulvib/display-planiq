@@ -14,6 +14,7 @@ import {
   Divider,
   Grid,
   FormControlLabel,
+  Checkbox,
   LinearProgress,
   IconButton,
   MenuItem,
@@ -35,7 +36,7 @@ import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { buildClientflowUpdateRequest } from "./clientflowUpdateRequest.mjs";
 import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "./clientflowCatalogOptions.mjs";
-import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
+import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, getClientflowRecoveryGate, acknowledgeClientflowRecovery, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
@@ -192,6 +193,15 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const [selectedVersion, setSelectedVersion] = React.useState("latest");
   const [updateReasonDialogOpen, setUpdateReasonDialogOpen] = React.useState(false);
   const [updateReason, setUpdateReason] = React.useState("");
+  const [recoveryGate, setRecoveryGate] = React.useState(null);
+  const [recoveryGateLoading, setRecoveryGateLoading] = React.useState(true);
+  const [recoveryGateError, setRecoveryGateError] = React.useState("");
+  const [recoveryDialogOpen, setRecoveryDialogOpen] = React.useState(false);
+  const [recoveryConfirmed, setRecoveryConfirmed] = React.useState(false);
+  const [recoveryReason, setRecoveryReason] = React.useState("");
+  const [recoverySaving, setRecoverySaving] = React.useState(false);
+  const [recoveryRefreshKey, setRecoveryRefreshKey] = React.useState(0);
+
 
   const state = normalizeClientflowDeploymentState(deployment?.state);
   const meta = getClientflowDeploymentStepMeta(state);
@@ -250,6 +260,42 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     void fetchCatalog();
     return () => { cancelled = true; };
   }, [clientId, catalogRetryKey]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setRecoveryGate(null);
+    setRecoveryGateLoading(Boolean(clientId));
+    setRecoveryGateError("");
+    if (!clientId) return () => { cancelled = true; };
+    getClientflowRecoveryGate(clientId)
+      .then((gate) => { if (!cancelled) setRecoveryGate(gate); })
+      .catch((err) => {
+        if (!cancelled) setRecoveryGateError(err?.message || "Recovery-kontrol kunne ikke indlæses");
+      })
+      .finally(() => { if (!cancelled) setRecoveryGateLoading(false); });
+    return () => { cancelled = true; };
+  }, [clientId, deployment?.state, recoveryRefreshKey]);
+
+  const confirmLocalRecovery = async () => {
+    const reason = recoveryReason.trim();
+    if (!recoveryGate?.deployment_id || !installedVersion || !recoveryConfirmed || reason.length < 12) return;
+    setRecoverySaving(true);
+    try {
+      await acknowledgeClientflowRecovery(recoveryGate.deployment_id, {
+        restoredVersion: installedVersion,
+        reason,
+      });
+      setRecoveryDialogOpen(false);
+      setRecoveryConfirmed(false);
+      setRecoveryReason("");
+      setRecoveryRefreshKey((v) => v + 1);
+      showSnackbar?.({ message: "Lokal ClientFlow-recovery er registreret og auditeret", severity: "success" });
+    } catch (err) {
+      showSnackbar?.({ message: `Recovery-kvittering fejlede: ${err?.message || "Ukendt fejl"}`, severity: "error" });
+    } finally {
+      setRecoverySaving(false);
+    }
+  };
 
   React.useEffect(() => {
     const latestState = normalizeClientflowDeploymentState(deployment?.state);
@@ -326,7 +372,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     await executeClientFlowUpdate({ confirmDowngrade: isDowngrade, reason });
   };
 
-  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected;
+  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected || recoveryGateLoading || !!recoveryGateError || recoveryGate?.blocked !== false;
   const stateIsError = state === "failed" || state === "recovery_failed";
   const stateIsWarning = state === "cancelled" || state === "rolled_back" || state === "rolling_back";
   const stateIsSuccess = state === "succeeded";
@@ -364,6 +410,50 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
           </Button>
         </Stack>
       </Stack>
+      {recoveryGateLoading && <Typography variant="caption" sx={{ color: MUTED, mt: 1 }}>Kontrollerer tidligere recovery-fejl…</Typography>}
+      {recoveryGateError && (
+        <Alert severity="warning" sx={{ mt: 1 }} action={
+          <Button color="inherit" size="small" onClick={() => setRecoveryRefreshKey((v) => v + 1)}>Prøv igen</Button>
+        }>ClientFlow-opdatering blokeret: {recoveryGateError}</Alert>
+      )}
+      {recoveryGate?.blocked && (
+        <Alert severity="error" sx={{ mt: 1 }} action={
+          <Button
+            color="inherit" size="small" disabled={inProgress || recoverySaving || !installedVersion}
+            onClick={() => setRecoveryDialogOpen(true)}
+          >Kvittér verificeret recovery</Button>
+        }>
+          Tidligere opdatering til v{recoveryGate.failed_target_version} fejlede også under recovery.
+          Nye ClientFlow-opdateringer er låst, indtil den lokale transaktion, normal drift
+          og systemd er kontrolleret og kvitteret af superadministrator. Aktive deployments skal annulleres først.
+        </Alert>
+      )}
+      <Dialog open={recoveryDialogOpen} onClose={() => { if (!recoverySaving) setRecoveryDialogOpen(false); }} maxWidth="sm" fullWidth>
+        <DialogTitle>Verificér lokal ClientFlow-genopretning</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Bekræft KUN efter fysisk kontrol af aktiv release og symlink, activation_intent=None,
+            RECOVERY STATE: PASS, NeedDaemonReload=no og aktive ClientFlow-tjenester.
+            Denne kvittering genskaber ikke klienten og starter ingen opdatering.
+          </Alert>
+          <FormControlLabel
+            control={<Checkbox checked={recoveryConfirmed} onChange={(e) => setRecoveryConfirmed(e.target.checked)} />}
+            label="Jeg har verificeret den faktiske lokale genopretning på denne klient"
+          />
+          <TextField
+            fullWidth multiline minRows={3} sx={{ mt: 2 }} label="Begrundelse og lokal kontrol"
+            value={recoveryReason} onChange={(e) => setRecoveryReason(e.target.value)}
+            slotProps={{ htmlInput: { maxLength: 500 } }}
+            helperText="Mindst 12 tegn, højst 500. Ingen passwords eller tokens."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRecoveryDialogOpen(false)} disabled={recoverySaving}>Annuller</Button>
+          <Button variant="contained" disabled={!recoveryConfirmed || recoveryReason.trim().length < 12 || recoverySaving || !installedVersion} onClick={confirmLocalRecovery}>
+            {recoverySaving ? "Registrerer…" : "Kvittér gendannelse"}
+          </Button>
+        </DialogActions>
+      </Dialog>
       {catalogLoading && (
         <Typography variant="caption" sx={{ color: MUTED, mt: 1 }}>Henter godkendte ClientFlow-versioner…</Typography>
       )}

@@ -260,3 +260,46 @@ def test_legacy_1338_bridge_is_explicit_opt_in_and_does_not_mutate_release_state
     assert '"/opt/clientflow/active"' not in bridge
     assert "activation_intent') is None" in bridge
     assert "clientflow-1.3.38-seq-1239" in bridge
+
+
+def test_1338_protecthome_style_failure_is_recoverable_once_controller_host_is_fixed(tmp_path, monkeypatch):
+    """Reproduce Viborg2's *shape*: both activation and old-host rollback fail.
+
+    Old controller cannot change its own systemd home sandbox mid-process. A
+    separately authorized host fix is needed before an explicit recovery.
+    This is a simulated failure, not a physical Ubuntu test.
+    """
+    layout = _recovery_layout(tmp_path)
+    state = transaction.load_state(layout)
+    state["activation_intent"] = None
+    state["history"] = []
+    transaction.save_state(layout, state)
+    calls = _mock_runtime(monkeypatch)
+    attempts = []
+
+    def inaccessible_home(_layout):
+        attempts.append("home-denied")
+        raise TransactionError("Simulated ProtectHome sandbox denies /home/clientflow-kiosk")
+
+    monkeypatch.setattr(transaction, "_systemd_prepare", inaccessible_home)
+    monkeypatch.setattr(transaction, "_retire_preserved_first_activation_gui_before_update", lambda *_: None)
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _layout: PREVIOUS)
+    with pytest.raises(TransactionError, match="rollback fejlede"):
+        transaction._activate_release(layout, state, FAILED, APPROVAL)
+    assert attempts == ["home-denied", "home-denied"]
+    after_failure = transaction.load_state(layout)
+    assert after_failure["activation_intent"]["release_id"] == FAILED
+    assert after_failure["history"][-1]["event"] == "automatic_rollback_failed"
+    assert after_failure["active_release_id"] == PREVIOUS
+    assert "enable" not in calls
+
+    # A later, separately provisioned narrow host bridge removes the mock
+    # failure, then the *existing* provenance-bound recovery can restore 1338.
+    monkeypatch.setattr(transaction, "_systemd_prepare", lambda _layout: calls.append("prepare-fixed"))
+    recovered = _recover(layout)
+    assert recovered["status"] == "rolled_back"
+    final_state = transaction.load_state(layout)
+    assert final_state["active_release_id"] == PREVIOUS
+    assert final_state["activation_intent"] is None
+    assert final_state["highest_release_sequence"] == 1240
+    assert final_state["history"][-1]["event"] == "automatic_rollback_completed"

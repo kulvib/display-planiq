@@ -42,6 +42,72 @@ def active_deployment(session: Session, *, client_id: int, for_update: bool = Fa
     return session.exec(statement).first()
 
 
+def unacknowledged_recovery_failure(session: Session, *, client_id: int) -> ClientFlowDeployment | None:
+    """A terminal recovery_failed is NOT proof that the host was restored.
+
+    Do not allow a new deployment until a superadministrator has verified the
+    actual machine and recorded a separate, auditable recovery acknowledgement.
+    This is separate from the active deployment unique index: recovery_failed
+    deliberately has completed_at set, so the index alone cannot protect us.
+    """
+    failures = session.exec(
+        select(ClientFlowDeployment)
+        .where(
+            ClientFlowDeployment.client_id == client_id,
+            ClientFlowDeployment.state == "recovery_failed",
+        )
+        .order_by(ClientFlowDeployment.requested_at.asc(), ClientFlowDeployment.id.asc())
+    ).all()
+    for failure in failures:
+        ack = session.exec(
+            select(ClientFlowDeploymentEvent.id).where(
+                ClientFlowDeploymentEvent.deployment_id == failure.id,
+                ClientFlowDeploymentEvent.event_type == "operator_recovery_acknowledged",
+            ).limit(1)
+        ).first()
+        if ack is None:
+            return failure
+    return None
+
+
+def acknowledge_recovery(
+    session: Session, *, deployment_id: str, actor_user_id: int,
+    restored_version: str, reason: str,
+) -> ClientFlowDeployment:
+    """Append an operator attestation; never alter the immutable terminal event.
+
+    The router separately requires fresh online canonical Status and a physical
+    verification of local release-state and the no-daemon-reload boundary.
+    """
+    deployment = deployment_for_update(session, deployment_id)
+    if deployment.state != "recovery_failed":
+        raise ClientFlowDeploymentConflict("Kun recovery_failed kan kvitteres")
+    if active_deployment(session, client_id=deployment.client_id, for_update=True) is not None:
+        raise ClientFlowDeploymentConflict("En anden ClientFlow-deployment skal afsluttes først")
+    if restored_version == deployment.target_version:
+        raise ClientFlowDeploymentConflict("Den fejlede målversion kan ikke attesteres som rollback")
+    existing = session.exec(
+        select(ClientFlowDeploymentEvent.id).where(
+            ClientFlowDeploymentEvent.deployment_id == deployment.id,
+            ClientFlowDeploymentEvent.event_type == "operator_recovery_acknowledged",
+        ).limit(1)
+    ).first()
+    if existing is not None:
+        raise ClientFlowDeploymentConflict("Recovery er allerede kvitteret; historik bevares")
+    append_event(
+        session,
+        deployment_id=deployment.id,
+        event_type="operator_recovery_acknowledged",
+        payload={
+            "restored_version": restored_version,
+            "verified_local_state": True,
+            "actor_user_id": actor_user_id,
+            "reason": reason,
+        },
+    )
+    return deployment
+
+
 def deployment_for_update(session: Session, deployment_id: str) -> ClientFlowDeployment:
     row = session.exec(
         select(ClientFlowDeployment)
@@ -102,6 +168,10 @@ def create_authorized_deployment(
 ) -> ClientFlowDeployment:
     if active_deployment(session, client_id=client_id, for_update=True) is not None:
         raise ClientFlowDeploymentConflict("Klienten har allerede en aktiv ClientFlow-deployment")
+    if unacknowledged_recovery_failure(session, client_id=client_id) is not None:
+        raise ClientFlowDeploymentConflict(
+            "Tidligere ClientFlow recovery_failed kræver dokumenteret lokal genopretning og superadministrator-kvittering"
+        )
 
     now = utcnow()
     deployment = ClientFlowDeployment(

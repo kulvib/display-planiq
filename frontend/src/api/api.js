@@ -1421,6 +1421,32 @@ export async function getActiveClientflowDeployment(clientId) {
   return readJsonResponse(res);
 }
 
+export async function getClientflowRecoveryGate(clientId) {
+  const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-recovery-gate`, {
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente ClientFlow recovery-gate"));
+  return readJsonResponse(res);
+}
+
+export async function acknowledgeClientflowRecovery(deploymentId, { restoredVersion, reason } = {}) {
+  const res = await apiFetch(`${apiUrl}/api/clientflow-deployments/${encodeURIComponent(deploymentId)}/acknowledge-recovery`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    credentials: "include",
+    body: JSON.stringify({
+      restored_version: String(restoredVersion || "").trim(),
+      reason: String(reason || "").trim(),
+      confirmed_local_recovery: true,
+    }),
+  });
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw new Error(await extractError(res, "Kunne ikke kvittere ClientFlow recovery"));
+  return readJsonResponse(res);
+}
+
 export async function requestClientflowDeployment(clientId, options = {}) {
   const targetVersion = String(options.targetVersion || "").trim();
   if (!targetVersion || targetVersion.toLowerCase() === "latest") {
