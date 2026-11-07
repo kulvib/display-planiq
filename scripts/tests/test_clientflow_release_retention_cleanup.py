@@ -79,15 +79,16 @@ def test_explicit_cleanup_removes_only_exact_oldest(tmp_path, monkeypatch):
     )
     assert not oldest.exists()
     assert report["approved_count_after"] == 4
+    assert report["remaining_excess"] == 1
     assert [item.name for item in paths[1:]] == sorted(p.name for p in directory.iterdir())
-    assert audit.inspect_store(directory, require_four=True)["within_approved_limit"]
+    assert not audit.inspect_store(directory)["within_approved_limit"]
 
 
 def test_cleanup_rejects_corrupt_symlink_and_more_than_one_excess(tmp_path, monkeypatch):
     directory = store(tmp_path)
     paths = [fixture_artifact(directory, seq) for seq in range(1236, 1242)]
     monkeypatch.setattr(audit, "open_verified_bundle_structure", approve_stub)
-    with pytest.raises(cleanup.PruneDenied, match="four or five"):
+    with pytest.raises(cleanup.PruneDenied, match="three, four or five"):
         cleanup.plan_cleanup(directory)
     paths[-1].unlink()
     paths[-2].unlink()
@@ -106,7 +107,7 @@ def test_cleanup_cli_defaults_to_read_only_and_refuses_half_confirmation(tmp_pat
     assert all(p.exists() for p in paths)
 
 
-def test_future_rotation_prunes_fourth_before_next_publication(tmp_path, monkeypatch):
+def test_rotation_from_four_to_three_then_next_publication_refused_until_two(tmp_path, monkeypatch):
     directory = store(tmp_path)
     paths = [fixture_artifact(directory, seq) for seq in range(1237, 1241)]
     monkeypatch.setattr(audit, "open_verified_bundle_structure", approve_stub)
@@ -121,11 +122,67 @@ def test_future_rotation_prunes_fourth_before_next_publication(tmp_path, monkeyp
     )
     assert result["approved_count_after"] == 3
     assert not paths[0].exists()
-    # Publishing one *new* approved bundle may now complete within four.
-    new = audit.plan_publication(
-        directory, release_id="clientflow-1.3.41-seq-1241",
-        size_bytes=1024, sha256="f" * 64,
+    # The approved cap is three, so further rotation to two is required
+    # before a new bundle is allowed to enter the store.
+    with pytest.raises(audit.StoreAuditError, match="three-release cap"):
+        audit.plan_publication(directory, release_id="clientflow-1.3.41-seq-1241", size_bytes=1024, sha256="f" * 64)
+    two_plan = cleanup.plan_cleanup(directory)
+    assert two_plan["approved_count_after"] == 2
+    next_oldest = paths[1]
+    assert two_plan["prune_candidate"]["release_id"] == next_oldest.stem
+    cleanup.prune_one_oldest(
+        directory, expected_release_id=next_oldest.stem,
+        expected_sha256=hashlib.sha256(next_oldest.read_bytes()).hexdigest(),
+        confirm_prune=True, confirm_no_dependencies=True,
     )
+    new = audit.plan_publication(directory, release_id="clientflow-1.3.41-seq-1241", size_bytes=1024, sha256="f" * 64)
     assert new["disposition"] == "ready_to_publish"
-    assert len(new["protected_after_publication"]) == 4
+    assert len(new["protected_after_publication"]) == 3
     assert new["older_review_only"] == []
+
+
+def test_current_stable_1338_is_pinned_even_with_both_deletion_flags(tmp_path, monkeypatch):
+    directory = store(tmp_path)
+    oldest = directory / "clientflow-1.3.38-seq-1239.tar"
+    oldest.write_bytes(b"approved-1239")
+    for seq in (1240, 1241, 1242):
+        fixture_artifact(directory, seq)
+    monkeypatch.setattr(audit, "open_verified_bundle_structure", approve_stub)
+    plan = cleanup.plan_cleanup(directory)
+    assert plan["catalog_pin_blocks_cleanup"] is True
+    assert oldest.stem in plan["catalog_pinned_release_ids"]
+    with pytest.raises(cleanup.PruneDenied, match="Cannot delete active stable/default"):
+        cleanup.prune_one_oldest(
+            directory, expected_release_id=oldest.stem,
+            expected_sha256=hashlib.sha256(oldest.read_bytes()).hexdigest(),
+            confirm_prune=True, confirm_no_dependencies=True,
+        )
+    assert oldest.exists()
+
+
+def test_fail_closed_when_active_catalog_missing_or_invalid(tmp_path, monkeypatch):
+    directory = store(tmp_path)
+    oldest = fixture_artifact(directory, 1239)
+    for seq in (1240, 1241):
+        fixture_artifact(directory, seq)
+    monkeypatch.setattr(audit, "open_verified_bundle_structure", approve_stub)
+    monkeypatch.setattr(cleanup, "CATALOG_PATH", tmp_path / "not-present.json")
+    with pytest.raises(cleanup.PruneDenied, match="Unable to verify active release catalog"):
+        cleanup.plan_cleanup(directory)
+    assert oldest.exists()
+
+
+def test_cannot_skip_oldest_to_delete_an_unpinned_newer_release(tmp_path, monkeypatch):
+    directory = store(tmp_path)
+    (directory / "clientflow-1.3.38-seq-1239.tar").write_bytes(b"approved-1239")
+    for seq in (1240, 1241, 1242):
+        fixture_artifact(directory, seq)
+    monkeypatch.setattr(audit, "open_verified_bundle_structure", approve_stub)
+    newer = directory / "clientflow-1.3.40-seq-1240.tar"
+    with pytest.raises(cleanup.PruneDenied, match="Cannot delete active stable/default"):
+        cleanup.prune_one_oldest(
+            directory, expected_release_id=newer.stem,
+            expected_sha256=hashlib.sha256(newer.read_bytes()).hexdigest(),
+            confirm_prune=True, confirm_no_dependencies=True,
+        )
+    assert newer.exists()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Render release-store audit for a four-approved-release retention policy.
+"""Read-only Render release-store audit for a three-approved-release retention policy.
 
 Never deletes artifacts, updates the release catalog, or authorizes rollback.
 Run *inside* the backend runtime, where Render's persistent disk is mounted.
@@ -23,7 +23,7 @@ from clientflow_release_format.bundle import (  # noqa: E402
 )
 
 RELEASE_FILE = re.compile(r"^clientflow-(\d+\.\d+\.\d+)-seq-([1-9]\d*)\.tar$")
-KEEP_LATEST_APPROVED = 4
+KEEP_LATEST_APPROVED = 3
 # Minimum free space to leave on the 1-GB disk while staging a new artifact.
 # The artifact itself also needs temporary space during immutable publication.
 RESERVED_FREE_BYTES = 64 * 1024 * 1024
@@ -139,7 +139,7 @@ def inspect_store(directory: Path, *, require_four: bool = False, require_three:
     if invalid:
         raise StoreAuditError("Unsafe release store: " + json.dumps(result, ensure_ascii=False))
     if (require_four or require_three) and not result["retention_ready"]:
-        raise StoreAuditError("Store must contain exactly four verified approved releases: " + json.dumps(result, ensure_ascii=False))
+        raise StoreAuditError("Store must contain exactly three verified approved releases: " + json.dumps(result, ensure_ascii=False))
     return result
 
 
@@ -202,7 +202,7 @@ def plan_publication(
     projected.sort(key=lambda item: item["release_sequence"], reverse=True)
     if len(projected) > KEEP_LATEST_APPROVED:
         raise StoreAuditError(
-            "Approved release cap exceeded: archive older approved bundles through the "
+            "Approved three-release cap exceeded: archive older approved bundles through the "
             "separately authorized, dependency-reviewed retention cleanup before publication"
         )
     return {
@@ -246,9 +246,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact-dir", type=Path)
     parser.add_argument("--require-four", action="store_true",
-                        help="require exactly four verified approved bundles")
+                        help="deprecated compatibility alias: require exactly three verified approved bundles")
     parser.add_argument("--require-three", action="store_true",
-                        help="deprecated alias: require exactly four approved bundles")
+                        help="require exactly three verified approved bundles")
     args = parser.parse_args(argv)
     try:
         directory = args.artifact_dir

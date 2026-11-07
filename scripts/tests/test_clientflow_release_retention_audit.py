@@ -35,7 +35,7 @@ def _approved_fake(path: Path, *, require_deployable: bool = True):
     )
 
 
-def test_protects_four_newest_without_modifying_any_bytes(tmp_path, monkeypatch):
+def test_protects_three_newest_without_modifying_any_bytes(tmp_path, monkeypatch):
     directory = _store(tmp_path)
     older = _bundle(directory, "1.3.33", 1234)
     _bundle(directory, "1.3.34", 1235)
@@ -43,24 +43,24 @@ def test_protects_four_newest_without_modifying_any_bytes(tmp_path, monkeypatch)
     _bundle(directory, "1.3.36", 1237)
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
     before = {p.name: p.read_bytes() for p in directory.iterdir()}
-    result = audit.inspect_store(directory, require_three=True)
-    assert [x["release_sequence"] for x in result["protected_latest"]] == [1237, 1236, 1235, 1234]
-    assert result["older_review_only"] == []
-    assert result["within_approved_limit"] is True
-    assert result["retention_ready"] is True
+    result = audit.inspect_store(directory)
+    assert [x["release_sequence"] for x in result["protected_latest"]] == [1237, 1236, 1235]
+    assert [x["release_sequence"] for x in result["older_review_only"]] == [1234]
+    assert result["within_approved_limit"] is False
+    assert result["retention_ready"] is False
     assert result["rollback_enabled"] is False
     assert result["automatic_deletion_enabled"] is False
     assert older.exists()
     assert before == {p.name: p.read_bytes() for p in directory.iterdir()}
 
 
-def test_missing_four_does_not_claim_ready(tmp_path, monkeypatch):
+def test_missing_three_does_not_claim_ready(tmp_path, monkeypatch):
     directory = _store(tmp_path)
     _bundle(directory, "1.3.35", 1236)
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
     result = audit.inspect_store(directory)
     assert result["retention_ready"] is False
-    with pytest.raises(audit.StoreAuditError, match="exactly four"):
+    with pytest.raises(audit.StoreAuditError, match="exactly three"):
         audit.inspect_store(directory, require_three=True)
 
 
@@ -136,12 +136,11 @@ def test_real_approved_bundle_is_verified_by_retention_audit(tmp_path):
     assert result["protected_latest"][0]["source_commit"] == "c" * 40
 
 
-def test_publication_plan_keeps_four_and_never_deletes_older(tmp_path, monkeypatch):
+def test_publication_plan_keeps_three_and_never_deletes_older(tmp_path, monkeypatch):
     directory = _store(tmp_path)
     paths = [
         _bundle(directory, "1.3.33", 1234),
         _bundle(directory, "1.3.34", 1235),
-        _bundle(directory, "1.3.35", 1236),
     ]
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
     state = {p.name: p.read_bytes() for p in paths}
@@ -152,7 +151,6 @@ def test_publication_plan_keeps_four_and_never_deletes_older(tmp_path, monkeypat
     assert decision["disposition"] == "ready_to_publish"
     assert decision["protected_after_publication"] == [
         "clientflow-1.3.36-seq-1237",
-        "clientflow-1.3.35-seq-1236",
         "clientflow-1.3.34-seq-1235",
         "clientflow-1.3.33-seq-1234",
     ]
@@ -243,26 +241,26 @@ def test_fifth_published_bundle_reports_violation_without_mutation(tmp_path, mon
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
     before = {p.name: p.read_bytes() for p in directory.iterdir()}
     report = audit.inspect_store(directory)
-    assert report["retention_target"] == 4
+    assert report["retention_target"] == 3
     assert report["approved_count"] == 5
     assert report["within_approved_limit"] is False
     assert report["retention_ready"] is False
-    assert [item["release_sequence"] for item in report["protected_latest"]] == [1240, 1239, 1238, 1237]
-    assert [item["release_sequence"] for item in report["older_review_only"]] == [1236]
-    with pytest.raises(audit.StoreAuditError, match="exactly four"):
+    assert [item["release_sequence"] for item in report["protected_latest"]] == [1240, 1239, 1238]
+    assert [item["release_sequence"] for item in report["older_review_only"]] == [1237, 1236]
+    with pytest.raises(audit.StoreAuditError, match="exactly three"):
         audit.inspect_store(directory, require_four=True)
     with pytest.raises(audit.StoreAuditError, match="Post-publication approved release cap exceeded"):
         audit.verify_publication(directory, release_id="clientflow-1.3.40-seq-1240", size_bytes=22, sha256="f" * 64)
     assert before == {p.name: p.read_bytes() for p in directory.iterdir()}
 
 
-def test_publication_refuses_fifth_approved_release_without_mutation(tmp_path, monkeypatch):
+def test_publication_refuses_fourth_approved_release_without_mutation(tmp_path, monkeypatch):
     directory = _store(tmp_path)
-    for seq in range(1236, 1240):
+    for seq in range(1237, 1240):
         _bundle(directory, f"1.3.{seq-1200}", seq)
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
     before = {p.name: p.read_bytes() for p in directory.iterdir()}
-    with pytest.raises(audit.StoreAuditError, match="Approved release cap exceeded"):
+    with pytest.raises(audit.StoreAuditError, match="Approved three-release cap exceeded"):
         audit.plan_publication(
             directory,
             release_id="clientflow-1.3.40-seq-1240",
@@ -272,14 +270,27 @@ def test_publication_refuses_fifth_approved_release_without_mutation(tmp_path, m
     assert before == {p.name: p.read_bytes() for p in directory.iterdir()}
 
 
-def test_existing_release_idempotency_still_allowed_with_four(tmp_path, monkeypatch):
+def test_existing_release_idempotency_allowed_when_store_over_limit(tmp_path, monkeypatch):
     directory = _store(tmp_path)
     for seq in range(1236, 1240):
         _bundle(directory, f"1.3.{seq-1200}", seq)
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
-    decision = audit.plan_publication(
-        directory, release_id="clientflow-1.3.39-seq-1239",
-        size_bytes=22, sha256="f" * 64,
-    )
-    assert decision["disposition"] == "already_published"
-    assert len(decision["protected_after_publication"]) == 4
+    # A nonconforming store remains fail-closed, including a repeat request.
+    with pytest.raises(audit.StoreAuditError, match="three-release cap"):
+        audit.plan_publication(
+            directory, release_id="clientflow-1.3.39-seq-1239",
+            size_bytes=22, sha256="f" * 64,
+        )
+
+
+def test_exactly_three_is_ready_and_require_four_alias_is_strict_three(tmp_path, monkeypatch):
+    directory = _store(tmp_path)
+    for seq in (1237, 1238, 1239):
+        _bundle(directory, f"1.3.{seq - 1200}", seq)
+    monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
+    assert audit.inspect_store(directory, require_three=True)["retention_ready"] is True
+    assert audit.inspect_store(directory, require_four=True)["approved_limit"] == 3
+    extra = _bundle(directory, "1.3.40", 1240)
+    with pytest.raises(audit.StoreAuditError, match="exactly three"):
+        audit.inspect_store(directory, require_four=True)
+    assert extra.exists()
