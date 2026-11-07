@@ -1,0 +1,12 @@
+# PlanIQ Display 1.3.42/1243 — tre release-bundles, test/sikkerheds-gate
+# Changes-only branch. Keep the already approved 1243 bundle immutable.
+# NO archive deletion, no live Render change, no catalog promotion.
+CHANGED_FILES_1342_1243_THREE_RELEASE_RETENTION.txt
+CLIENTFLOW_1340_FOUR_RELEASE_RETENTION_AND_ROLLBACK_TEST_PLAN.md
+CLIENTFLOW_1342_1243_THREE_RELEASE_POLICY_STAGE_20261107.md
+CLIENTFLOW_RELEASE_RETENTION_READONLY.md
+SHA256SUMS.txt
+scripts/audit_clientflow_release_retention.py
+scripts/prune_clientflow_release_retention.py
+scripts/tests/test_clientflow_release_retention_audit.py
+scripts/tests/test_clientflow_release_retention_cleanup.py

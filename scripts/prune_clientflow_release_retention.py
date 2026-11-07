@@ -37,28 +37,71 @@ class PruneDenied(RuntimeError):
     pass
 
 
+CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
+
+
+def _catalog_pinned_release_ids() -> set[str]:
+    """Read the current runtime selector, never infer pins from source release identity.
+
+    The still-active fresh-install/default release must never be pruned merely
+    because it has become older than the latest approved bundles. This check
+    is independent of the operator's offline-client dependency attestation.
+    """
+    try:
+        catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise PruneDenied("Unable to verify active release catalog pins") from exc
+    releases = catalog.get("releases")
+    if not isinstance(releases, list):
+        raise PruneDenied("Active release catalog has no valid release list")
+    pins = set()
+    stable = catalog.get("latest_stable")
+    default = catalog.get("default_install_version")
+    if not isinstance(stable, str) or not isinstance(default, str):
+        raise PruneDenied("Stable/default release selectors are missing")
+    for row in releases:
+        if not isinstance(row, dict):
+            raise PruneDenied("Malformed release catalog entry")
+        version = row.get("version")
+        release_id = row.get("release_id")
+        if not isinstance(version, str) or not isinstance(release_id, str):
+            raise PruneDenied("Invalid catalog release identity")
+        if version in {stable, default} or row.get("installable") is True:
+            if not re.fullmatch(r"clientflow-\d+\.\d+\.\d+-seq-[1-9]\d*", release_id):
+                raise PruneDenied("Invalid pinned release identity")
+            if not release_id.startswith(f"clientflow-{version}-seq-"):
+                raise PruneDenied("Pinned catalog release ID and version disagree")
+            pins.add(release_id)
+    if not pins or stable not in {row["version"] for row in releases} or default not in {row["version"] for row in releases}:
+        raise PruneDenied("Stable/default release selectors are not resolvable")
+    return pins
+
+
 def plan_cleanup(directory: Path) -> dict:
-    """Read-only: identify only the approved oldest outside the protected four."""
+    """Read-only: report ONLY the oldest verified bundle, including catalog pins.
+
+    A store with four or five approved bundles can be gradually reconciled to
+    the new three-release limit. No automatic deletion or arbitrary skipping
+    over older, pinned baseline releases is possible.
+    """
     snapshot = inspect_store(directory)
     approved_count = snapshot["approved_count"]
-    if approved_count == KEEP_LATEST_APPROVED + 1:
-        # One-time correction for the already-existing fifth approved bundle.
-        candidate = snapshot["older_review_only"][0]
-        protected = snapshot["protected_latest"]
-    elif approved_count == KEEP_LATEST_APPROVED:
-        # Future forward rotation: release one approved slot *before* writing
-        # the incoming immutable bundle. Publication itself never exceeds four.
-        candidate = snapshot["protected_latest"][-1]
-        protected = snapshot["protected_latest"][:-1]
-    else:
-        raise PruneDenied("Cleanup requires exactly four or five verified approved bundles")
+    if approved_count not in {KEEP_LATEST_APPROVED, KEEP_LATEST_APPROVED + 1, KEEP_LATEST_APPROVED + 2}:
+        raise PruneDenied("Cleanup requires three, four or five verified approved bundles")
+    candidate = (snapshot["protected_latest"] + snapshot["older_review_only"])[-1]
+    protected = (snapshot["protected_latest"] + snapshot["older_review_only"])[:-1]
+    pins = _catalog_pinned_release_ids()
+    blocked = candidate["release_id"] in pins
     return {
         "mode": "read_only",
         "approved_count_before": approved_count,
         "approved_count_after": approved_count - 1,
+        "remaining_excess_after": max(0, approved_count - 1 - KEEP_LATEST_APPROVED),
         "protected": [x["release_id"] for x in protected],
         "prune_candidate": candidate,
         "dependency_review_required": True,
+        "catalog_pinned_release_ids": sorted(pins),
+        "catalog_pin_blocks_cleanup": blocked,
         "deleted": False,
     }
 
@@ -92,6 +135,8 @@ def prune_one_oldest(
         if not stat.S_ISDIR(current.st_mode) or (st.st_dev, st.st_ino) != (current.st_dev, current.st_ino):
             raise PruneDenied("Release-store directory changed")
         plan = plan_cleanup(directory)
+        if plan["catalog_pin_blocks_cleanup"]:
+            raise PruneDenied("Cannot delete active stable/default or installable catalog release")
         candidate = plan["prune_candidate"]
         if candidate["release_id"] != expected_release_id or candidate["sha256"] != expected_sha256:
             raise PruneDenied("Refusing cleanup: oldest approved release identity changed")
@@ -111,8 +156,13 @@ def prune_one_oldest(
         finally:
             os.close(file_fd)
         after = inspect_store(directory)
-        if after["approved_count"] != plan["approved_count_after"] or not after["within_approved_limit"]:
-            raise PruneDenied("Post-cleanup inventory size violates the four-bundle limit")
+        if after["approved_count"] != plan["approved_count_after"]:
+            raise PruneDenied("Post-cleanup inventory count changed unexpectedly")
+        # Reconciliation from five to three proceeds one independently approved
+        # deletion at a time. A four-bundle intermediate state is not PASS for
+        # the strict three-release policy, but is safe to resume or stop.
+        if after["approved_count"] <= KEEP_LATEST_APPROVED and not after["within_approved_limit"]:
+            raise PruneDenied("Post-cleanup inventory violates the three-release limit")
         if any(x["release_id"] not in plan["protected"] for x in after["protected_latest"]):
             raise PruneDenied("Post-cleanup inventory changed unexpectedly")
         return {
@@ -121,6 +171,7 @@ def prune_one_oldest(
             "removed_release_id": expected_release_id,
             "removed_sha256": expected_sha256,
             "approved_count_after": after["approved_count"],
+            "remaining_excess": max(0, after["approved_count"] - KEEP_LATEST_APPROVED),
             "protected": [x["release_id"] for x in after["protected_latest"]],
             "automatic_deletion_enabled": False,
         }

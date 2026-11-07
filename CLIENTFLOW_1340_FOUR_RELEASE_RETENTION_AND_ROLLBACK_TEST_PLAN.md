@@ -1,3 +1,8 @@
+> **HISTORISK PLAN — afløst 7. november 2026.** Den gældende politik er
+> **tre** seneste godkendte bundles; se `CLIENTFLOW_RELEASE_RETENTION_READONLY.md`.
+> De nedenstående tal og eksempler beskriver den tidligere fire-releasefase
+> og er ikke instruktioner til at rydde op på en aktiv 2026-11-07 store.
+
 # ClientFlow: four approved bundles and Heidi1 1.3.38 → 1.3.40 rollback acceptance
 
 **Status: code and synthetic gates only. NOT a live pruning authorization or physical acceptance.**
