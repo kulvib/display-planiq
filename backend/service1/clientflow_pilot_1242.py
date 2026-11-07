@@ -49,6 +49,8 @@ def require_pilot_1242(
 ) -> None:
     """Re-check identical immutable authorization before AND after the DB lock."""
     allowed_id = _configured_pilot_client_id()
+    if os.environ.get("CLIENTFLOW_1243_PILOT_CLIENT_ID"):
+        raise ClientFlowPilot1242Denied("1242-piloten må ikke være aktiv samtidig med 1243-piloten")
     if os.environ.get(OLD_PILOT_FLAG) == "1":
         raise ClientFlowPilot1242Denied("1241-piloten skal være deaktiveret før 1242-piloten")
     if type(client_id) is not int or client_id != allowed_id:

@@ -78,10 +78,13 @@ def inspect_source(repo: Path) -> dict:
         catalog_ok = False
     check("published_catalog_unchanged_1243_not_authorized", catalog_ok)
 
-    # This script cannot independently grant remote deployment authority: the
-    # backend has no 1243 guard or artifact hash before exact-source approval.
+    # The exact-byte 1243 guard is now prepared following explicit approval.
+    # No catalog entry or live pilot flag exists: source stage cannot authorize
+    # an update. Requiring the exact disabled-by-default guard prevents a future
+    # source refreeze from quietly substituting a generic client allowlist.
     try:
         router = read("backend/service1/routers/clientflow_deployments.py")
+        pilot = read("backend/service1/clientflow_pilot_1243.py")
         bridge = read("scripts/clientflow_1338_controller_bridge.sh")
         probe = read("scripts/clientflow_controller_sandbox_probe.sh")
         controller = read("client/systemd/clientflow-update-controller.service")
@@ -89,12 +92,18 @@ def inspect_source(repo: Path) -> dict:
         approve = read(".github/workflows/release-approve.yml")
         build = read(".github/workflows/release-build.yml")
     except (OSError, UnicodeError):
-        router = bridge = probe = controller = transaction = approve = build = ""
+        router = pilot = bridge = probe = controller = transaction = approve = build = ""
     check(
-        "no_1243_remote_pilot_authority",
-        'if release.get("release_id") == "clientflow-1.3.42-seq-1243"' not in router
+        "exact_1243_guard_staged_without_catalog_authority",
+        router.count('if release.get("release_id") == "clientflow-1.3.42-seq-1243"') == 1
         and "def _require_exact_scoped_pilot(" in router
-        and "raise ClientFlowPilot1242Denied" in router,
+        and "require_pilot_1243(release=release, **kwargs)" in router
+        and "raise ClientFlowPilot1242Denied" in router
+        and 'PILOT_CLIENT_ID = 2' in pilot
+        and 'PILOT_RELEASE_ID = "clientflow-1.3.42-seq-1243"' in pilot
+        and 'PILOT_APPROVED_BUNDLE_SHA256 = "ee35cc6caa9304bbc7ee4b1c763ecdeaf03d9d58a6c73cee943805251d8d6914"' in pilot
+        and 'if os.environ.get(PILOT_FLAG) != str(PILOT_CLIENT_ID):' in pilot
+        and "if any(os.environ.get(flag) for flag in CONFLICTING_PILOT_FLAGS):" in pilot,
     )
     check(
         "original_1338_bridge_and_sandbox_proof_retained",

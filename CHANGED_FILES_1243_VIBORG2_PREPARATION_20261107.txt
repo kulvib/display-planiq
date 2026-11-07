@@ -1,0 +1,27 @@
+ClientFlow 1.3.42/1243 — safe three-release transition preparation (changes-only)
+
+MODIFIED
+backend/service1/clientflow_pilot_1241.py
+backend/service1/clientflow_pilot_1242.py
+backend/service1/routers/clientflow_deployments.py
+backend/service1/routers/enrollment.py
+scripts/clientflow_1243_source_preflight.py
+scripts/tests/test_clientflow_1243_source_stage.py
+SHA256SUMS.txt
+
+ADDED
+backend/service1/clientflow_pilot_1243.py
+backend/service1/clientflow_fresh_install_maintenance.py
+backend/tests/test_clientflow_1243_viborg2_pilot_gate.py
+backend/tests/test_clientflow_fresh_install_maintenance_1243.py
+scripts/archive_clientflow_release_verified.py
+scripts/tests/test_clientflow_1243_verified_archive.py
+CLIENTFLOW_1.3.42_1243_SAFE_TRANSITION_PREPARATION_20261107.md
+CHANGED_FILES_1243_VIBORG2_PREPARATION_20261107.txt
+
+NOT CHANGED
+client/VERSION, client/release/release-input.json, client/release/rollback-trust.json,
+backend/service1/clientflow_release_catalog.json, approved 1243 bundle, production,
+Render environment, Render store, client timers, Viborg2, Heidi1, rollback permissions.
+
+No destructive cleanup, new catalog authority, auto publish or rollout in this change.

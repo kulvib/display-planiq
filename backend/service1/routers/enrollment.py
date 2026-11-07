@@ -21,6 +21,7 @@ from sqlmodel import Session, select
 from ..audit import add_audit_log
 from ..auth import get_current_superadmin_user, get_password_hash, verify_password
 from ..client_domain_models import ClientDomainCredential
+from ..clientflow_fresh_install_maintenance import require_fresh_install_not_suspended
 from ..clientflow_fresh_install_auth import (
     ClientFlowFreshInstallAuthorizationError,
     issue_fresh_install_authorization,
@@ -585,6 +586,7 @@ def create_enrollment_token(
     session: Session = Depends(get_session),
     admin: User = Depends(get_current_superadmin_user),
 ):
+    require_fresh_install_not_suspended()
     _require_admin_can_use_organization(admin, data.organization_id)
     resolved_organization_id = data.organization_id if data.organization_id is not None else admin.organization_id
     if resolved_organization_id is not None and not session.get(Organization, resolved_organization_id):
@@ -659,6 +661,7 @@ def fresh_install_bootstrap(
     data: FreshInstallBootstrapRequest,
     session: Session = Depends(get_session),
 ):
+    require_fresh_install_not_suspended()
     enforce_request_rate_limit(
         request,
         bucket="enrollment-fresh-install-bootstrap",
@@ -706,6 +709,7 @@ def download_fresh_install_artifact(
     data: FreshInstallArtifactRequest,
     session: Session = Depends(get_session),
 ):
+    require_fresh_install_not_suspended()
     enforce_request_rate_limit(
         request,
         bucket="enrollment-fresh-install-artifact",
@@ -965,6 +969,7 @@ def claim_enrollment_token(
     data: EnrollmentClaimRequest,
     session: Session = Depends(get_session),
 ):
+    require_fresh_install_not_suspended()
     enforce_request_rate_limit(
         request,
         bucket="enrollment-claim",
@@ -1185,6 +1190,7 @@ def complete_enrollment(
     data: EnrollmentCompleteRequest,
     session: Session = Depends(get_session),
 ):
+    require_fresh_install_not_suspended()
     enforce_request_rate_limit(
         request,
         bucket="enrollment-complete",
