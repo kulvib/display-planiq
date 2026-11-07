@@ -33,8 +33,8 @@ def fixture(tmp_path: Path, *, version: str = "1.3.41", seq: int = 1242, trusted
     return repo
 
 
-def test_current_source_is_staged_but_never_published() -> None:
-    result = inspect_source(ROOT)
+def test_historic_1242_fixture_is_staged_but_never_published(tmp_path: Path) -> None:
+    result = inspect_source(fixture(tmp_path, trusted=False))
     assert result["phase"] == "source_stage_only"
     assert result["source_stage_ready"] is True
     assert result["manual_rollback_mode"] == "disabled"
