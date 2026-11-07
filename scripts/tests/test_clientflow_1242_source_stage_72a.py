@@ -23,19 +23,19 @@ def _json(name: str) -> dict:
     return json.loads((ROOT / name).read_text(encoding="utf-8"))
 
 
-def test_exact_source_identity_and_strict_1242_pilot_catalog() -> None:
-    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.41"
+def test_1243_successor_preserves_strict_published_1242_pilot_catalog() -> None:
+    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.42"
     source = _json("client/release/release-input.json")
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1242,
+        "release_sequence": 1243,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
     catalog = _json("backend/service1/clientflow_release_catalog.json")
     assert catalog["catalog_sequence"] == 1242
-    assert source["release_sequence"] == catalog["catalog_sequence"]
+    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert [x["release_id"] for x in catalog["releases"]] == [
@@ -58,7 +58,7 @@ def test_exact_source_identity_and_strict_1242_pilot_catalog() -> None:
     assert new_pilot["min_current_version"] == new_pilot["max_current_version"] == "1.3.38"
 
 
-def test_keyless_1242_source_preflight_is_not_publication_or_activation_approval() -> None:
+def test_historical_1242_preflight_rejects_1243_and_cannot_authorize() -> None:
     trust = _json("client/release/rollback-trust.json")
     assert trust == {"schema_version": 1, "enabled": False, "keys": []}
     assert _json("backend/service1/clientflow_release_security_policy.json") == {
@@ -66,8 +66,11 @@ def test_keyless_1242_source_preflight_is_not_publication_or_activation_approval
         "minimum_safe_release_sequence": 1239, "revoked_release_ids": [],
     }
     validate_release_rollback_trust(ROOT, 1242)
+    # Historic 1242 guard must remain valid for the 1242 source shape, not
+    # incorrectly certify this staged 1243 successor as 1242.
+    # The 1243 source has its own stronger preflight.
     report = inspect_source(ROOT)
-    assert report["source_stage_ready"] is True
+    assert report["source_stage_ready"] is False
     assert report["phase"] == "source_stage_only"
     assert report["manual_rollback_mode"] == "disabled"
     assert report["publish_authorized"] is False
