@@ -34,13 +34,13 @@ def test_1243_successor_preserves_strict_published_1242_pilot_catalog() -> None:
         "runtime_python": "3.13.14",
     }
     catalog = _json("backend/service1/clientflow_release_catalog.json")
-    assert catalog["catalog_sequence"] == 1242
-    assert source["release_sequence"] == catalog["catalog_sequence"] + 1
+    assert catalog["catalog_sequence"] == 1243
+    assert source["release_sequence"] == catalog["catalog_sequence"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert [x["release_id"] for x in catalog["releases"]] == [
         "clientflow-1.3.38-seq-1239", "clientflow-1.3.40-seq-1241",
-        "clientflow-1.3.41-seq-1242",
+        "clientflow-1.3.41-seq-1242", "clientflow-1.3.42-seq-1243",
     ]
     assert sum(x["release_sequence"] == 1242 for x in catalog["releases"]) == 1
     stable, pilot = catalog["releases"][:2]

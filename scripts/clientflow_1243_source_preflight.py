@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only 1.3.42/1243 source-stage check; NEVER an approval or rollout.
+"""Read-only 1.3.42/1243 catalog-pilot gate; NEVER a physical rollout.
 
 This gate examines only public source/approval metadata. It neither builds nor
 publishes artifacts, reads signing secrets, changes backend policy, or touches a
@@ -24,6 +24,7 @@ PUBLISHED_IDS = (
     "clientflow-1.3.38-seq-1239",
     "clientflow-1.3.40-seq-1241",
     "clientflow-1.3.41-seq-1242",
+    "clientflow-1.3.42-seq-1243",
 )
 
 
@@ -58,8 +59,9 @@ def inspect_source(repo: Path) -> dict:
     try:
         catalog = parse("backend/service1/clientflow_release_catalog.json")
         releases = catalog.get("releases")
+        pilot = releases[-1] if isinstance(releases, list) and releases else {}
         catalog_ok = (
-            catalog.get("catalog_sequence") == 1242
+            catalog.get("catalog_sequence") == 1243
             and catalog.get("latest_stable") == "1.3.38"
             and catalog.get("default_install_version") == "1.3.38"
             and catalog.get("retention_policy") == {
@@ -68,19 +70,33 @@ def inspect_source(repo: Path) -> dict:
             }
             and isinstance(releases, list)
             and tuple(row.get("release_id") for row in releases if isinstance(row, dict)) == PUBLISHED_IDS
-            and len(releases) == 3
+            and len(releases) == 4
             and releases[0].get("install_modes") == ["fresh_install"]
+            and releases[0].get("installable") is True
             and releases[0].get("update_allowed") is False
             and releases[0].get("rollback_allowed") is False
-            and all(row.get("release_sequence") != 1243 for row in releases)
+            and all(row.get("rollback_allowed") is False for row in releases)
+            and all(row.get("installable") is False for row in releases[1:])
+            and all(row.get("install_modes") == ["in_place_update"] for row in releases[1:])
+            and pilot.get("version") == "1.3.42"
+            and pilot.get("release_sequence") == 1243
+            and pilot.get("status") == "supported"
+            and pilot.get("installable") is False
+            and pilot.get("update_allowed") is True
+            and pilot.get("rollback_allowed") is False
+            and pilot.get("requires_explicit_downgrade") is False
+            and pilot.get("requires_reboot") is True
+            and pilot.get("min_current_version") == "1.3.38"
+            and pilot.get("max_current_version") == "1.3.38"
         )
     except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
         catalog_ok = False
-    check("published_catalog_unchanged_1243_not_authorized", catalog_ok)
+    check("approved_catalog_exact_1243_pilot_only", catalog_ok)
 
     # The exact-byte 1243 guard is now prepared following explicit approval.
-    # No catalog entry or live pilot flag exists: source stage cannot authorize
-    # an update. Requiring the exact disabled-by-default guard prevents a future
+    # Catalog promotion is not live client authorization: disabled-by-default
+    # exact guard still prevents any automatic or broader rollout.
+    # Requiring the exact guard prevents a future
     # source refreeze from quietly substituting a generic client allowlist.
     try:
         router = read("backend/service1/routers/clientflow_deployments.py")
@@ -94,7 +110,7 @@ def inspect_source(repo: Path) -> dict:
     except (OSError, UnicodeError):
         router = pilot = bridge = probe = controller = transaction = approve = build = ""
     check(
-        "exact_1243_guard_staged_without_catalog_authority",
+        "exact_1243_guard_staged_for_disabled_pilot",
         router.count('if release.get("release_id") == "clientflow-1.3.42-seq-1243"') == 1
         and "def _require_exact_scoped_pilot(" in router
         and "require_pilot_1243(release=release, **kwargs)" in router
@@ -147,7 +163,8 @@ def inspect_source(repo: Path) -> dict:
     ready = all(bool(row["passed"]) for row in checks)
     return {
         "target": "clientflow-1.3.42-seq-1243",
-        "phase": "source_stage_only",
+        "phase": "catalog_pilot_stage_only",
+        "catalog_pilot_ready": ready,
         "source_stage_ready": ready,
         "publish_authorized": False,
         "activation_authorized": False,
