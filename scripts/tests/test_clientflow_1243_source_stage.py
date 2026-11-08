@@ -20,6 +20,7 @@ REQUIRED = (
     "backend/service1/clientflow_release_catalog.json",
     "backend/service1/clientflow_release_security_policy.json",
     "backend/service1/routers/clientflow_deployments.py",
+    "backend/service1/clientflow_pilot_1243.py",
     "client/systemd/clientflow-update-controller.service",
     "client/release/lib/clientflow_release/transaction.py",
     "scripts/clientflow_1338_controller_bridge.sh",
@@ -91,8 +92,8 @@ def test_unauthorized_1243_pilot_guard_and_sandbox_regression_deny_stage(tmp_pat
     repo = fixture(tmp_path)
     router = repo / "backend/service1/routers/clientflow_deployments.py"
     contents = router.read_text()
-    router.write_text(contents.replace('if release.get("release_id") == "clientflow-1.3.41-seq-1242":',
-                                       'if release.get("release_id") == "clientflow-1.3.42-seq-1243":'))
+    router.write_text(contents.replace('if release.get("release_id") == "clientflow-1.3.42-seq-1243":',
+                                       'if release.get("release_id") == "clientflow-1.3.43-seq-1244":'))
     assert not inspect_source(repo)["source_stage_ready"]
     router.write_text(contents)
     controller = repo / "client/systemd/clientflow-update-controller.service"

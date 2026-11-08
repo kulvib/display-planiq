@@ -31,6 +31,9 @@ from ..clientflow_pilot_1241 import ClientFlowPilotDenied, PILOT_FLAG as PILOT_1
 from ..clientflow_pilot_1242 import (
     ClientFlowPilot1242Denied, PILOT_FLAG as PILOT_1242_FLAG, require_pilot_1242,
 )
+from ..clientflow_pilot_1243 import (
+    ClientFlowPilot1243Denied, PILOT_FLAG as PILOT_1243_FLAG, require_pilot_1243,
+)
 from ..clientflow_release_security_policy import ClientFlowReleaseSecurityDenied
 from ..clientflow_releases import (
     ClientFlowArtifactUnavailable,
@@ -57,6 +60,9 @@ def _require_exact_scoped_pilot(*, release: dict, **kwargs) -> str:
     if release.get("release_id") == "clientflow-1.3.41-seq-1242":
         require_pilot_1242(release=release, **kwargs)
         return PILOT_1242_FLAG
+    if release.get("release_id") == "clientflow-1.3.42-seq-1243":
+        require_pilot_1243(release=release, **kwargs)
+        return PILOT_1243_FLAG
     raise ClientFlowPilot1242Denied("Ingen særskilt autoriseret ClientFlow-pilot for denne release")
 
 
@@ -287,7 +293,7 @@ def create_clientflow_deployment(
             pre_first_activation_repair=body.pre_first_activation_repair,
             confirm_downgrade=body.confirm_downgrade,
         )
-    except (ClientFlowPilotDenied, ClientFlowPilot1242Denied) as exc:
+    except (ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     target_version = str(release["version"])
@@ -336,7 +342,7 @@ def create_clientflow_deployment(
                 confirm_downgrade=body.confirm_downgrade,
                 artifact=artifact,
             )
-        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowReleaseSecurityDenied) as exc:
+        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowReleaseSecurityDenied) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if locked_version != current_version:
             raise HTTPException(status_code=409, detail="Klientens aktive release ændrede sig under autorisation")
@@ -377,7 +383,11 @@ def create_clientflow_deployment(
                 "allow_downgrade": deployment.allow_downgrade,
                 "pilot_client_id": int(client.id),
                 "pilot_source_version": current_version,
-                "pilot_authorization_flag": (PILOT_1241_FLAG if int(release["release_sequence"]) == 1241 else PILOT_1242_FLAG),
+                "pilot_authorization_flag": (
+                    PILOT_1241_FLAG if int(release["release_sequence"]) == 1241
+                    else PILOT_1242_FLAG if int(release["release_sequence"]) == 1242
+                    else PILOT_1243_FLAG
+                ),
                 "pre_first_activation_repair": repair_binding is not None,
                 "repair_from_release_id": repair_binding.get("release_id") if repair_binding else None,
                 "repair_from_release_sequence": repair_binding.get("release_sequence") if repair_binding else None,
