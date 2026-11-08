@@ -1,9 +1,6 @@
 """Operator CLI refuses maintenance bypass and never modifies source releases."""
 from __future__ import annotations
 
-from pathlib import Path
-import pytest
-
 from scripts import preflight_clientflow_1243_transitional_publication as cli
 from scripts.tests.test_clientflow_1243_transitional_publication import _setup
 
