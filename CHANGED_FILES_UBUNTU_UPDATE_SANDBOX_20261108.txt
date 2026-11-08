@@ -1,0 +1,30 @@
+CHANGESET: Ubuntu APT/dracut sandbox + korrekt kanonisk UI-fejlstatus
+BRANCH: fix/clientflow-ubuntu-update-dracut-sandbox-20261108
+BASE: frisk bruger-ZIP display-planiq-main(20261108-173015).zip
+GITHUB_MAIN_AT_START: 4bdc7336f4f1c203c42975b7ecd74b961c79a7ad
+
+RETTELSER:
+- Eksponér /usr/lib/modules i de to root-owned package-mutating systemd-units.
+- Bevar modul-indlæsningsforbud vha. CapabilityBoundingSet og SystemCallFilter.
+- Kræv de eksakte direktiver i release-buildens systemd-kontrakt.
+- Test den faktiske systemd-sandbox på Ubuntu 26.04-host under CI.
+- Lad kanonisk terminal-kommando-fejl overtrumfe lokal gammel ventebesked i UI.
+- Dæk fejlscenarier med regressionstests.
+
+LOKALT TESTET: 95 Python-tests PASS; 3 Node/frontend-tests PASS.
+FULL GITHUB CI: IKKE KØRT ENDNU; KRÆVES FØR MERGE/RELEASE.
+UBUNTU 26.04 REAL-HOST PROBE: IKKE KØRT LOKALT; KRÆVES I GITHUB CI.
+RELEASE: Ingen opbygning eller ændring af godkendt ClientFlow 1.3.42/1243.
+DRIFT: Ingen ændring af Render miljø, release-store, katalog, Viborg2 eller Heidi1.
+
+Filer i ZIP er kun ændrede/nyoprettede filer med repo-relative stier.
+
+CLIENTFLOW_1243_UBUNTU_UPDATE_SANDBOX_INCIDENT_20261108.md
+backend/tests/test_clientflow_executable_release_gate.py
+backend/tests/test_clientflow_system_broker_update_isolation.py
+client/release/lib/clientflow_release/systemd_contract.py
+client/systemd/clientflow-platform-prepare.service
+client/systemd/clientflow-system-broker.service
+frontend/src/pages/clientdetailspage/ClientDetailsInfoSection.jsx
+frontend/tests/ubuntuUpdateCanonicalErrorMessage.test.mjs
+scripts/verify_clientflow_ubuntu2604_host.py

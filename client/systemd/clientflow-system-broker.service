@@ -16,7 +16,13 @@ PrivateDevices=yes
 ProtectSystem=no
 ProtectHome=read-only
 ProtectKernelTunables=yes
-ProtectKernelModules=yes
+# APT/dpkg (including dracut/initramfs triggers) must read and update
+# /usr/lib/modules. ProtectKernelModules=yes hides that directory, even
+# though the host kernel packages are healthy. Expose package files only in
+# this privileged package-mutating service; still deny explicit module loads.
+ProtectKernelModules=no
+CapabilityBoundingSet=~CAP_SYS_MODULE
+SystemCallFilter=~@module
 ProtectKernelLogs=yes
 ProtectControlGroups=yes
 # update_os invokes dpkg, which must install legitimate setuid/setgid package files.

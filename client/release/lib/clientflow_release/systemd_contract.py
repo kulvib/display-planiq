@@ -251,6 +251,17 @@ def _validate_operational_service_contracts(units: dict[str, Path]) -> None:
         units, "clientflow-system-broker.service", "NoNewPrivileges", "no"
     )
 
+    # The root-owned package-maintenance services must see /usr/lib/modules.
+    # ProtectKernelModules=yes deliberately masks it, making dracut fail with
+    # "Cannot find module directory". Preserve equivalent module-loading
+    # denial with both CAP_SYS_MODULE removal and the @module syscall filter.
+    # The ordinary agents and other services retain ProtectKernelModules=yes.
+    for unit in ("clientflow-platform-prepare.service", "clientflow-system-broker.service"):
+        _require_single_service_value(units, unit, "ProtectKernelModules", "no")
+        _require_single_service_value(units, unit, "CapabilityBoundingSet", "~CAP_SYS_MODULE")
+        _require_single_service_value(units, unit, "SystemCallFilter", "~@module")
+    _require_single_service_value(units, "clientflow-system-agent.service", "ProtectKernelModules", "yes")
+
     # Both real runtime paths invoke /usr/sbin/ip and therefore require netlink
     # route/address access inside their systemd sandboxes.
     for unit in ("clientflow-status-agent.service", "clientflow-display-runtime.service"):

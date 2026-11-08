@@ -236,3 +236,26 @@ def test_os_update_broker_allows_dpkg_suid_install_without_weakening_system_agen
     assert "NoNewPrivileges=no" in broker
     assert "RestrictSUIDSGID=yes" in agent
     assert "NoNewPrivileges=yes" in agent
+
+
+@pytest.mark.parametrize("unit", ["clientflow-system-broker.service", "clientflow-platform-prepare.service"])
+def test_package_mutating_services_expose_modules_without_module_load_authority(unit):
+    """Reproduce the 2026-11-08 dracut failure as a source/release contract."""
+    values = {}
+    for line in (ROOT / "client/systemd" / unit).read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.lstrip().startswith("#"):
+            key, value = line.split("=", 1)
+            assert key not in values, f"Duplicate {unit}: {key}"
+            values[key] = value
+    assert values["User"] == "root"
+    assert values["ProtectKernelModules"] == "no"  # Prevent masking /usr/lib/modules
+    assert values["CapabilityBoundingSet"] == "~CAP_SYS_MODULE"
+    assert values["SystemCallFilter"] == "~@module"
+    assert values["NoNewPrivileges"] == "no"  # Required by apt's privilege drops
+
+
+def test_unprivileged_system_agent_remains_kernel_module_sandboxed():
+    agent = (ROOT / "client/systemd/clientflow-system-agent.service").read_text(encoding="utf-8")
+    assert "ProtectKernelModules=yes" in agent
+    assert "NoNewPrivileges=yes" in agent
+    assert "RestrictSUIDSGID=yes" in agent

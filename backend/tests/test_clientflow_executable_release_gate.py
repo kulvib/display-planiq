@@ -177,3 +177,19 @@ def test_release_systemd_contract_preserves_frozen_livestream_privilege_drop_cap
     )
     with pytest.raises(SystemdContractError, match="Frozen Livestream privilege-drop"):
         validate_release_systemd_contract(root)
+
+
+@pytest.mark.parametrize("unit,directive,mutant", [
+    ("clientflow-platform-prepare.service", "ProtectKernelModules=no", "ProtectKernelModules=yes"),
+    ("clientflow-system-broker.service", "ProtectKernelModules=no", "ProtectKernelModules=yes"),
+    ("clientflow-platform-prepare.service", "CapabilityBoundingSet=~CAP_SYS_MODULE", "CapabilityBoundingSet=CAP_SYS_MODULE"),
+    ("clientflow-system-broker.service", "SystemCallFilter=~@module", "SystemCallFilter=@module"),
+])
+def test_release_rejects_package_sandbox_that_hides_modules_or_allows_loading(tmp_path, unit, directive, mutant):
+    root = _release_tree(tmp_path)
+    target = root / "client-runtime/systemd" / unit
+    source = target.read_text(encoding="utf-8")
+    assert source.count(directive) == 1
+    target.write_text(source.replace(directive, mutant), encoding="utf-8")
+    with pytest.raises(SystemdContractError, match="Operational systemd-kontrakt driftede"):
+        validate_release_systemd_contract(root)
