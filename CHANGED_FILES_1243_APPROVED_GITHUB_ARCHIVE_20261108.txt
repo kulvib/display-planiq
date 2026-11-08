@@ -1,0 +1,15 @@
+ClientFlow 1.3.42 / 1243 – GitHub approved-asset archival gate, changes-only
+Source: freshest display-planiq-main(20261108-103710).zip; starting GitHub main 88dcbe22bbb9d4685ec679aafc5263b0bbec7993
+Branch: feature/clientflow-1243-approved-github-archive
+
+NEW:
+.github/workflows/release-archive-approved.yml
+scripts/verify_clientflow_approved_release_asset.py
+scripts/tests/test_clientflow_approved_release_asset.py
+CLIENTFLOW_1.3.42_1243_GITHUB_ARCHIVE_GATE.md
+CHANGED_FILES_1243_APPROVED_GITHUB_ARCHIVE_20261108.txt
+
+UPDATED:
+SHA256SUMS.txt
+
+NO other changes. In particular, no client binary, release identity, approved bundle, existing catalogue, backend pilot flag, Render retention or rollback authority changes. Do not dispatch until merged current-main CI green.
