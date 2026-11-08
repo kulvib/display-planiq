@@ -137,11 +137,12 @@ def test_1241_pilot_rejects_repair_downgrade_and_unreasoned_authority(monkeypatc
 
 def test_1241_catalog_and_fresh_install_are_separate_authorities():
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert catalog["catalog_sequence"] == 1242
+    assert catalog["catalog_sequence"] == 1243
     assert all(item["release_sequence"] != 1240 for item in catalog["releases"])
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
-    assert len(catalog["releases"]) == 3
+    assert len(catalog["releases"]) == 4
     assert catalog["releases"][2]["release_id"] == "clientflow-1.3.41-seq-1242"
+    assert catalog["releases"][3]["release_id"] == "clientflow-1.3.42-seq-1243"
     assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
     pilot = _pilot()
     assert pilot["install_modes"] == ["in_place_update"]

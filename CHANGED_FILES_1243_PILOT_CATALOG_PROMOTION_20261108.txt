@@ -1,0 +1,29 @@
+ClientFlow 1.3.42/1243 — approved, published TAR; disabled pilot-only catalog promotion
+Branch: feature/clientflow-1243-viborg2-pilot-catalog-promotion
+Base GitHub main: bd9f8b7f1f73de494179b4971c7035b6d9882ffa
+This source-only change does not publish a new TAR, activate pilots, delete releases, change Render environment or touch clients.
+Files added/modified (including this manifest):
+- CHANGED_FILES_1243_PILOT_CATALOG_PROMOTION_20261108.txt
+- CLIENTFLOW_1243_PILOT_CATALOG_PROMOTION_20261108.md
+- SHA256SUMS.txt
+- backend/service1/clientflow_release_catalog.json
+- backend/tests/test_clientflow_1241_single_client_pilot.py
+- backend/tests/test_clientflow_1242_single_reserve_pilot.py
+- backend/tests/test_clientflow_1243_viborg2_pilot_gate.py
+- backend/tests/test_clientflow_release_catalog_1212.py
+- backend/tests/test_clientflow_release_identity_51f.py
+- scripts/clientflow_1243_source_preflight.py
+- scripts/tests/test_clientflow_1235_physical_acceptance_blockers_stage1.py
+- scripts/tests/test_clientflow_1236_quicksettings_guard_release_stage.py
+- scripts/tests/test_clientflow_1237_candidate_stage.py
+- scripts/tests/test_clientflow_1238_source_stage.py
+- scripts/tests/test_clientflow_1239_catalog_promotion.py
+- scripts/tests/test_clientflow_1239_source_stage.py
+- scripts/tests/test_clientflow_1240_source_stage.py
+- scripts/tests/test_clientflow_1241_source_stage.py
+- scripts/tests/test_clientflow_1242_source_stage_72a.py
+- scripts/tests/test_clientflow_1243_pilot_catalog_promotion.py
+- scripts/tests/test_clientflow_1243_source_stage.py
+- scripts/tests/test_clientflow_1243_transitional_publication.py
+- scripts/tests/test_clientflow_physical_failure_fixes_1221.py
+- scripts/tests/test_clientflow_source_freeze_security_hygiene.py

@@ -156,7 +156,11 @@ def test_transition_does_not_change_runtime_catalog_or_prune_policy():
     catalog = json.loads(prune.CATALOG_PATH.read_text())
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
-    assert not any(row["version"] == "1.3.42" for row in catalog["releases"])
+    assert catalog["catalog_sequence"] == 1243
+    assert len([row for row in catalog["releases"] if row["version"] == "1.3.42"]) == 1
+    assert catalog["releases"][-1]["install_modes"] == ["in_place_update"]
+    assert catalog["releases"][-1]["installable"] is False
+    assert catalog["releases"][-1]["rollback_allowed"] is False
     assert audit.KEEP_LATEST_APPROVED == 3
     assert policy.TRANSITION_RELEASE_ID not in prune._catalog_pinned_release_ids()
     assert "clientflow-1.3.38-seq-1239" in prune._catalog_pinned_release_ids()

@@ -137,9 +137,9 @@ def test_requires_reason_and_rejects_repair_or_downgrade(monkeypatch, kwargs):
 
 def test_catalog_is_separate_from_fresh_install_and_manual_rollback():
     data = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert data["catalog_sequence"] == 1242
+    assert data["catalog_sequence"] == 1243
     assert data["latest_stable"] == data["default_install_version"] == "1.3.38"
-    assert [x["release_sequence"] for x in data["releases"]] == [1239, 1241, 1242]
+    assert [x["release_sequence"] for x in data["releases"]] == [1239, 1241, 1242, 1243]
     assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
     candidate = _release()
     assert candidate["install_modes"] == ["in_place_update"]

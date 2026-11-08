@@ -1,4 +1,4 @@
-"""1243 identity staging is not publication, backend authority, or physical proof."""
+"""1243 catalog pilot staging is not activation, rollout, or physical proof."""
 from __future__ import annotations
 
 import json
@@ -43,11 +43,12 @@ def json_at(repo: Path, name: str) -> dict:
     return json.loads((repo / name).read_text(encoding="utf-8"))
 
 
-def test_source_stage_identity_and_no_new_backend_authority() -> None:
+def test_approved_catalog_pilot_is_not_live_authority() -> None:
     actual = inspect_source(ROOT)
     assert actual["target"] == "clientflow-1.3.42-seq-1243"
     assert actual["source_stage_ready"] is True
-    assert actual["phase"] == "source_stage_only"
+    assert actual["phase"] == "catalog_pilot_stage_only"
+    assert actual["catalog_pilot_ready"] is True
     assert actual["publish_authorized"] is False
     assert actual["activation_authorized"] is False
     assert actual["pilot_enabled"] is False
@@ -55,8 +56,11 @@ def test_source_stage_identity_and_no_new_backend_authority() -> None:
     assert actual["requires_physical_pilot"] is True
     assert all(x["passed"] for x in actual["checks"])
     catalog = json_at(ROOT, "backend/service1/clientflow_release_catalog.json")
-    assert catalog["catalog_sequence"] == 1242
-    assert all(x["release_id"] != "clientflow-1.3.42-seq-1243" for x in catalog["releases"])
+    assert catalog["catalog_sequence"] == 1243
+    assert [x["release_id"] for x in catalog["releases"]] == list((
+        "clientflow-1.3.38-seq-1239", "clientflow-1.3.40-seq-1241",
+        "clientflow-1.3.41-seq-1242", "clientflow-1.3.42-seq-1243",
+    ))
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert json_at(ROOT, "client/release/rollback-trust.json") == {"schema_version": 1, "enabled": False, "keys": []}
 
@@ -72,18 +76,18 @@ def test_exact_bad_source_version_or_sequence_deny_stage(tmp_path: Path) -> None
     assert not inspect_source(repo)["source_stage_ready"]
 
 
-def test_unapproved_catalog_promotion_and_default_changes_deny_stage(tmp_path: Path) -> None:
+def test_unauthorized_catalog_mutations_and_default_changes_deny_pilot(tmp_path: Path) -> None:
     repo = fixture(tmp_path)
     catalog = json_at(repo, "backend/service1/clientflow_release_catalog.json")
-    catalog["catalog_sequence"] = 1243
+    catalog["catalog_sequence"] = 1242
     (repo / "backend/service1/clientflow_release_catalog.json").write_text(json.dumps(catalog))
     assert not inspect_source(repo)["source_stage_ready"]
-    catalog["catalog_sequence"] = 1242
+    catalog["catalog_sequence"] = 1243
     catalog["latest_stable"] = "1.3.42"
     (repo / "backend/service1/clientflow_release_catalog.json").write_text(json.dumps(catalog))
     assert not inspect_source(repo)["source_stage_ready"]
     catalog["latest_stable"] = "1.3.38"
-    catalog["releases"].append(dict(catalog["releases"][-1], release_id="clientflow-1.3.42-seq-1243", release_sequence=1243))
+    catalog["releases"][-1]["installable"] = True
     (repo / "backend/service1/clientflow_release_catalog.json").write_text(json.dumps(catalog))
     assert not inspect_source(repo)["source_stage_ready"]
 
@@ -126,14 +130,24 @@ def test_preflight_is_read_only_and_failure_reports_no_secrets(tmp_path: Path) -
     assert result["pilot_enabled"] is False
 
 
-def test_pilot_1243_cannot_be_ordered_before_publication() -> None:
+def test_pilot_catalog_only_selectable_under_explicit_runtime_guard() -> None:
     from service1.clientflow_releases import (
         ClientFlowCatalogError, load_catalog, resolve_fresh_install_release, resolve_release,
     )
     load_catalog.cache_clear()
     assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
-    with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
-        resolve_release("1.3.42")
+    update = resolve_release("1.3.42")
+    assert update["release_id"] == "clientflow-1.3.42-seq-1243"
+    assert update["install_modes"] == ["in_place_update"]
+    assert update["installable"] is False
+    assert update["rollback_allowed"] is False
+    from service1.clientflow_pilot_1243 import ClientFlowPilot1243Denied, require_pilot_1243
+    with pytest.raises(ClientFlowPilot1243Denied):
+        require_pilot_1243(
+            client_id=2, current_version="1.3.38", release=update,
+            reason="Viborg2 physical pilot", pre_first_activation_repair=False,
+            confirm_downgrade=False,
+        )
     for implicit in ("latest", "stable", ""):
         with pytest.raises(ClientFlowCatalogError, match="konkret katalogversion"):
             resolve_release(implicit)

@@ -1,7 +1,7 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1242,
+  "catalog_sequence": 1243,
   "latest_stable": "1.3.38",
   "default_install_version": "1.3.38",
   "retention_policy": {
@@ -110,6 +110,42 @@
         "ClientFlow 1.3.41/1242 has manual rollback disabled by immutable trust mode; automatic failed-activation recovery is separate and requires physical testing on spare Ubuntu 26.04 host with local rescue. Livestream and Remote Desktop remain physically unverified; physical pilot acceptance is PENDING. Stable/default fresh install stays 1.3.38 and Heidi1 remains on 1.3.40."
       ],
       "release_id": "clientflow-1.3.41-seq-1242",
+      "artifact_type": "runtime_release",
+      "install_modes": [
+        "in_place_update"
+      ],
+      "min_current_version": "1.3.38",
+      "max_current_version": "1.3.38"
+    },
+    {
+      "version": "1.3.42",
+      "client_version": "1.3.42",
+      "release_sequence": 1243,
+      "revision": "clientflow-1.3.42-seq-1243",
+      "status": "supported",
+      "installable": false,
+      "update_allowed": true,
+      "rollback_allowed": false,
+      "requires_explicit_downgrade": false,
+      "requires_reboot": true,
+      "ubuntu_compatibility": {
+        "policy": "ubuntu-desktop-lts-minimum",
+        "minimum_lts_version": "26.04",
+        "maximum_certified_version": "26.04",
+        "certified_versions": [
+          "26.04"
+        ],
+        "architecture": "amd64",
+        "desktop": "gnome",
+        "display_stack": "wayland",
+        "requires_platform_preflight": true
+      },
+      "notes": [
+        "Explicitly approved 1.3.42/1243 on 2026-11-07 for a SINGLE physical Viborg2 recovery pilot. Approved bundle SHA-256 ee35cc6caa9304bbc7ee4b1c763ecdeaf03d9d58a6c73cee943805251d8d6914, size 223610880 bytes, source commit b870cf8c3fa90286c6b4dccaae593eb8a0d57565, candidate SHA-256 4e52cbfbaa844c2d835e5b57f625b5a64cb98346c428ee410aead02b7c67c88a, installer SHA-256 e23fefccb4c126fee82a807ce0ffe22ddc5051aa8b6b53ca1907161622e126f3, approval reference CF-1.3.42-1243-VIBORG2-PILOT-20261107. Original approved bytes separately verified in GitHub Releases tag clientflow-1.3.42-1243-approved-transport and immutably published in Render with RELEASE_STORE_POSTFLIGHT=PASS and CLIENTFLOW_1243_TRANSITION=VERIFIED_FIVE_TEMPORARY.",
+        "Single-client manual in_place_update 1.3.38 -> 1.3.42 ONLY for Viborg2 backend client ID 2 with CLIENTFLOW_1243_PILOT_CLIENT_ID=2 explicitly configured after separate physical preflight. Pilot is DISABLED by default; 1241/1242 flags must be absent, superadmin and client-row lock required, exact SHA/size/approval/source verified both before and after lock. No fresh install, silent fleet rollout, repair, downgrade, or manual rollback. Heidi1 (client ID 1) remains excluded.",
+        "Physical update and deliberately injected automatic-failure rollback tests are still PENDING. Stable/default/fresh-install selector remains 1.3.38; CLIENTFLOW_FRESH_INSTALL_SUSPENDED=1 must remain active during transition. Five approved TARs are temporarily stored on Render; permanent retention remains three, without deletion until physical recovery/fresh-install dependencies are separately resolved. Historical 1.3.41 recovery failure remains immutable."
+      ],
+      "release_id": "clientflow-1.3.42-seq-1243",
       "artifact_type": "runtime_release",
       "install_modes": [
         "in_place_update"

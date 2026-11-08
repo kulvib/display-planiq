@@ -137,10 +137,12 @@ def test_repair_downgrade_and_missing_reason_blocked(monkeypatch, changes):
 
 def test_source_and_catalog_do_not_enable_pilot_by_merging():
     source = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert source["catalog_sequence"] == 1242
-    assert all(row["release_sequence"] != 1243 for row in source["releases"])
+    assert source["catalog_sequence"] == 1243
+    assert len([row for row in source["releases"] if row["release_sequence"] == 1243]) == 1
     assert source["latest_stable"] == source["default_install_version"] == "1.3.38"
-    assert "clientflow-1.3.42-seq-1243" not in (ROOT / "backend/service1/clientflow_release_catalog.json").read_text()
+    assert source["releases"][-1]["release_id"] == "clientflow-1.3.42-seq-1243"
+    assert source["releases"][-1]["install_modes"] == ["in_place_update"]
+    assert source["releases"][-1]["rollback_allowed"] is False
     router = (ROOT / "backend/service1/routers/clientflow_deployments.py").read_text()
     create = router[router.index("def create_clientflow_deployment("):router.index("@router.get(", router.index("def create_clientflow_deployment("))]
     assert create.count("_require_exact_scoped_pilot(") == 2
