@@ -239,6 +239,7 @@ def _platform_capabilities(repo: Path) -> dict[str, object]:
 
 _SANDBOX_PROPERTIES = (
     "CapabilityBoundingSet",
+    "SystemCallFilter",
     "AmbientCapabilities",
     "NoNewPrivileges",
     "PrivateTmp",
@@ -331,6 +332,31 @@ def _systemd_runtime_capabilities(repo: Path) -> dict[str, str]:
         if "CLIENTFLOW_UID_TRANSITION_OK" not in output:
             raise HostGateError(f"UID-transition probe gav ikke success-marker for {unit}")
 
+    # Real systemd namespace probe, not a simulated Python filesystem view.
+    # The 2026-11-08 Viborg2 incident proved that root shell visibility of
+    # /usr/lib/modules does NOT prove visibility in the package service.
+    kernel_tree_probe = r'''
+import os
+from pathlib import Path
+root = Path("/usr/lib/modules")
+if not root.is_dir():
+    raise RuntimeError("Kernel modules tree hidden by systemd sandbox")
+# A directory can legitimately have no entries in ephemeral CI; its
+# accessibility is the proof, not the installed-kernel inventory.
+with open("/proc/self/status", encoding="ascii") as status:
+    cap_bnd = next(line for line in status if line.startswith("CapBnd:"))
+if int(cap_bnd.split()[1], 16) & (1 << 16):
+    raise RuntimeError("CAP_SYS_MODULE unexpectedly available")
+print("CLIENTFLOW_KERNEL_MODULE_TREE_VISIBLE_WITHOUT_MODULE_LOAD_CAP")
+'''
+    for unit, name in (
+        ("clientflow-platform-prepare.service", "platform-modules"),
+        ("clientflow-system-broker.service", "system-modules"),
+    ):
+        output = _systemd_probe(repo, unit, name, ["/usr/bin/python3", "-c", kernel_tree_probe])
+        if "CLIENTFLOW_KERNEL_MODULE_TREE_VISIBLE_WITHOUT_MODULE_LOAD_CAP" not in output:
+            raise HostGateError(f"Kernel-modulprobe uden resultat for {unit}")
+
     for unit, name in (
         ("clientflow-status-agent.service", "status-netlink"),
         ("clientflow-display-runtime.service", "display-netlink"),
@@ -345,6 +371,7 @@ def _systemd_runtime_capabilities(repo: Path) -> dict[str, str]:
     return {
         "platform_prepare_uid_transition": "ok",
         "system_broker_uid_transition": "ok",
+        "package_services_kernel_modules_visible_no_load_capability": "ok",
         "frozen_livestream_uid_transition": "ok",
         "status_netlink": "ok",
         "display_netlink": "ok",

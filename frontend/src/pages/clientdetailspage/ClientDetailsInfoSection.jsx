@@ -585,6 +585,21 @@ function getUbuntuStepPhase(client) {
 }
 
 function getUbuntuHumanMessage(client, localStatus = {}) {
+  // Terminal status for the correlated canonical System command is
+  // authoritative. A previously queued local "afventer System-agent" message
+  // must not mask a later server-side failure, including in-doubt outcomes.
+  const status = String(client?.ubuntu_update_status || "").trim().toLowerCase();
+  if (status === "error") {
+    if (client?.ubuntu_update_error === "system_command_in_doubt") {
+      return "Ubuntu-opdateringen fejlede; resultatet skal kontrolleres lokalt. Kontrollér APT-/dpkg-logs og System-brokerjournal, før du forsøger igen.";
+    }
+    return String(
+      client?.ubuntu_update_error || client?.ubuntu_update_message || localStatus.error || "Ubuntu-opdateringen fejlede"
+    ).trim();
+  }
+  if (status === "success") {
+    return String(client?.ubuntu_update_message || "Ubuntu-opdatering gennemført").trim();
+  }
   if (localStatus.error) return localStatus.error;
   if (localStatus.message) return localStatus.message;
 
