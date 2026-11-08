@@ -36,6 +36,12 @@ def fixture(tmp_path: Path) -> Path:
         dst = target / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, dst)
+    # Historical gate is tested with its exact 1243 source identity, never
+    # by pretending today's 1244 source is the already-approved 1243 bytes.
+    (target / "client/VERSION").write_text("1.3.42\n", encoding="utf-8")
+    source_input = json.loads((target / "client/release/release-input.json").read_text())
+    source_input["release_sequence"] = 1243
+    (target / "client/release/release-input.json").write_text(json.dumps(source_input))
     return target
 
 
@@ -43,8 +49,10 @@ def json_at(repo: Path, name: str) -> dict:
     return json.loads((repo / name).read_text(encoding="utf-8"))
 
 
-def test_approved_catalog_pilot_is_not_live_authority() -> None:
-    actual = inspect_source(ROOT)
+def test_approved_catalog_pilot_is_not_live_authority(tmp_path: Path) -> None:
+    # Current 1244 source must fail the historic 1243 source identity gate.
+    assert inspect_source(ROOT)["source_stage_ready"] is False
+    actual = inspect_source(fixture(tmp_path))
     assert actual["target"] == "clientflow-1.3.42-seq-1243"
     assert actual["source_stage_ready"] is True
     assert actual["phase"] == "catalog_pilot_stage_only"

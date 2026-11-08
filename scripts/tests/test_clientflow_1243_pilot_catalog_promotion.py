@@ -116,9 +116,9 @@ def test_enabled_flag_never_authorizes_another_client_or_release(monkeypatch) ->
 
 
 def test_runtime_source_and_manual_rollback_are_unchanged() -> None:
-    assert (ROOT / "client/VERSION").read_text().strip() == "1.3.42"
+    assert (ROOT / "client/VERSION").read_text().strip() == "1.3.43"
     inp = json.loads((ROOT / "client/release/release-input.json").read_text())
-    assert inp["release_sequence"] == 1243
+    assert inp["release_sequence"] == 1244
     assert json.loads((ROOT / "client/release/rollback-trust.json").read_text()) == {
         "schema_version": 1, "enabled": False, "keys": [],
     }

@@ -154,6 +154,44 @@ def load_catalog() -> dict[str, Any]:
             if policy.get("requires_platform_preflight") is not True:
                 raise ClientFlowCatalogError(f"Ubuntu LTS-politikken kræver platformspreflight for {version}")
 
+    # Future 1244 reset is an explicit *catalog promotion*, never implied by
+    # client/VERSION moving forward. The already-published 1243 catalog remains
+    # unchanged until immutable 1244 bytes exist and the transition is approved.
+    if data["catalog_sequence"] >= 1244:
+        policy = data.get("retention_policy")
+        if not isinstance(policy, dict) or (
+            policy.get("max_selectable_versions") != 3
+            or policy.get("max_installable_versions") != 1
+            or policy.get("keep_blocked_metadata") is not False
+        ):
+            raise ClientFlowCatalogError("1244+ katalog kræver en sikker tre-release-politik")
+        if not 1 <= len(releases) <= 3:
+            raise ClientFlowCatalogError("1244+ katalog må højst indeholde tre gældende releases")
+        sequences = [item["release_sequence"] for item in releases]
+        if (
+            any(type(seq) is not int or seq < 1244 for seq in sequences)
+            or sequences != sorted(set(sequences))
+            or sequences[-1] != data["catalog_sequence"]
+        ):
+            raise ClientFlowCatalogError("1244+ katalog indeholder historiske eller forkert sorterede releases")
+        if any(
+            str(item.get("status") or "").lower() not in SELECTABLE_STATUSES
+            or (item.get("installable") is not True and item.get("update_allowed") is not True)
+            for item in releases
+        ):
+            raise ClientFlowCatalogError("1244+ katalog indeholder en ikke-valgbar release")
+        if sum(item.get("installable") is True for item in releases) != 1:
+            raise ClientFlowCatalogError("1244+ katalog må kun have én fresh-install standard")
+        newest = releases[-1]
+        if (
+            data.get("latest_stable") != newest.get("version")
+            or data.get("default_install_version") != newest.get("version")
+            or newest.get("status") != "stable"
+            or newest.get("installable") is not True
+            or "fresh_install" not in newest.get("install_modes", [])
+        ):
+            raise ClientFlowCatalogError("1244+ katalog skal bruge seneste release som stable/fresh-install")
+
     latest = str(data.get("latest_stable") or "").strip()
     latest_release = next((item for item in releases if item.get("version") == latest), None)
     if not latest_release or latest_release.get("status") != "stable":
