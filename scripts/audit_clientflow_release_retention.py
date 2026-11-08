@@ -149,6 +149,7 @@ def plan_publication(
     release_id: str,
     size_bytes: int,
     sha256: str,
+    authorized_1243_transition: bool = False,
 ) -> dict:
     """Fail-closed, read-only preflight for an immutable, forward-only publish.
 
@@ -200,7 +201,16 @@ def plan_publication(
         ]
 
     projected.sort(key=lambda item: item["release_sequence"], reverse=True)
-    if len(projected) > KEEP_LATEST_APPROVED:
+    if authorized_1243_transition:
+        # No general override of the retention cap: the sole temporary
+        # exception is a precisely pinned, previously audited 1243 handoff.
+        from scripts.clientflow_1243_transition_policy import require_1243_admission
+        require_1243_admission(
+            snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256,
+        )
+        if disposition != "ready_to_publish" or len(projected) != 5:
+            raise StoreAuditError("1243 transitional publication requires exact four-to-five rotation")
+    elif len(projected) > KEEP_LATEST_APPROVED:
         raise StoreAuditError(
             "Approved three-release cap exceeded: archive older approved bundles through the "
             "separately authorized, dependency-reviewed retention cleanup before publication"
@@ -208,6 +218,9 @@ def plan_publication(
     return {
         "mode": "read_only_publication_preflight",
         "disposition": disposition,
+        "1243_transition": authorized_1243_transition,
+        "retention_target_unchanged": KEEP_LATEST_APPROVED,
+        "cleanup_required_after_1243": authorized_1243_transition,
         "incoming_release_id": release_id,
         "disk_available_bytes": snapshot["disk_available_bytes"],
         "required_available_bytes": needed,
@@ -223,10 +236,18 @@ def plan_publication(
     }
 
 
-def verify_publication(directory: Path, *, release_id: str, size_bytes: int, sha256: str) -> dict:
+def verify_publication(
+    directory: Path, *, release_id: str, size_bytes: int, sha256: str,
+    authorized_1243_transition: bool = False,
+) -> dict:
     """Independent postflight inspection; never modifies approved artifacts."""
     snapshot = inspect_store(directory, require_four=False)
-    if not snapshot["within_approved_limit"]:
+    if authorized_1243_transition:
+        from scripts.clientflow_1243_transition_policy import require_1243_postflight
+        require_1243_postflight(
+            snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256,
+        )
+    elif not snapshot["within_approved_limit"]:
         raise StoreAuditError("Post-publication approved release cap exceeded")
     matches = [
         item

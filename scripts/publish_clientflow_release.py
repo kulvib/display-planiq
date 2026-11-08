@@ -132,6 +132,7 @@ def publish(
     expected_bundle_sha256: str,
     expected_approval_reference: str,
     expected_source_commit: str,
+    authorized_1243_transition: bool = False,
 ) -> tuple[Path, int, str]:
     expected_bundle_sha256 = str(expected_bundle_sha256 or "").strip().lower()
     expected_approval_reference = str(expected_approval_reference or "").strip()
@@ -198,6 +199,7 @@ def publish(
                     release_id=str(manifest["release_id"]),
                     size_bytes=size,
                     sha256=digest,
+                    authorized_1243_transition=authorized_1243_transition,
                 )
                 # Disk can change between audit and copy; re-check the pinned
                 # directory descriptor (not a separately resolved pathname).
@@ -270,6 +272,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-approval-reference", required=True)
     parser.add_argument("--expected-source-commit", required=True)
     parser.add_argument("--publish-release", action="store_true")
+    parser.add_argument(
+        "--authorize-1243-five-release-transition", action="store_true",
+        help="Explicit one-off 1239-1242 to 1239-1243 admission; requires fresh-install suspension",
+    )
     args = parser.parse_args(argv)
     if not args.publish_release:
         raise SystemExit("Artifact-publicering kræver --publish-release")
@@ -279,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_bundle_sha256=args.expected_bundle_sha256,
         expected_approval_reference=args.expected_approval_reference,
         expected_source_commit=args.expected_source_commit,
+        authorized_1243_transition=args.authorize_1243_five_release_transition,
     )
     try:
         verified = verify_publication(
@@ -286,14 +293,18 @@ def main(argv: list[str] | None = None) -> int:
             release_id=path.stem,
             size_bytes=size,
             sha256=digest,
+            authorized_1243_transition=args.authorize_1243_five_release_transition,
         )
-    except StoreAuditError as exc:
+    except (StoreAuditError, RuntimeError) as exc:
         print(f"RELEASE_STORE_POSTFLIGHT=FAIL: {exc}", file=sys.stderr)
         return 1
     print(path)
     print(f"BUNDLE_SIZE={size}")
     print(f"BUNDLE_SHA256={digest}")
     print("RELEASE_STORE_POSTFLIGHT=PASS")
+    if args.authorize_1243_five_release_transition:
+        print("CLIENTFLOW_1243_TRANSITION=VERIFIED_FIVE_TEMPORARY")
+        print("CLIENTFLOW_THREE_RELEASE_RETENTION_READY=NO")
     print("RELEASE_PROTECTED_LATEST=" + ",".join(
         item["release_id"] for item in verified["protected_latest"]
     ))

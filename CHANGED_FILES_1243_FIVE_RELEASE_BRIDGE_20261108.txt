@@ -1,0 +1,13 @@
+BRANCH: feature/clientflow-1243-bounded-five-release-publication
+SOURCE: display-planiq-main(20261108-103710).zip + independently GitHub-blob-verified PR #335/#336 (main 4621ff2082b79b706f5fb82056b4fddc37e150c3)
+CHANGES-ONLY; deploy/cleanup/rollback NOT performed
+
+scripts/audit_clientflow_release_retention.py
+scripts/publish_clientflow_release.py
+scripts/clientflow_1243_transition_policy.py
+scripts/preflight_clientflow_1243_transitional_publication.py
+scripts/tests/test_clientflow_1243_transitional_publication.py
+scripts/tests/test_clientflow_1243_transitional_preflight.py
+CLIENTFLOW_1243_TEMPORARY_FIVE_RELEASE_PUBLICATION.md
+CHANGED_FILES_1243_FIVE_RELEASE_BRIDGE_20261108.txt
+SHA256SUMS.txt
