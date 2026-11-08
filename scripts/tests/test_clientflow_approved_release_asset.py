@@ -172,7 +172,9 @@ def test_workflow_enforces_no_replace_source_approval_and_digest() -> None:
     assert "--prerelease" in workflow
     assert "--target \"$SOURCE_SHA\"" in workflow
     assert "git/ref/tags/$TAG" in workflow
-    assert "Archived asset digest differs" in workflow
+    assert "verify_clientflow_github_archive_metadata.py" in workflow
+    assert "--method PATCH" in workflow
+    assert '"$ASSET_PATH#$ASSET_NAME"' not in workflow
     assert "APPROVED_GITHUB_RELEASE_ARCHIVE=PASS" in workflow
     assert "publish_clientflow_release" not in workflow
     assert "CLIENTFLOW_1243_PILOT_CLIENT_ID" not in workflow
