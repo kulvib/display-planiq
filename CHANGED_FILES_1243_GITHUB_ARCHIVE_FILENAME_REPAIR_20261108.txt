@@ -1,0 +1,17 @@
+ClientFlow 1.3.42 / 1243 – GitHub asset name repair (changes only)
+Base: approved archive workflow previously delivered, now merged into main commit a1bc5e5a62f92e4a2ac2306238108513d5be3c1b
+Branch: fix/clientflow-1243-github-asset-name-repair
+
+MODIFIED:
+.github/workflows/release-archive-approved.yml
+scripts/tests/test_clientflow_approved_release_asset.py
+SHA256SUMS.txt
+
+ADDED:
+scripts/verify_clientflow_github_archive_metadata.py
+scripts/tests/test_clientflow_github_archive_metadata.py
+CLIENTFLOW_1243_APPROVED_GITHUB_ARCHIVE_FILENAME_REPAIR_20261108.md
+CHANGED_FILES_1243_GITHUB_ARCHIVE_FILENAME_REPAIR_20261108.txt
+
+No ClientFlow binaries, release manifest, approved checksums, Render catalog,
+release retention, pilot flags, or rollout/rollback permissions are changed.
