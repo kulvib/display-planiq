@@ -128,28 +128,56 @@ jobs:
             --expected-approval-reference "$EXPECTED_APPROVAL_REFERENCE" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Refuse existing tag or release (no replacement)
+      - name: Check existing tag and exact approved asset (fail closed)
+        id: archive_state
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.handoff.outputs.tag }}
+          ASSET_NAME: ${{ steps.handoff.outputs.asset_name }}
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          EXPECTED_APPROVED_SHA256: ${{ inputs.expected_approved_sha256 }}
+          EXPECTED_SIZE: ${{ steps.handoff.outputs.approved_bundle_size }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Approved release archive already exists: $TAG" >&2
-            exit 1
-          fi
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>"$RUNNER_TEMP/tag-check.err"; then
-            echo "Release tag already exists: $TAG" >&2
-            exit 1
-          fi
-          if ! grep -q 'HTTP 404' "$RUNNER_TEMP/tag-check.err"; then
-            cat "$RUNNER_TEMP/tag-check.err" >&2
-            echo 'Cannot prove tag is absent; refusing archive publication' >&2
-            exit 1
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+              > "$RUNNER_TEMP/existing-approved-release.json" \
+              2> "$RUNNER_TEMP/release-check.err"; then
+            # The failed 1243 workflow already uploaded the correct bytes
+            # under the handoff basename. Permit ONLY that exact release to
+            # pass for a metadata-only filename repair; never replace bytes.
+            python3 scripts/verify_clientflow_github_archive_metadata.py \
+              --release-json "$RUNNER_TEMP/existing-approved-release.json" \
+              --expected-tag "$TAG" \
+              --expected-asset-name "$ASSET_NAME" \
+              --expected-source-sha "$EXPECTED_SOURCE_SHA" \
+              --expected-sha256 "$EXPECTED_APPROVED_SHA256" \
+              --expected-size "$EXPECTED_SIZE" \
+              --allow-legacy-handoff-name \
+              --github-output "$GITHUB_OUTPUT"
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          else
+            # A permission/transport/API error is NOT proof of 404.
+            if ! grep -q 'HTTP 404' "$RUNNER_TEMP/release-check.err"; then
+              cat "$RUNNER_TEMP/release-check.err" >&2
+              echo 'Cannot verify absence of archive release' >&2
+              exit 1
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+                >/dev/null 2>"$RUNNER_TEMP/tag-check.err"; then
+              echo "Release tag exists without verified release: $TAG" >&2
+              exit 1
+            fi
+            if ! grep -q 'HTTP 404' "$RUNNER_TEMP/tag-check.err"; then
+              cat "$RUNNER_TEMP/tag-check.err" >&2
+              echo 'Cannot prove tag is absent; refusing archive publication' >&2
+              exit 1
+            fi
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create transport-only GitHub prerelease from exact approved bytes
+        if: steps.archive_state.outputs.exists == 'false'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -175,14 +203,48 @@ jobs:
 
           Verify the downloaded TAR by SHA-256 before any use.
           EOF
+          # '#name' is only a display label in gh release create, NOT an asset
+          # filename. Stage under the canonical basename and verify bytes.
+          install -d -m 0700 "$RUNNER_TEMP/archive-asset"
+          install -m 0600 "$ASSET_PATH" "$RUNNER_TEMP/archive-asset/$ASSET_NAME"
+          python3 - "$RUNNER_TEMP/archive-asset/$ASSET_NAME" <<'PYVERIFY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import sys
+          p = Path(sys.argv[1])
+          if p.stat().st_size != int(os.environ['BUNDLE_SIZE']):
+              raise SystemExit('Staged canonical TAR size mismatch')
+          h = hashlib.sha256()
+          with p.open('rb') as f:
+              while chunk := f.read(1024 * 1024):
+                  h.update(chunk)
+          if h.hexdigest() != os.environ['BUNDLE_SHA']:
+              raise SystemExit('Staged canonical TAR SHA-256 mismatch')
+          PYVERIFY
           gh release create "$TAG" \
-            "$ASSET_PATH#$ASSET_NAME" \
+            "$RUNNER_TEMP/archive-asset/$ASSET_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
             --prerelease \
             --latest=false \
             --title "ClientFlow approved $TAG - archive transport only" \
             --notes-file "$RUNNER_TEMP/release-notes.txt"
+
+      - name: Repair legacy asset filename only after independent verification
+        if: steps.archive_state.outputs.exists == 'true' && steps.archive_state.outputs.needs_rename == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_ID: ${{ steps.archive_state.outputs.asset_id }}
+          ASSET_NAME: ${{ steps.handoff.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          # GitHub API PATCH changes ONLY the asset metadata name, not the
+          # approved TAR bytes. An unexpected asset or hash is rejected above.
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" \
+            -f "name=$ASSET_NAME" >/dev/null
 
       - name: Independently verify GitHub asset metadata after publication
         shell: bash
@@ -196,26 +258,13 @@ jobs:
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/archived-release.json"
-          python3 - "$RUNNER_TEMP/archived-release.json" <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          import sys
-
-          release = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          if release.get("tag_name") != os.environ["TAG"] or release.get("prerelease") is not True:
-              raise SystemExit("Wrong release tag or release is not transport-only prerelease")
-          if release.get("target_commitish") != os.environ["EXPECTED_SOURCE_SHA"]:
-              raise SystemExit("Archived release target commit differs")
-          assets = release.get("assets") or []
-          if len(assets) != 1 or assets[0].get("name") != os.environ["ASSET_NAME"]:
-              raise SystemExit("Archived release must have exactly the approved TAR asset")
-          asset = assets[0]
-          if asset.get("size") != int(os.environ["EXPECTED_SIZE"]):
-              raise SystemExit("Archived asset size differs")
-          if asset.get("digest") != "sha256:" + os.environ["EXPECTED_APPROVED_SHA256"]:
-              raise SystemExit("Archived asset digest differs")
-          print("APPROVED_GITHUB_RELEASE_ARCHIVE=PASS")
-          print("approved_release_url=" + release["html_url"])
-          print("approved_bundle_sha256=" + os.environ["EXPECTED_APPROVED_SHA256"])
-          PY
+          python3 scripts/verify_clientflow_github_archive_metadata.py \
+            --release-json "$RUNNER_TEMP/archived-release.json" \
+            --expected-tag "$TAG" \
+            --expected-asset-name "$ASSET_NAME" \
+            --expected-source-sha "$EXPECTED_SOURCE_SHA" \
+            --expected-sha256 "$EXPECTED_APPROVED_SHA256" \
+            --expected-size "$EXPECTED_SIZE"
+          echo "APPROVED_GITHUB_RELEASE_ARCHIVE=PASS"
+          echo "approved_release_url=https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          echo "approved_bundle_sha256=$EXPECTED_APPROVED_SHA256"
