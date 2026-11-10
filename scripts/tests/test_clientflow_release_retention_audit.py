@@ -54,12 +54,12 @@ def test_protects_three_newest_without_modifying_any_bytes(tmp_path, monkeypatch
     assert before == {p.name: p.read_bytes() for p in directory.iterdir()}
 
 
-def test_missing_three_does_not_claim_ready(tmp_path, monkeypatch):
+def test_one_release_is_ready_but_require_three_still_rejects(tmp_path, monkeypatch):
     directory = _store(tmp_path)
     _bundle(directory, "1.3.35", 1236)
     monkeypatch.setattr(audit, "open_verified_bundle_structure", _approved_fake)
     result = audit.inspect_store(directory)
-    assert result["retention_ready"] is False
+    assert result["retention_ready"] is True
     with pytest.raises(audit.StoreAuditError, match="exactly three"):
         audit.inspect_store(directory, require_three=True)
 
@@ -114,7 +114,7 @@ def test_stdout_has_no_secrets_and_is_machine_readable(tmp_path, monkeypatch, ca
     assert audit.main(["--artifact-dir", str(directory)]) == 0
     output = capsys.readouterr().out
     assert "RELEASE_STORE_AUDIT=PASS" in output
-    assert "RELEASE_RETENTION_READY=NO" in output
+    assert "RELEASE_RETENTION_READY=YES" in output
 
 
 def test_real_approved_bundle_is_verified_by_retention_audit(tmp_path):
@@ -131,7 +131,7 @@ def test_real_approved_bundle_is_verified_by_retention_audit(tmp_path):
     )
     result = audit.inspect_store(directory)
     assert result["approved_count"] == 1
-    assert result["retention_ready"] is False
+    assert result["retention_ready"] is True
     assert result["invalid_artifacts"] == []
     assert result["protected_latest"][0]["source_commit"] == "c" * 40
 

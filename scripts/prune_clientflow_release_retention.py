@@ -80,14 +80,40 @@ def _catalog_pinned_release_ids() -> set[str]:
 def plan_cleanup(directory: Path) -> dict:
     """Read-only: report ONLY the oldest verified bundle, including catalog pins.
 
-    A store with four or five approved bundles can be gradually reconciled to
-    the new three-release limit. No automatic deletion or arbitrary skipping
+    The exact 1244 six-bundle bridge may be reconciled to one clean-baseline
+    bundle; normal future rotations continue to enforce the three-release cap. No automatic deletion or arbitrary skipping
     over older, pinned baseline releases is possible.
     """
     snapshot = inspect_store(directory)
     approved_count = snapshot["approved_count"]
-    if approved_count not in {KEEP_LATEST_APPROVED, KEEP_LATEST_APPROVED + 1, KEEP_LATEST_APPROVED + 2}:
-        raise PruneDenied("Cleanup requires three, four or five verified approved bundles")
+    if not 1 <= approved_count <= 6:
+        raise PruneDenied("Cleanup requires one to six verified approved bundles")
+    if approved_count == 6:
+        from scripts.clientflow_1244_transition_policy import require_exact_store
+        require_exact_store(snapshot, after=True)
+    if any(row["release_id"] == "clientflow-1.3.43-seq-1244" for row in (
+        snapshot["protected_latest"] + snapshot["older_review_only"]
+    )) and approved_count > 1:
+        from scripts.clientflow_1244_transition_policy import require_quiesced
+        require_quiesced()
+        try:
+            catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise PruneDenied("Cannot verify 1244 reset catalog") from exc
+        rows = catalog.get("releases") or []
+        if not (
+            catalog.get("catalog_sequence") == 1244
+            and catalog.get("latest_stable") == "1.3.43"
+            and catalog.get("default_install_version") == "1.3.43"
+            and isinstance(rows, list) and len(rows) == 1
+            and rows[0].get("release_id") == "clientflow-1.3.43-seq-1244"
+            and rows[0].get("installable") is True
+            and "fresh_install" in rows[0].get("install_modes", [])
+        ):
+            raise PruneDenied("1244 cleanup requires a deployed 1244-only fresh-install catalog")
+    if approved_count == 1:
+        # Never suggest deleting the sole remaining approved release.
+        raise PruneDenied("Cannot prune the sole approved release")
     candidate = (snapshot["protected_latest"] + snapshot["older_review_only"])[-1]
     protected = (snapshot["protected_latest"] + snapshot["older_review_only"])[:-1]
     pins = _catalog_pinned_release_ids()
@@ -158,9 +184,8 @@ def prune_one_oldest(
         after = inspect_store(directory)
         if after["approved_count"] != plan["approved_count_after"]:
             raise PruneDenied("Post-cleanup inventory count changed unexpectedly")
-        # Reconciliation from five to three proceeds one independently approved
-        # deletion at a time. A four-bundle intermediate state is not PASS for
-        # the strict three-release policy, but is safe to resume or stop.
+        # One exact oldest release per explicitly authorized operation.
+        # The final 1244-only state is supported; the last release cannot be pruned.
         if after["approved_count"] <= KEEP_LATEST_APPROVED and not after["within_approved_limit"]:
             raise PruneDenied("Post-cleanup inventory violates the three-release limit")
         if any(x["release_id"] not in plan["protected"] for x in after["protected_latest"]):

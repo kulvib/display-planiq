@@ -122,7 +122,7 @@ def inspect_store(directory: Path, *, require_four: bool = False, require_three:
         "mode": "read_only",
         "retention_target": KEEP_LATEST_APPROVED,
         "approved_count": len(artifacts),
-        "retention_ready": len(artifacts) == KEEP_LATEST_APPROVED and not invalid,
+        "retention_ready": 1 <= len(artifacts) <= KEEP_LATEST_APPROVED and not invalid,
         "within_approved_limit": len(artifacts) <= KEEP_LATEST_APPROVED and not invalid,
         "approved_limit": KEEP_LATEST_APPROVED,
         "protected_latest": protected,
@@ -138,7 +138,7 @@ def inspect_store(directory: Path, *, require_four: bool = False, require_three:
     }
     if invalid:
         raise StoreAuditError("Unsafe release store: " + json.dumps(result, ensure_ascii=False))
-    if (require_four or require_three) and not result["retention_ready"]:
+    if (require_four or require_three) and (len(artifacts) != KEEP_LATEST_APPROVED or invalid):
         raise StoreAuditError("Store must contain exactly three verified approved releases: " + json.dumps(result, ensure_ascii=False))
     return result
 
@@ -150,6 +150,7 @@ def plan_publication(
     size_bytes: int,
     sha256: str,
     authorized_1243_transition: bool = False,
+    authorized_1244_reset: bool = False,
 ) -> dict:
     """Fail-closed, read-only preflight for an immutable, forward-only publish.
 
@@ -201,7 +202,14 @@ def plan_publication(
         ]
 
     projected.sort(key=lambda item: item["release_sequence"], reverse=True)
-    if authorized_1243_transition:
+    if authorized_1243_transition and authorized_1244_reset:
+        raise StoreAuditError("Only one pinned transition may be requested")
+    if authorized_1244_reset:
+        from scripts.clientflow_1244_transition_policy import require_admission
+        require_admission(snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256)
+        if disposition != "ready_to_publish" or len(projected) != 6:
+            raise StoreAuditError("1244 reset admission requires exact five-to-six transition")
+    elif authorized_1243_transition:
         # No general override of the retention cap: the sole temporary
         # exception is a precisely pinned, previously audited 1243 handoff.
         from scripts.clientflow_1243_transition_policy import require_1243_admission
@@ -219,8 +227,10 @@ def plan_publication(
         "mode": "read_only_publication_preflight",
         "disposition": disposition,
         "1243_transition": authorized_1243_transition,
+        "1244_reset_admission": authorized_1244_reset,
         "retention_target_unchanged": KEEP_LATEST_APPROVED,
         "cleanup_required_after_1243": authorized_1243_transition,
+        "cleanup_required_after_1244": authorized_1244_reset,
         "incoming_release_id": release_id,
         "disk_available_bytes": snapshot["disk_available_bytes"],
         "required_available_bytes": needed,
@@ -239,10 +249,18 @@ def plan_publication(
 def verify_publication(
     directory: Path, *, release_id: str, size_bytes: int, sha256: str,
     authorized_1243_transition: bool = False,
+    authorized_1244_reset: bool = False,
 ) -> dict:
     """Independent postflight inspection; never modifies approved artifacts."""
     snapshot = inspect_store(directory, require_four=False)
-    if authorized_1243_transition:
+    if authorized_1243_transition and authorized_1244_reset:
+        raise StoreAuditError("Only one pinned transition may be requested")
+    if authorized_1244_reset:
+        from scripts.clientflow_1244_transition_policy import require_postflight
+        require_postflight(
+            snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256,
+        )
+    elif authorized_1243_transition:
         from scripts.clientflow_1243_transition_policy import require_1243_postflight
         require_1243_postflight(
             snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256,

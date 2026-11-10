@@ -8,6 +8,7 @@ import pytest
 
 from scripts import audit_clientflow_release_retention as audit
 from scripts import prune_clientflow_release_retention as cleanup
+from scripts.clientflow_1244_transition_policy import ClientFlow1244ResetDenied
 
 
 def store(tmp_path: Path) -> Path:
@@ -84,11 +85,11 @@ def test_explicit_cleanup_removes_only_exact_oldest(tmp_path, monkeypatch):
     assert not audit.inspect_store(directory)["within_approved_limit"]
 
 
-def test_cleanup_rejects_corrupt_symlink_and_more_than_one_excess(tmp_path, monkeypatch):
+def test_cleanup_rejects_unrecognized_six_or_more_and_corrupt_symlink(tmp_path, monkeypatch):
     directory = store(tmp_path)
     paths = [fixture_artifact(directory, seq) for seq in range(1236, 1242)]
     monkeypatch.setattr(audit, "open_verified_bundle_structure", approve_stub)
-    with pytest.raises(cleanup.PruneDenied, match="three, four or five"):
+    with pytest.raises(ClientFlow1244ResetDenied, match="(?i)exact pinned"):
         cleanup.plan_cleanup(directory)
     paths[-1].unlink()
     paths[-2].unlink()
