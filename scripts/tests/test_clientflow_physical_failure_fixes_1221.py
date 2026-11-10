@@ -15,7 +15,7 @@ GUI = ROOT / "client/libexec/local-gui"
 QUICK = ROOT / "client/systemd/clientflow-kiosk-quicksettings-guard.service"
 VERSION = ROOT / "client/VERSION"
 RELEASE_INPUT = ROOT / "client/release/release-input.json"
-CATALOG = ROOT / "backend/service1/clientflow_release_catalog.json"
+CATALOG = ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
 
 LEGACY_GUI_SHA256 = "027804da4cf3e722ce42a6d7760aa55a1a8f30d901bfc532a1cf63e22d5ba936"
 LEGACY_STATUS_MAP_SHA256 = "9e6f01fbbe4b23f1458cc2740cea1bc43777499f8d4da3bd83f2a474fb7e74b4"

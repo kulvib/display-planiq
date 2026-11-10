@@ -1,20 +1,20 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1243,
-  "latest_stable": "1.3.38",
-  "default_install_version": "1.3.38",
+  "catalog_sequence": 1244,
+  "latest_stable": "1.3.43",
+  "default_install_version": "1.3.43",
   "retention_policy": {
+    "max_selectable_versions": 3,
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
-  "created_at": "2026-10-17T14:56:20Z",
   "releases": [
     {
-      "version": "1.3.38",
-      "client_version": "1.3.38",
-      "release_sequence": 1239,
-      "revision": "clientflow-1.3.38-seq-1239",
+      "version": "1.3.43",
+      "client_version": "1.3.43",
+      "release_sequence": 1244,
+      "revision": "clientflow-1.3.43-seq-1244",
       "status": "stable",
       "installable": true,
       "update_allowed": false,
@@ -34,124 +34,15 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "Canonical ClientFlow 1.3.38 adds working GTK4 GUI copy handling and conditional copy icons, idle cursor hiding in the Wayland kiosk browser, calendar opening reboot at most once per local calendar day with manual wake exempted, and verified reboot status in Control Room. Existing desktop layout remains unchanged. Exact-source CI, Ubuntu 26.04/amd64 executable gate, two byte-identical release builds and manual approval passed; Python runtime 3.13.14. Physical acceptance of this version is pending.",
-        "Fresh-install-only selector: install_modes=[fresh_install], update_allowed=false, rollback_allowed=false. No in-place update or rollback from any installed version is authorized; the existing ClientFlow 1.3.37 installation on Viborg1 remains unchanged; its complete physical acceptance remains pending.",
-        "Promoted only after exact-source CI, immutable runtime transport, independent reproducible builds (run 38744376052), Ubuntu 26.04 candidate verification, explicit approval (run 38746557492), GitHub approved transport publication and immutable Render publication with independent store re-read. Source SHA: abbd8d673a350b6beca5d9e58ddb02fa2edd1c08; candidate SHA-256: d4d091c2865437582ce5ad7c0edb437ca37626bd75fd02b17f64442e8b0e5f86; embedded installer SHA-256: 2ee4ad5fb87d3ba420742c74e2956f816258e9991b95865dd67c3400c6642f75; approved bundle SHA-256: 02c3d4261eabdac4b9967a3aad4419453f61ca483ef4eb34dacf284d3af16a11; approved size: 223498240 bytes; approval reference: clientflow-1.3.38-seq-1239/abbd8d673a350b6beca5d9e58ddb02fa2edd1c08/d4d091c2865437582ce5ad7c0edb437ca37626bd75fd02b17f64442e8b0e5f86. RELEASE_STORE_POSTFLIGHT=PASS; IMMUTABLE_STORE=PASS. Physical acceptance pending."
+        "ClientFlow 1.3.43/1244 is the sole catalog-selectable, fresh-install-only clean baseline. Historical 1.3.38–1.3.42 entries were retired from the active catalog after an explicitly authorized one-version reset. Previously approved artifacts and deployment audit history remain separate; old versions cannot be selected, automatically upgraded to, or manually rolled back to.",
+        "Pinned immutable approved TAR: clientflow-approved-1.3.43-1244.tar; approved SHA-256 d3fdae8fb2a93f74431780f4aadde21625d10917e99cfbe6095ff2394e1e856b; size 223610880 bytes; original source commit 7ead8cf250b7d9b7c0d1bff5b70f574e76c11f41; candidate SHA-256 2243141d87cc43cfce6b8a8f839827d76996968e04808332d6c5e4614a351bfe; installer SHA-256 897eec852e45fea4423edd379df361132d79222a278c8d37adf554f8a96da7ce; approval reference CF-1.3.43-1244-20261109-7ead8cf-2243141d. GitHub Actions build, independent reproduction, Ubuntu 26.04 candidate check, manual approval and no-replace GitHub archive passed; exact Render publication and RELEASE_STORE_POSTFLIGHT=PASS reported by operator on 2026-11-10.",
+        "Fresh-install suspension CLIENTFLOW_FRESH_INSTALL_SUSPENDED=1 remains in force until separately verified: one-version catalog deployed, historical approved-store cleanup performed in approved oldest-first steps with independent dependency attestation, enrollment and old client credentials reviewed, and supervised physical fresh-install acceptance begun. No in-place update or rollback is approved for 1.3.43 during this reset. Retention: current selectable count 1, future maximum 3 approved selectable releases, newest only fresh-install default."
       ],
-      "release_id": "clientflow-1.3.38-seq-1239",
+      "release_id": "clientflow-1.3.43-seq-1244",
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install"
-      ],
-      "block_reason": "ClientFlow 1.3.38 er kun frigivet til fresh install; in-place update og rollback er ikke fysisk verificeret fra en autentisk ældre ClientFlow-baseline."
-    },
-    {
-      "version": "1.3.40",
-      "client_version": "1.3.40",
-      "release_sequence": 1241,
-      "revision": "clientflow-1.3.40-seq-1241",
-      "status": "supported",
-      "installable": false,
-      "update_allowed": true,
-      "rollback_allowed": false,
-      "requires_explicit_downgrade": false,
-      "requires_reboot": true,
-      "ubuntu_compatibility": {
-        "policy": "ubuntu-desktop-lts-minimum",
-        "minimum_lts_version": "26.04",
-        "maximum_certified_version": "26.04",
-        "certified_versions": [
-          "26.04"
-        ],
-        "architecture": "amd64",
-        "desktop": "gnome",
-        "display_stack": "wayland",
-        "requires_platform_preflight": true
-      },
-      "notes": [
-        "Approved ClientFlow 1.3.40/1241 is immutably published in Render release-store: SHA-256 b63211454c9cee0f24277c51f0d13d75099729e641d13f9ce4ed9ad696468783, size 223518720 bytes, source commit f4a25bcefba1c222bd3f908309ce2e94cbf5c4db, candidate SHA-256 c38442404905515dce0f06db2d69be68903f9ffeaf3522cfe968ff16e977419d, approval CF-1.3.40-1241-20261021-f4a25bce. Exact-source CI, independent reproducible builds, Ubuntu 26.04 executable gate, human approval and immutable Render postflight passed.",
-        "Single-client development pilot ONLY: 1.3.38 to 1.3.40 in-place update for backend client id 1 with CLIENTFLOW_1241_PILOT_CLIENT_ID=1 explicitly configured, superadmin authorization, online canonical runtime Status, mandatory reason, no repair/downgrade, exact published SHA/size/provenance and a second revalidation after client lock. Disabled by default.",
-        "1.3.39/1240 pilot is closed after recovery_failed; historic deployment records and immutable stored bundle are not modified. ClientFlow 1.3.38 remains sole fresh-install/stable/default target. No automatic rollout, no remote rollback. Local recovery is a separate mechanism; physical 1.3.40 acceptance pending."
-      ],
-      "release_id": "clientflow-1.3.40-seq-1241",
-      "artifact_type": "runtime_release",
-      "install_modes": [
-        "in_place_update"
-      ],
-      "min_current_version": "1.3.38",
-      "max_current_version": "1.3.38"
-    },
-    {
-      "version": "1.3.41",
-      "client_version": "1.3.41",
-      "release_sequence": 1242,
-      "revision": "clientflow-1.3.41-seq-1242",
-      "status": "supported",
-      "installable": false,
-      "update_allowed": true,
-      "rollback_allowed": false,
-      "requires_explicit_downgrade": false,
-      "requires_reboot": true,
-      "ubuntu_compatibility": {
-        "policy": "ubuntu-desktop-lts-minimum",
-        "minimum_lts_version": "26.04",
-        "maximum_certified_version": "26.04",
-        "certified_versions": [
-          "26.04"
-        ],
-        "architecture": "amd64",
-        "desktop": "gnome",
-        "display_stack": "wayland",
-        "requires_platform_preflight": true
-      },
-      "notes": [
-        "Approved ClientFlow 1.3.41/1242 is immutably published in Render release-store: SHA-256 5b6603f9169870e867d340a567df1194c57dfb254b306328c07f1366023aabce, size 223610880 bytes, source commit 33fb7bafa9cd37b8ab3bebb437c1e4d81a50460d, candidate SHA-256 d240a32595d4d33f33bfbff39b071f2bb6fba3e98a281b8718b30c3b43ca8633, approval CF-1.3.41-1242-PILOT-20261030. Reproducible builds, manual approval, Ubuntu 26.04 executable gate, Render publication and independent immutable-store re-read passed.",
-        "Manual single-reserve-client pilot only, exact 1.3.38 to 1.3.41 update with CLIENTFLOW_1242_PILOT_CLIENT_ID set to the approved non-Heidi1 client ID. Feature disabled by default, and cannot run while CLIENTFLOW_1241_PILOT_CLIENT_ID=1. No repair, downgrade, silent rollout or fleet update. Backend verifies exact approved SHA/size/source/approval before and after per-client lock.",
-        "ClientFlow 1.3.41/1242 has manual rollback disabled by immutable trust mode; automatic failed-activation recovery is separate and requires physical testing on spare Ubuntu 26.04 host with local rescue. Livestream and Remote Desktop remain physically unverified; physical pilot acceptance is PENDING. Stable/default fresh install stays 1.3.38 and Heidi1 remains on 1.3.40."
-      ],
-      "release_id": "clientflow-1.3.41-seq-1242",
-      "artifact_type": "runtime_release",
-      "install_modes": [
-        "in_place_update"
-      ],
-      "min_current_version": "1.3.38",
-      "max_current_version": "1.3.38"
-    },
-    {
-      "version": "1.3.42",
-      "client_version": "1.3.42",
-      "release_sequence": 1243,
-      "revision": "clientflow-1.3.42-seq-1243",
-      "status": "supported",
-      "installable": false,
-      "update_allowed": true,
-      "rollback_allowed": false,
-      "requires_explicit_downgrade": false,
-      "requires_reboot": true,
-      "ubuntu_compatibility": {
-        "policy": "ubuntu-desktop-lts-minimum",
-        "minimum_lts_version": "26.04",
-        "maximum_certified_version": "26.04",
-        "certified_versions": [
-          "26.04"
-        ],
-        "architecture": "amd64",
-        "desktop": "gnome",
-        "display_stack": "wayland",
-        "requires_platform_preflight": true
-      },
-      "notes": [
-        "Explicitly approved 1.3.42/1243 on 2026-11-07 for a SINGLE physical Viborg2 recovery pilot. Approved bundle SHA-256 ee35cc6caa9304bbc7ee4b1c763ecdeaf03d9d58a6c73cee943805251d8d6914, size 223610880 bytes, source commit b870cf8c3fa90286c6b4dccaae593eb8a0d57565, candidate SHA-256 4e52cbfbaa844c2d835e5b57f625b5a64cb98346c428ee410aead02b7c67c88a, installer SHA-256 e23fefccb4c126fee82a807ce0ffe22ddc5051aa8b6b53ca1907161622e126f3, approval reference CF-1.3.42-1243-VIBORG2-PILOT-20261107. Original approved bytes separately verified in GitHub Releases tag clientflow-1.3.42-1243-approved-transport and immutably published in Render with RELEASE_STORE_POSTFLIGHT=PASS and CLIENTFLOW_1243_TRANSITION=VERIFIED_FIVE_TEMPORARY.",
-        "Single-client manual in_place_update 1.3.38 -> 1.3.42 ONLY for Viborg2 backend client ID 2 with CLIENTFLOW_1243_PILOT_CLIENT_ID=2 explicitly configured after separate physical preflight. Pilot is DISABLED by default; 1241/1242 flags must be absent, superadmin and client-row lock required, exact SHA/size/approval/source verified both before and after lock. No fresh install, silent fleet rollout, repair, downgrade, or manual rollback. Heidi1 (client ID 1) remains excluded.",
-        "Physical update and deliberately injected automatic-failure rollback tests are still PENDING. Stable/default/fresh-install selector remains 1.3.38; CLIENTFLOW_FRESH_INSTALL_SUSPENDED=1 must remain active during transition. Five approved TARs are temporarily stored on Render; permanent retention remains three, without deletion until physical recovery/fresh-install dependencies are separately resolved. Historical 1.3.41 recovery failure remains immutable."
-      ],
-      "release_id": "clientflow-1.3.42-seq-1243",
-      "artifact_type": "runtime_release",
-      "install_modes": [
-        "in_place_update"
-      ],
-      "min_current_version": "1.3.38",
-      "max_current_version": "1.3.38"
+      ]
     }
   ]
 }

@@ -13,7 +13,7 @@ REFERENCE = "clientflow-1.3.38-seq-1239/abbd8d673a350b6beca5d9e58ddb02fa2edd1c08
 
 
 def test_exact_promotion_preserves_no_update_no_rollback_and_historical_evidence() -> None:
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
+    catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(encoding="utf-8"))
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.43"
     assert source["release_sequence"] == 1244
@@ -51,7 +51,7 @@ def test_exact_approval_and_render_publication_are_documented_not_inferred() -> 
                   "223498240", "RELEASE_STORE_POSTFLIGHT=PASS", "IMMUTABLE_STORE=PASS",
                   "fresh-install-only", "Physical acceptance", "pending", "No in-place update"):
         assert token in text
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
+    catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(encoding="utf-8"))
     notes = " ".join(catalog["releases"][0]["notes"])
     for token in (SOURCE, APPROVED_SHA, REFERENCE, "223498240", "Physical acceptance pending"):
         assert token in notes

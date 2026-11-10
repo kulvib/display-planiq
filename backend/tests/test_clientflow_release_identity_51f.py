@@ -10,7 +10,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 VERSION_PATH = ROOT / "client/VERSION"
 RELEASE_INPUT_PATH = ROOT / "client/release/release-input.json"
-CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
+CATALOG_PATH = ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
 PYPROJECT_PATH = ROOT / "client/runtime/pyproject.toml"
 HISTORICAL_RUNTIME_LOCK = ROOT / "client/runtime-artifacts.lock.json"
 

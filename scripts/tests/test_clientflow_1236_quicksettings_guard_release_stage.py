@@ -22,7 +22,7 @@ def test_1236_historical_evidence_is_retained_after_1239_promotion() -> None:
     assert release["minimum_ubuntu_lts"] == "26.04"
     assert release["architecture"] == "amd64"
 
-    catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
+    catalog = json.loads(read("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"))
     assert catalog["catalog_sequence"] == 1243
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"

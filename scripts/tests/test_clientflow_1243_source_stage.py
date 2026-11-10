@@ -36,6 +36,10 @@ def fixture(tmp_path: Path) -> Path:
         dst = target / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, dst)
+    shutil.copyfile(
+        ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json",
+        target / "backend/service1/clientflow_release_catalog.json",
+    )
     # Historical gate is tested with its exact 1243 source identity, never
     # by pretending today's 1244 source is the already-approved 1243 bytes.
     (target / "client/VERSION").write_text("1.3.42\n", encoding="utf-8")
@@ -63,7 +67,7 @@ def test_approved_catalog_pilot_is_not_live_authority(tmp_path: Path) -> None:
     assert actual["manual_rollback_mode"] == "disabled"
     assert actual["requires_physical_pilot"] is True
     assert all(x["passed"] for x in actual["checks"])
-    catalog = json_at(ROOT, "backend/service1/clientflow_release_catalog.json")
+    catalog = json_at(ROOT, "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
     assert catalog["catalog_sequence"] == 1243
     assert [x["release_id"] for x in catalog["releases"]] == list((
         "clientflow-1.3.38-seq-1239", "clientflow-1.3.40-seq-1241",
@@ -143,17 +147,21 @@ def test_pilot_catalog_only_selectable_under_explicit_runtime_guard() -> None:
         ClientFlowCatalogError, load_catalog, resolve_fresh_install_release, resolve_release,
     )
     load_catalog.cache_clear()
-    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
-    update = resolve_release("1.3.42")
+    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.43-seq-1244"
+    # Historic 1243 update target no longer exists in the live catalog.
+    with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
+        resolve_release("1.3.42")
+    from service1.clientflow_pilot_1243 import ClientFlowPilot1243Denied, require_pilot_1243
+    historic = json_at(ROOT, "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
+    update = historic["releases"][-1]
     assert update["release_id"] == "clientflow-1.3.42-seq-1243"
     assert update["install_modes"] == ["in_place_update"]
     assert update["installable"] is False
     assert update["rollback_allowed"] is False
-    from service1.clientflow_pilot_1243 import ClientFlowPilot1243Denied, require_pilot_1243
     with pytest.raises(ClientFlowPilot1243Denied):
         require_pilot_1243(
             client_id=2, current_version="1.3.38", release=update,
-            reason="Viborg2 physical pilot", pre_first_activation_repair=False,
+            reason="Historical Viborg2 physical pilot", pre_first_activation_repair=False,
             confirm_downgrade=False,
         )
     for implicit in ("latest", "stable", ""):

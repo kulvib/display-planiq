@@ -25,7 +25,7 @@ from service1.clientflow_pilot_1243 import (  # noqa: E402
 
 
 def _catalog() -> dict:
-    return json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
+    return json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(encoding="utf-8"))
 
 
 def _approved_artifact() -> dict:

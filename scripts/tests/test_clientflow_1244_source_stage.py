@@ -29,11 +29,17 @@ def fixture(tmp_path: Path) -> Path:
         destination = repo / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / relative, destination)
+    shutil.copy2(
+        ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json",
+        repo / "backend/service1/clientflow_release_catalog.json",
+    )
     return repo
 
 
-def test_exact_1244_source_without_approval():
-    value = inspect_source(ROOT)
+def test_exact_1244_source_without_approval(tmp_path):
+    # A source-stage check must fail after production catalog promotion.
+    assert inspect_source(ROOT)["source_stage_ready"] is False
+    value = inspect_source(fixture(tmp_path))
     assert value["source_stage_ready"] is True, value["checks"]
     assert value["target"] == "clientflow-1.3.43-seq-1244"
     assert value["stage"] == "source_stage_only"
@@ -43,8 +49,8 @@ def test_exact_1244_source_without_approval():
     assert all(check["passed"] for check in value["checks"])
 
 
-def test_source_bump_does_not_promote_catalog_or_default():
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+def test_historical_source_stage_does_not_promote_catalog_or_default():
+    catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text())
     assert catalog["catalog_sequence"] == 1243
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert "1.3.43" not in [r["version"] for r in catalog["releases"]]

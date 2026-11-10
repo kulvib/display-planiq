@@ -25,6 +25,18 @@ from service1.clientflow_releases import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+HISTORIC_CATALOG = ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
+
+
+@pytest.fixture(autouse=True)
+def _keep_historical_pilot_catalog_isolated(monkeypatch):
+    # Test the original, deliberately scoped historical pilot authority; never
+    # reinstate these releases in the live 1244 selector.
+    from service1 import clientflow_releases as releases
+    monkeypatch.setattr(releases, "CATALOG_PATH", HISTORIC_CATALOG)
+    releases.load_catalog.cache_clear()
+    yield
+    releases.load_catalog.cache_clear()
 
 
 def _pilot():
@@ -136,7 +148,7 @@ def test_1241_pilot_rejects_repair_downgrade_and_unreasoned_authority(monkeypatc
 
 
 def test_1241_catalog_and_fresh_install_are_separate_authorities():
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    catalog = json.loads((HISTORIC_CATALOG).read_text())
     assert catalog["catalog_sequence"] == 1243
     assert all(item["release_sequence"] != 1240 for item in catalog["releases"])
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
