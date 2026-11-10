@@ -90,7 +90,7 @@ def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(
-        (ROOT / "backend" / "service1" / "clientflow_release_catalog.json").read_text(
+        (ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(
             encoding="utf-8"
         )
     )

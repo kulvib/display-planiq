@@ -23,7 +23,7 @@ def test_1240_history_survives_1241_successor_without_reauthorizing_1240():
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    catalog = _json("backend/service1/clientflow_release_catalog.json")
+    catalog = _json("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
     assert catalog["catalog_sequence"] == 1243
     assert source["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
@@ -42,23 +42,26 @@ def test_1240_history_survives_1241_successor_without_reauthorizing_1240():
     assert pilot["min_current_version"] == pilot["max_current_version"] == "1.3.38"
 
 
-def test_new_pilot_selector_does_not_authorize_downgrade_or_fleet_update(monkeypatch):
+def test_retired_1240_pilot_not_selectable_or_authorized(monkeypatch):
     from service1.clientflow_releases import (
         ClientFlowCatalogError, load_catalog, resolve_release, resolve_fresh_install_release,
     )
     from service1.clientflow_pilot_1240 import ClientFlowPilotDenied, require_pilot_1240
 
     load_catalog.cache_clear()
-    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.38-seq-1239"
-    with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
-        resolve_release("1.3.39")
-    release = resolve_release("1.3.40")
+    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.43-seq-1244"
+    for retired in ("1.3.38", "1.3.39", "1.3.40", "1.3.41", "1.3.42"):
+        with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
+            resolve_release(retired)
+    historic = _json("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
+    previous = historic["releases"][1]
+    assert previous["release_id"] == "clientflow-1.3.40-seq-1241"
     monkeypatch.setenv("CLIENTFLOW_1240_PILOT_CLIENT_ID", "1")
     with pytest.raises(ClientFlowPilotDenied, match="permanent lukket"):
-        require_pilot_1240(client_id=1, current_version="1.3.38", release=release,
-            reason="physical test", pre_first_activation_repair=False, confirm_downgrade=False)
-    with pytest.raises(ClientFlowCatalogError, match="kun frigivet til fresh install"):
-        resolve_release("1.3.38")
+        require_pilot_1240(client_id=1, current_version="1.3.38", release=previous,
+            reason="historical test", pre_first_activation_repair=False, confirm_downgrade=False)
+    with pytest.raises(ClientFlowCatalogError):
+        resolve_release("1.3.43")  # stable fresh-install baseline, NOT a manual update target
     for implicit in ("", "latest", "stable"):
         with pytest.raises(ClientFlowCatalogError, match="konkret katalogversion"):
             resolve_release(implicit)
@@ -98,7 +101,7 @@ def test_prospective_139_catalog_allows_only_explicitly_scoped_update_source(mon
     """Model later promotion without changing production's fresh-only selector."""
     from service1 import clientflow_releases as releases
 
-    catalog = _json("backend/service1/clientflow_release_catalog.json")
+    catalog = _json("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
     original = dict(catalog["releases"][0])
     target = dict(original)
     target.update({

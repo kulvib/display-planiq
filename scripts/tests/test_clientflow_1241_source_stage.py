@@ -14,7 +14,7 @@ def _read(relative: str) -> str:
 def test_exact_1241_source_is_promoted_only_for_single_client_pilot():
     version = _read("client/VERSION").strip()
     source = json.loads(_read("client/release/release-input.json"))
-    catalog = json.loads(_read("backend/service1/clientflow_release_catalog.json"))
+    catalog = json.loads(_read("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"))
 
     assert version == "1.3.43"
     assert source == {

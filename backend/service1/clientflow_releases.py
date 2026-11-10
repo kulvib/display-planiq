@@ -154,9 +154,9 @@ def load_catalog() -> dict[str, Any]:
             if policy.get("requires_platform_preflight") is not True:
                 raise ClientFlowCatalogError(f"Ubuntu LTS-politikken kræver platformspreflight for {version}")
 
-    # Future 1244 reset is an explicit *catalog promotion*, never implied by
-    # client/VERSION moving forward. The already-published 1243 catalog remains
-    # unchanged until immutable 1244 bytes exist and the transition is approved.
+    # 1244+ selector policy is explicit and strictly bounded by this runtime
+    # validator; immutable client/VERSION alone cannot authorize a release.
+    # The current reset is a fresh-only exception, not a generic update permit.
     if data["catalog_sequence"] >= 1244:
         policy = data.get("retention_policy")
         if not isinstance(policy, dict) or (
@@ -182,7 +182,22 @@ def load_catalog() -> dict[str, Any]:
             raise ClientFlowCatalogError("1244+ katalog indeholder en ikke-valgbar release")
         if sum(item.get("installable") is True for item in releases) != 1:
             raise ClientFlowCatalogError("1244+ katalog må kun have én fresh-install standard")
+        if any(
+            item.get("rollback_allowed") is not False
+            or item.get("requires_explicit_downgrade") is not False
+            for item in releases
+        ):
+            raise ClientFlowCatalogError("1244+ katalog må ikke autorisere manuel rollback eller downgrade")
         newest = releases[-1]
+        if data["catalog_sequence"] == 1244 and not (
+            len(releases) == 1
+            and newest.get("version") == "1.3.43"
+            and newest.get("release_sequence") == 1244
+            and newest.get("release_id") == "clientflow-1.3.43-seq-1244"
+            and newest.get("install_modes") == ["fresh_install"]
+            and newest.get("update_allowed") is False
+        ):
+            raise ClientFlowCatalogError("1244 reset skal alene indeholde fresh-only 1.3.43 uden update")
         if (
             data.get("latest_stable") != newest.get("version")
             or data.get("default_install_version") != newest.get("version")

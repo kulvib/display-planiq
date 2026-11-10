@@ -14,7 +14,16 @@ from service1.clientflow_releases import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
+CATALOG_PATH = ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
+
+
+@pytest.fixture(autouse=True)
+def _historic_1239_catalog_unit_tests(monkeypatch):
+    from service1 import clientflow_releases as releases
+    monkeypatch.setattr(releases, "CATALOG_PATH", CATALOG_PATH)
+    releases.load_catalog.cache_clear()
+    yield
+    releases.load_catalog.cache_clear()
 
 
 def test_catalog_1239_promotes_exact_1338_fresh_install_identity() -> None:

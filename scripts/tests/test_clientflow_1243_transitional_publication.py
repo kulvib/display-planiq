@@ -149,11 +149,13 @@ def test_transition_not_a_general_bypass_for_other_release(tmp_path, monkeypatch
                                authorized_1243_transition=True)
 
 
-def test_transition_does_not_change_runtime_catalog_or_prune_policy():
+def test_transition_does_not_change_runtime_catalog_or_prune_policy(monkeypatch):
     import json
     from scripts import prune_clientflow_release_retention as prune
 
-    catalog = json.loads(prune.CATALOG_PATH.read_text())
+    historic_catalog = Path(__file__).resolve().parents[2] / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
+    monkeypatch.setattr(prune, "CATALOG_PATH", historic_catalog)
+    catalog = json.loads(historic_catalog.read_text())
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"
     assert catalog["catalog_sequence"] == 1243

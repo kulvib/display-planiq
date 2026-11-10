@@ -11,6 +11,13 @@ from scripts import clientflow_1244_transition_policy as policy
 from scripts import prune_clientflow_release_retention as cleanup
 
 
+@pytest.fixture(autouse=True)
+def _historic_staged_publication_isolation(monkeypatch):
+    historic = Path(__file__).resolve().parents[2] / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
+    monkeypatch.setattr(policy, "CATALOG_PATH", historic)
+    monkeypatch.setattr(cleanup, "CATALOG_PATH", historic)
+
+
 def store(tmp_path: Path, monkeypatch, *, after=False):
     root = tmp_path / "store"
     root.mkdir(mode=0o700)

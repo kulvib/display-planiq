@@ -19,7 +19,7 @@ def test_1334_1235_stage1_history_is_preserved_after_exact_release_promotion() -
     assert "staged source identity only" in historical_stage
     assert "Not source-frozen" in historical_stage
 
-    catalog = json.loads(read("backend/service1/clientflow_release_catalog.json"))
+    catalog = json.loads(read("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"))
     assert catalog["catalog_sequence"] == 1243
     assert catalog["latest_stable"] == "1.3.38"
     assert catalog["default_install_version"] == "1.3.38"

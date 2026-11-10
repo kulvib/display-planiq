@@ -143,6 +143,11 @@ def test_rotation_from_four_to_three_then_next_publication_refused_until_two(tmp
 
 
 def test_current_stable_1338_is_pinned_even_with_both_deletion_flags(tmp_path, monkeypatch):
+    # Historical 1239 was pinned until 1244 was promoted; preserve this proof.
+    monkeypatch.setattr(
+        cleanup, "CATALOG_PATH",
+        Path(__file__).resolve().parents[2] / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json",
+    )
     directory = store(tmp_path)
     oldest = directory / "clientflow-1.3.38-seq-1239.tar"
     oldest.write_bytes(b"approved-1239")
@@ -174,6 +179,11 @@ def test_fail_closed_when_active_catalog_missing_or_invalid(tmp_path, monkeypatc
 
 
 def test_cannot_skip_oldest_to_delete_an_unpinned_newer_release(tmp_path, monkeypatch):
+    # Historical 1239 was pinned until 1244 was promoted; preserve this proof.
+    monkeypatch.setattr(
+        cleanup, "CATALOG_PATH",
+        Path(__file__).resolve().parents[2] / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json",
+    )
     directory = store(tmp_path)
     (directory / "clientflow-1.3.38-seq-1239.tar").write_bytes(b"approved-1239")
     for seq in (1240, 1241, 1242):

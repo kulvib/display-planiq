@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_source_identity_promoted_only_after_exact_release_approval():
     version = (ROOT / "client/VERSION").read_text(encoding="utf-8").strip()
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
+    catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(encoding="utf-8"))
     assert version == "1.3.43"
     assert source == {
         "schema_version": 1, "release_sequence": 1244,

@@ -14,6 +14,10 @@ CATALOG = ROOT / "backend/service1/clientflow_release_catalog.json"
 
 
 def _future(*sequences: int) -> dict:
+    # The exact 1244 reset is fresh-only. Later synthetic catalog examples
+    # model independent future approvals, not a retroactive authorization.
+    if sequences == (1244,):
+        return json.loads(CATALOG.read_text())
     old = json.loads(CATALOG.read_text())
     base = deepcopy(old["releases"][0])
     rows = []
@@ -94,7 +98,11 @@ def test_invalid_future_catalog_fails_closed(tmp_path, monkeypatch, mutate):
         _load(tmp_path, monkeypatch, payload)
 
 
-def test_current_catalog_remains_valid_and_1244_not_yet_selectable():
+def test_current_catalog_is_exclusively_1244_after_reset():
     catalog = json.loads(CATALOG.read_text())
-    assert catalog["catalog_sequence"] == 1243
-    assert all(r["release_sequence"] != 1244 for r in catalog["releases"])
+    assert catalog["catalog_sequence"] == 1244
+    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.43"
+    assert [r["release_sequence"] for r in catalog["releases"]] == [1244]
+    assert catalog["releases"][0]["installable"] is True
+    assert catalog["releases"][0]["update_allowed"] is False
+    assert catalog["releases"][0]["rollback_allowed"] is False

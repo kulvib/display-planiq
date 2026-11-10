@@ -33,7 +33,7 @@ def test_1244_successor_preserves_strict_published_1242_pilot_catalog() -> None:
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
-    catalog = _json("backend/service1/clientflow_release_catalog.json")
+    catalog = _json("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
     assert catalog["catalog_sequence"] == 1243
     assert source["release_sequence"] == catalog["catalog_sequence"] + 1
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
