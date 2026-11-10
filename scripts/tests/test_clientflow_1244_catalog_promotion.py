@@ -128,7 +128,6 @@ def test_postdeploy_gate_requires_pause_and_verifies_pinned_six(tmp_path, monkey
         paths.append(path)
 
     def fake_verified(path, *, require_deployable=True):
-        from scripts import audit_clientflow_release_retention as audit
         assert require_deployable and path in paths
         size, digest = pinned.EXPECTED_AFTER[path.stem]
         version, sequence = path.stem.removeprefix("clientflow-").split("-seq-")
