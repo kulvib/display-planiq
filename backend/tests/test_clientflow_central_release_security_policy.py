@@ -1,6 +1,7 @@
 """Regression gates for code-reviewed central release safety policy."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -138,7 +139,33 @@ def test_preexisting_fresh_install_proofs_cannot_bypass_central_revocation():
         assert "_enforce_fresh_install_security" in scoped, boundary
 
 
-def test_revoked_pilot_blocked_by_real_catalog_resolution(monkeypatch, tmp_path):
+@pytest.fixture
+def historical_1243_catalog(monkeypatch):
+    """Exercise retired release policy using pinned, non-production catalog bytes.
+
+    Never make a retired release selectable by adding it back to the live
+    catalog. Clear the lru_cache both before and after temporarily swapping
+    the catalog path so test ordering cannot leak historical authority.
+    """
+    from service1 import clientflow_releases as releases
+
+    fixture = Path(__file__).resolve().parents[2] / (
+        "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
+    )
+    assert hashlib.sha256(fixture.read_bytes()).hexdigest() == (
+        "fc512eb735b4fc3cc3eda32e3151ea03f598efda128b54b97e81fe8836513668"
+    )
+    original = releases.CATALOG_PATH
+    releases.load_catalog.cache_clear()
+    monkeypatch.setattr(releases, "CATALOG_PATH", fixture)
+    try:
+        yield
+    finally:
+        monkeypatch.setattr(releases, "CATALOG_PATH", original)
+        releases.load_catalog.cache_clear()
+
+
+def test_revoked_pilot_blocked_by_real_catalog_resolution(monkeypatch, tmp_path, historical_1243_catalog):
     from service1.clientflow_releases import resolve_release
 
     _set_policy(monkeypatch, tmp_path, revoked=["clientflow-1.3.40-seq-1241"])
@@ -146,7 +173,7 @@ def test_revoked_pilot_blocked_by_real_catalog_resolution(monkeypatch, tmp_path)
         resolve_release("1.3.40")
 
 
-def test_floor_blocks_real_fresh_install_catalog_target(monkeypatch, tmp_path):
+def test_floor_blocks_real_fresh_install_catalog_target(monkeypatch, tmp_path, historical_1243_catalog):
     from service1.clientflow_releases import resolve_fresh_install_release
 
     _set_policy(monkeypatch, tmp_path, floor=1241)
@@ -154,7 +181,7 @@ def test_floor_blocks_real_fresh_install_catalog_target(monkeypatch, tmp_path):
         resolve_fresh_install_release()
 
 
-def test_later_policy_update_rejects_previously_selectable_target(monkeypatch, tmp_path):
+def test_later_policy_update_rejects_previously_selectable_target(monkeypatch, tmp_path, historical_1243_catalog):
     from service1.clientflow_releases import resolve_release
 
     path = _set_policy(monkeypatch, tmp_path)
@@ -164,3 +191,33 @@ def test_later_policy_update_rejects_previously_selectable_target(monkeypatch, t
         "revoked_release_ids": ["clientflow-1.3.40-seq-1241"]}))
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied):
         resolve_release("1.3.40")
+
+
+def test_live_1244_fresh_install_revocation_blocks_before_download(monkeypatch, tmp_path):
+    from service1.clientflow_releases import resolve_fresh_install_release
+
+    _set_policy(monkeypatch, tmp_path, revoked=["clientflow-1.3.43-seq-1244"])
+    with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="tilbagekaldt"):
+        resolve_fresh_install_release()
+
+
+def test_live_1244_fresh_install_minimum_sequence_blocks(monkeypatch, tmp_path):
+    from service1.clientflow_releases import resolve_fresh_install_release
+
+    _set_policy(monkeypatch, tmp_path, floor=1245)
+    with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="minimumssikkerhedssekvens"):
+        resolve_fresh_install_release()
+
+
+def test_live_1244_rechecks_security_policy_on_each_fresh_install(monkeypatch, tmp_path):
+    from service1.clientflow_releases import resolve_fresh_install_release
+
+    path = _set_policy(monkeypatch, tmp_path)
+    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.43-seq-1244"
+    path.write_text(json.dumps({
+        "schema_version": 1, "revision": 2,
+        "minimum_safe_release_sequence": 1239,
+        "revoked_release_ids": ["clientflow-1.3.43-seq-1244"],
+    }))
+    with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="tilbagekaldt"):
+        resolve_fresh_install_release()

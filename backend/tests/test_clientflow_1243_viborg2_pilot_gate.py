@@ -1,6 +1,7 @@
 """Isolated 1243 exact-byte guard tests; no production state or source refreeze."""
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -136,13 +137,26 @@ def test_repair_downgrade_and_missing_reason_blocked(monkeypatch, changes):
 
 
 def test_source_and_catalog_do_not_enable_pilot_by_merging():
-    source = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    # The original 1243 pilot must remain independently testable after the
+    # 1244 one-version reset; never use the retired catalog as live authority.
+    frozen = (ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_bytes()
+    assert hashlib.sha256(frozen).hexdigest() == (
+        "fc512eb735b4fc3cc3eda32e3151ea03f598efda128b54b97e81fe8836513668"
+    )
+    source = json.loads(frozen)
     assert source["catalog_sequence"] == 1243
     assert len([row for row in source["releases"] if row["release_sequence"] == 1243]) == 1
     assert source["latest_stable"] == source["default_install_version"] == "1.3.38"
     assert source["releases"][-1]["release_id"] == "clientflow-1.3.42-seq-1243"
     assert source["releases"][-1]["install_modes"] == ["in_place_update"]
     assert source["releases"][-1]["rollback_allowed"] is False
+    live = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    assert live["catalog_sequence"] == 1244
+    assert live["latest_stable"] == live["default_install_version"] == "1.3.43"
+    assert [row["release_id"] for row in live["releases"]] == ["clientflow-1.3.43-seq-1244"]
+    assert live["releases"][0]["install_modes"] == ["fresh_install"]
+    assert live["releases"][0]["update_allowed"] is False
+    assert live["releases"][0]["rollback_allowed"] is False
     router = (ROOT / "backend/service1/routers/clientflow_deployments.py").read_text()
     create = router[router.index("def create_clientflow_deployment("):router.index("@router.get(", router.index("def create_clientflow_deployment("))]
     assert create.count("_require_exact_scoped_pilot(") == 2
