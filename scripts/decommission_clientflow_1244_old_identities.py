@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from service1.clientflow_1244_identity_decommission import (  # noqa: E402
     APPROVAL_REFERENCE, IdentityResetDenied, RELEASE_ID, RELEASE_SHA256,
-    RELEASE_SIZE, decommission, require_1244_paused, snapshot,
+    RELEASE_SIZE, decommission, require_1244_paused, require_write_schema, snapshot,
 )
 
 STORE = Path("/var/data/clientflow-release-artifacts/store")
@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
             print("CLIENTFLOW_1244_IDENTITY_DECOMMISSION=PASS")
         else:
             with engine.connect() as conn:
+                require_write_schema(conn)
                 result = snapshot(conn)
             print(json.dumps(result, sort_keys=True, ensure_ascii=False, indent=2, default=str))
             print("CLIENTFLOW_1244_IDENTITY_DECOMMISSION=READ_ONLY_PASS")
