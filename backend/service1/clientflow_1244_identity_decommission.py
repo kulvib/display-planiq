@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import uuid
 
-from sqlalchemy import Column, DateTime, Integer, JSON, MetaData, String, Table, Boolean, insert, text
+from sqlalchemy import Column, DateTime, Integer, JSON, MetaData, String, Table, Boolean, insert, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 
@@ -179,6 +179,56 @@ def snapshot(conn: Connection, *, lock: bool = False) -> dict:
     }
 
 
+# Fail before writing anything if a runtime column differs from the reviewed
+# schema. In particular, client_command has error_code, NOT end_reason.
+# Do not auto-migrate or modify database schema from this one-off operator job.
+REQUIRED_WRITE_COLUMNS = {
+    "client": {"id", "status", "deleted_at", "deleted_reason", "deleted_previous_status",
+               "restored_at", "restored_by_user_id", "client_secret_hash",
+               "client_secret_revoked_at", "client_token_version",
+               "pending_chrome_action", "pending_chrome_action_source"},
+    "terminal_client": {"id", "status"},
+    "remote_desktop_client": {"id", "status"},
+    "client_domain_credential": {"client_id", "revoked_at", "token_version"},
+    "terminal_credential": {"client_id", "revoked_at", "token_version"},
+    "remote_desktop_credential": {"client_id", "revoked_at", "token_version"},
+    "livestream_v2_credential": {"client_id", "revoked_at", "token_version"},
+    "clientflow_update_credential": {"client_id", "revoked_at"},
+    "client_system_encryption_key": {"client_id", "revoked_at"},
+    "clientflow_update_provisioning_token": {"client_id", "used_at", "revoked_at"},
+    "client_enrollment_receipt": {"client_id", "expires_at"},
+    "root_terminal_grant": {"client_id", "revoked_at"},
+    "clientflow_rollback_permit": {"client_id", "state", "revoked_at"},
+    "terminal_session": {"id", "client_id", "status", "disconnected_at", "last_activity_at"},
+    "remote_desktop_session": {"id", "client_id", "status", "disconnected_at",
+                               "last_activity_at", "close_reason"},
+    "terminal_session_event": {"id", "terminal_session_id", "event_type",
+                               "actor_user_id", "credential_id", "created_at", "details"},
+    "remote_desktop_session_event": {"id", "remote_desktop_session_id", "event_type",
+                                     "actor_user_id", "credential_id", "created_at", "details"},
+    "client_command": {"client_id", "status", "completed_at", "error_code"},
+    "livestream_v2_command": {"client_id", "state", "completed_at", "updated_at"},
+    "livestream_v2_generation": {"client_id", "state", "stopped_at"},
+    "livestream_v2_viewer": {"client_id", "ended_at", "end_reason"},
+    "audit_logs": {"created_at", "action", "status", "actor_username", "actor_role",
+                   "entity_type", "entity_id", "entity_label", "target_organization_id",
+                   "severity", "is_critical", "details"},
+}
+
+
+def require_write_schema(conn: Connection) -> None:
+    """Read-only inspection of all columns used by the retirement write path."""
+    inspector = inspect(conn)
+    for table, required in REQUIRED_WRITE_COLUMNS.items():
+        actual = {col["name"] for col in inspector.get_columns(table)}
+        missing = required - actual
+        if missing:
+            # Only internal, hard-coded table/column identifiers are reported.
+            raise IdentityResetDenied(
+                f"Runtime schema mismatch in {table}: missing {', '.join(sorted(missing))}"
+            )
+
+
 def _run(conn: Connection, statement: str, now: datetime) -> int:
     return conn.execute(text(statement), {"now": now}).rowcount
 
@@ -194,6 +244,7 @@ def _append_session_events(conn: Connection, table: Table, session_field: str, s
 
 def decommission(conn: Connection) -> dict:
     """MUST be called within one caller-owned DB transaction; no commit here."""
+    require_write_schema(conn)
     before = snapshot(conn, lock=True)
     if before["already_decommissioned"]:
         return {"already_decommissioned": True, "modified": False, "before": before}
@@ -246,7 +297,7 @@ def decommission(conn: Connection) -> dict:
     _append_session_events(conn, REMOTE_EVENTS, "remote_desktop_session_id", rd_ids, now)
 
     _run(conn, "UPDATE client_command SET status='cancelled',completed_at=:now, "
-         "end_reason='client_decommissioned' WHERE client_id IN (1,2) AND status IN ('queued','claimed')", now)
+         "error_code='client_decommissioned' WHERE client_id IN (1,2) AND status IN ('queued','claimed')", now)
     _run(conn, "UPDATE livestream_v2_command SET state='cancelled',completed_at=:now,updated_at=:now "
          "WHERE client_id IN (1,2) AND state IN ('queued','leased')", now)
     _run(conn, "UPDATE livestream_v2_generation SET state='stopped',stopped_at=:now "

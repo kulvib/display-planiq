@@ -54,7 +54,7 @@ def db():
         for table, field in (("terminal_session_event", "terminal_session_id"),
                              ("remote_desktop_session_event", "remote_desktop_session_id")):
             c.execute(text(f"CREATE TABLE {table}(id TEXT PRIMARY KEY,{field} TEXT,event_type TEXT,actor_user_id INTEGER,credential_id TEXT,created_at DATETIME,details TEXT)"))
-        c.execute(text("CREATE TABLE client_command(id INTEGER PRIMARY KEY,client_id INTEGER,status TEXT,completed_at DATETIME,end_reason TEXT)"))
+        c.execute(text("CREATE TABLE client_command(id INTEGER PRIMARY KEY,client_id INTEGER,status TEXT,completed_at DATETIME,error_code TEXT)"))
         c.execute(text("CREATE TABLE livestream_v2_command(id INTEGER PRIMARY KEY,client_id INTEGER,state TEXT,completed_at DATETIME,updated_at DATETIME)"))
         c.execute(text("CREATE TABLE livestream_v2_generation(id INTEGER PRIMARY KEY,client_id INTEGER,state TEXT,stopped_at DATETIME)"))
         c.execute(text("CREATE TABLE livestream_v2_viewer(id INTEGER PRIMARY KEY,client_id INTEGER,ended_at DATETIME,end_reason TEXT)"))
@@ -110,6 +110,7 @@ def test_one_transaction_decommissions_only_pinned_old_identities(db):
         assert get(c,"SELECT client_token_version FROM client WHERE id=1") == 3
         assert get(c,"SELECT client_token_version FROM client WHERE id=3") == 2
         assert get(c,"SELECT COUNT(*) FROM audit_logs WHERE is_critical=1") == 2
+        assert get(c,"SELECT error_code FROM client_command WHERE id=1") == "client_decommissioned"
         assert get(c,"SELECT COUNT(*) FROM terminal_session_event") == 2
         assert get(c,"SELECT COUNT(*) FROM remote_desktop_session_event") == 2
         assert get(c,"SELECT COUNT(*) FROM clientflow_update_provisioning_token WHERE client_id IN (1,2) AND revoked_at IS NULL") == 0
@@ -230,3 +231,29 @@ def test_fresh_install_release_verify_rejects_extra_and_symlink(tmp_path, monkey
     good.symlink_to(tmp_path / "nothing")
     with pytest.raises((reset.IdentityResetDenied, OSError)):
         operator.verify_only_1244_artifact(tmp_path)
+
+
+def test_write_schema_guard_rejects_missing_production_column_before_mutation(db):
+    # A production-like column is intentionally removed. This MUST fail closed,
+    # whereas the old test fake introduced an imaginary client_command.end_reason.
+    with db.begin() as conn:
+        conn.execute(text("ALTER TABLE client_command DROP COLUMN error_code"))
+    with pytest.raises(reset.IdentityResetDenied, match="client_command.*error_code"):
+        with db.begin() as conn:
+            reset.decommission(conn)
+    with db.connect() as conn:
+        assert get(conn, "SELECT COUNT(*) FROM client WHERE deleted_at IS NOT NULL") == 0
+        assert get(conn, "SELECT COUNT(*) FROM client_domain_credential WHERE revoked_at IS NOT NULL") == 0
+
+
+def test_command_write_fields_match_reviewed_postgres_contract():
+    from backend.scripts.adopted_runtime_schema_contract import ADOPTED_RUNTIME_COLUMNS
+    # Inspect source without importing the SQLModel runtime, which is not
+    # installed in the lightweight standalone operator test environment.
+    model_source = (ROOT / "backend/service1/client_domain_models.py").read_text()
+    command_model = model_source.split("class ClientCommand(SQLModel, table=True):", 1)[1]
+    production_fields = set(ADOPTED_RUNTIME_COLUMNS["client_command"])
+    assert reset.REQUIRED_WRITE_COLUMNS["client_command"] <= production_fields
+    assert "error_code: Optional[str]" in command_model
+    assert "end_reason:" not in command_model
+    assert "end_reason" not in production_fields
