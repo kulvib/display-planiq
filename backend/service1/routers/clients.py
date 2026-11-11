@@ -25,6 +25,7 @@ from ..ui_realtime import (
     wait_for_ui_change,
 )
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
+from ..clientflow_1244_identity_decommission import TOMBSTONE_REASON
 from ..clientflow_deployments import active_deployment
 from ..client_presence import ClientPresence, load_client_presence, load_client_presences_with_status_rows, load_client_with_presence_rows
 from ..display_control import (
@@ -2594,6 +2595,8 @@ async def update_client(
     client = session.get(Client, id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if client.deleted_reason == TOMBSTONE_REASON:
+        raise HTTPException(status_code=409, detail="Nedlagt ClientFlow-identitet er skrivebeskyttet")
     fields = set(client_update.model_fields_set)
     if "sort_order" in fields:
         raise HTTPException(status_code=410, detail="Brug atomar Control Room-klientsortering")
@@ -3144,6 +3147,8 @@ def rotate_client_secret(
     client = session.get(Client, id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if _client_is_deleted(client):
+        raise HTTPException(status_code=409, detail="Nedlagt/slettet klient kan ikke få en ny client-secret")
 
     client_secret = _generate_client_secret()
     client.client_secret_hash = get_password_hash(client_secret)
@@ -3284,6 +3289,8 @@ async def restore_client(
     client = session.get(Client, id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if client.deleted_reason == TOMBSTONE_REASON:
+        raise HTTPException(status_code=409, detail="Nedlagt ClientFlow-identitet kan ikke gendannes; installer som ny klient")
     if not _client_is_deleted(client):
         return _prepare_full_client_read(session, client)
 
@@ -3331,6 +3338,8 @@ async def purge_client(
     client = session.get(Client, id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if client.deleted_reason == TOMBSTONE_REASON:
+        raise HTTPException(status_code=409, detail="Nedlagt ClientFlow-identitet og historiske data må ikke slettes")
     if not _client_is_deleted(client):
         raise HTTPException(status_code=400, detail="Klienten skal ligge i papirkurven før permanent sletning")
 
