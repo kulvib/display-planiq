@@ -38,5 +38,5 @@ test('WiFi profile creation and network switching are clearly separate and visib
 
 test('browser refresh and its cookie-dialog diagnosis have contextual guidance', () => {
   assert.match(SUPPORT_COMMAND_GUIDES['Display / kiosk browser'].when, /cookie-dialog/);
-  assert.match(SUPPORT_COMMAND_GUIDES['Display\/browser logs'].when, /refresh-timeren/);
+  assert.match(SUPPORT_COMMAND_GUIDES['Display/browser logs'].when, /refresh-timeren/);
 });
