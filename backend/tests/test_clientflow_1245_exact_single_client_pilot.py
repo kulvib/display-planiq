@@ -81,9 +81,9 @@ def fake_approval(monkeypatch, tmp_path):
 def test_real_pilot_approval_file_is_disabled_by_default():
     record = json.loads((ROOT / "backend/service1/clientflow_pilot_1245_approval.json").read_text())
     assert record["approved"] is False
-    assert record["approved_bundle_sha256"] is None
-    assert record["approved_bundle_size"] is None
-    assert record["approval_reference"] is None
+    assert record["approved_bundle_sha256"] == "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
+    assert record["approved_bundle_size"] == 223610880
+    assert record["approval_reference"] == "CF-1.3.44-1245-20261114-0685710-ffe58332-R2"
     assert record["source_commit"] == pilot.SOURCE_COMMIT
     assert record["candidate_sha256"] == pilot.CANDIDATE_SHA256
     assert record["installer_sha256"] == pilot.INSTALLER_SHA256
