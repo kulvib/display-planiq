@@ -166,6 +166,80 @@ PY
 done
 CLIENTFLOW_CMD`;
 
+const LIVESTREAM_CAPTURE_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CAPTURE_DIAG' | sudo bash
+set -uo pipefail
+
+echo '== Livestream / PipeWire årsagsdiagnose (kun læsning) =='
+echo '== Canonical systemd-tjenester =='
+for unit in clientflow-livestream-agent.service clientflow-livestream-broker.service clientflow-livestream-producer.service clientflow-livestream-uploader.service; do
+  printf '%s: ' "$unit"
+  systemctl is-active "$unit" 2>/dev/null || true
+done
+
+echo
+echo '== Sanitiseret ønsket tilstand, producer og uploader =='
+python3 - <<'PY'
+import json
+from pathlib import Path
+items = (
+    ('desired', '/var/lib/clientflow/livestream/desired-state.json', ('desired', 'requested_action')),
+    ('producer', '/var/lib/clientflow/livestream/producer-status.json', ('state', 'attempt', 'retry_after_seconds', 'next_retry_at', 'exit_code', 'reason')),
+    ('uploader', '/var/lib/clientflow/livestream-uploader/status.json', ('state',)),
+)
+for name, path, keys in items:
+    print(name + ':')
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+        if not isinstance(data, dict):
+            raise ValueError('invalid status')
+        for key in keys:
+            if key in data:
+                value = data[key]
+                if isinstance(value, (str, int, float, bool)) and len(str(value)) <= 48:
+                    print(' ', key + ':', value)
+        print('  error_present:', bool(data.get('error') or data.get('last_error')))
+    except (OSError, ValueError):
+        print('  ikke læsbar')
+PY
+
+echo
+echo '== Filtrerede capturehændelser, højst 90 minutter =='
+# Extract only known safe event names and numeric counters. Never print raw
+# exception traces, HTTP response bodies, signed URLs or session contents.
+journalctl -b --since '90 minutes ago' --no-pager -o json -n 800 \\
+  -u clientflow-livestream-agent.service \\
+  -u clientflow-livestream-producer.service \\
+  -u clientflow-livestream-uploader.service 2>/dev/null | python3 -c '
+import json, re, sys
+from datetime import datetime, timezone
+allowed = re.compile(r"^(clientflow_(?:wayland_capture_ready|capture_startup_stage|hls_progress|hls_first_segment|hls_running|hls_stalled|hls_final|wayland_capture_failed)|capture_process_exited|capture_retry_scheduled|producer_start_failed|upload_failed)$")
+fields = re.compile(r"\\b(?:elapsed_s|source_buffers|encoded_buffers|muxed_buffers|output_age_s|attempt|retry_after_seconds|exit_code|node|source_caps|pipeline_state|stage)=([a-zA-Z0-9_-]{1,32})")
+rows = []
+for raw in sys.stdin:
+    try:
+        row = json.loads(raw)
+        msg = str(row.get("MESSAGE", ""))
+        if msg.startswith("{"):
+            nested = json.loads(msg)
+            name = str(nested.get("message", ""))
+            numeric = " ".join(str(key) + "=" + str(nested[key]) for key in ("attempt", "retry_after_seconds", "exit_code") if isinstance(nested.get(key), (int, float)))
+        else:
+            name = msg.split(" ", 1)[0].split(":", 1)[0]
+            numeric = " ".join(match.group(0) for match in fields.finditer(msg))
+        if allowed.fullmatch(name):
+            micros = str(row.get("__REALTIME_TIMESTAMP", ""))
+            timestamp = datetime.fromtimestamp(int(micros) / 1000000, tz=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S") if micros.isdigit() else "tid-ukendt"
+            rows.append((timestamp, name, numeric))
+    except (ValueError, TypeError):
+        continue
+for timestamp, name, numeric in rows[-90:]:
+    print(timestamp, name, numeric)
+if not rows:
+    print("Ingen matchende capturehændelser i tidsvinduet")
+'
+echo 'CAPTURE_DIAG=COMPLETE'
+CLIENTFLOW_CAPTURE_DIAG`;
+
 const TERMINAL_CANONICAL_STATUS_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
 set -u
 systemctl --no-pager --full status \
@@ -422,6 +496,7 @@ const SUPPORT_COMMAND_GROUPS = [
       { label: "Display/browser logs", command: "journalctl -u clientflow-display-agent.service -u clientflow-display-runtime.service -u clientflow-browser-guard.service -n 240 --no-pager -l", adminOnly: true },
       { label: "Status/System logs", command: "journalctl -u clientflow-status-agent.service -u clientflow-system-agent.service -n 220 --no-pager -l", adminOnly: true },
       { label: "Livestream logs", command: "journalctl -u clientflow-livestream-agent.service -u clientflow-livestream-broker.service -u clientflow-livestream-producer.service -u clientflow-livestream-uploader.service -n 240 --no-pager -l", adminOnly: true },
+      { label: "Livestream / PipeWire årsagsdiagnose", command: LIVESTREAM_CAPTURE_DIAGNOSTICS_COMMAND, adminOnly: true },
       { label: "Terminal logs", command: "journalctl -u clientflow-terminal-agent.service -u clientflow-standard-terminal-broker.service -u clientflow-root-terminal-broker.service -n 220 --no-pager -l", adminOnly: true },
       { label: "Remote Desktop logs", command: "journalctl -u clientflow-remote-desktop-agent.service -u clientflow-remote-desktop-capture.service -u clientflow-remote-desktop-input-broker.service -n 220 --no-pager -l", adminOnly: true },
     ],

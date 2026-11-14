@@ -41,8 +41,15 @@ class LivestreamHandler:
                 if not generation_id:
                     raise CommandRejected("missing_generation", "Livestreamkommandoen mangler generation_id")
                 call(BROKER_SOCKET, {"action": context.command_type, "generation_id": generation_id})
-                status = self._wait_producer(generation_id, {"running", "failed"})
+                status = self._wait_producer(generation_id, {"running", "failed", "retrying"})
                 if status.get("state") != "running":
+                    # Report the bounded retry as a retryable failure, rather
+                    # than waiting for an impossible 30s startup confirmation.
+                    if status.get("state") == "retrying":
+                        raise CommandRejected(
+                            "producer_retrying", "Livestream afventer kontrolleret nyt capture-forsøg",
+                            retryable=True,
+                        )
                     raise CommandRejected("producer_failed", str(status.get("error") or "Producer fejlede"), retryable=True)
                 generation = self.transport.json_request(
                     "POST",

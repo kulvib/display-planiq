@@ -10,7 +10,7 @@ const component = readFileSync(path.join(here, '../src/pages/clientdetailspage/t
 const labels = [...component.matchAll(/\{ label: "([^"]+)", command:/g)].map((match) => match[1]);
 
 test('every support command has a full and individually meaningful Danish operator guide', () => {
-  assert.equal(labels.length, 20);
+  assert.equal(labels.length, 21);
   assert.deepEqual(Object.keys(SUPPORT_COMMAND_GUIDES).sort(), labels.sort());
   for (const label of labels) {
     const guide = SUPPORT_COMMAND_GUIDES[label];

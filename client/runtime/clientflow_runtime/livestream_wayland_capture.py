@@ -339,6 +339,29 @@ def _run_pipeline(pipeline: Gst.Pipeline, output: Path) -> None:
     last_output_at = started
     last_output_counters = counters.copy()
     last_running_report = started
+    last_startup_report = started
+
+    def pipeline_state():
+        """Low-cost, content-free GStreamer state for zero-buffer diagnosis."""
+        method = getattr(pipeline, "get_state", None)
+        if not callable(method):
+            return "unavailable"
+        try:
+            _result, state, pending = method(0)  # zero wait; never block capture
+            return str(getattr(state, "value_nick", state))[:32]
+        except Exception:
+            return "unknown"
+
+    def source_has_caps():
+        source = pipeline.get_by_name("capture_source")
+        pad = source.get_static_pad("src") if source is not None else None
+        method = getattr(pad, "get_current_caps", None)
+        if not callable(method):
+            return "unknown"
+        try:
+            return "yes" if method() is not None else "no"
+        except Exception:
+            return "unknown"
 
     def output_marker():
         """Observe HLS progress, not scene changes or JPEG/frame content."""
@@ -419,6 +442,23 @@ def _run_pipeline(pipeline: Gst.Pipeline, output: Path) -> None:
                         flush=True,
                     )
                     raise RuntimeError(f"HLS output stalled for 90 seconds ({stage})")
+            if not ready_seen and now - last_startup_report >= 10:
+                last_startup_report = now
+                if counters["source"] == 0:
+                    stage = "pipewire_no_buffers"
+                elif counters["encoded"] == 0:
+                    stage = "encoder_no_buffers"
+                elif counters["muxed"] == 0:
+                    stage = "mux_no_buffers"
+                else:
+                    stage = "hls_sink_no_segments"
+                print(
+                    "clientflow_capture_startup_stage "
+                    f"elapsed_s={int(now - started)} stage={stage} "
+                    f"pipeline_state={pipeline_state()} "
+                    f"source_caps={source_has_caps()}",
+                    flush=True,
+                )
             if not ready_seen and now - last_report >= 5:
                 last_report = now
                 print(
@@ -485,7 +525,7 @@ def main() -> int:
         node_id = capture.start()
         print(
             f"clientflow_wayland_capture_ready backend=mutter node={node_id} "
-            f"monitor={monitor} fps={args.fps} bitrate_kbit={args.bitrate_kbit}",
+            f"monitor={monitor} fps={args.fps} bitrate_kbit={args.bitrate_kbit} phase=node_only",
             flush=True,
         )
         pipeline = _build_pipeline(

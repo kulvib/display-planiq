@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { runInNewContext } from "node:vm";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const terminal = readFileSync(path.join(root, "frontend/src/pages/clientdetailspage/terminal/ClientTerminalDialog.jsx"), "utf8");
@@ -16,10 +17,10 @@ const expected = [
   "Netværk, DNS, tid og backend", "WiFi / NetworkManager diagnose", "WiFi udfald og recovery",
   "Tilføj WiFi-profil (uden aktivering)", "Test gemt WiFi (auto-rollback)",
   "Rollbackrapportering / outbox", "Display/browser logs", "Status/System logs",
-  "Livestream logs", "Terminal logs", "Remote Desktop logs",
+  "Livestream logs", "Livestream / PipeWire årsagsdiagnose", "Terminal logs", "Remote Desktop logs",
 ];
 
-test("all 20 diagnostic helpers are distinct and structurally present", () => {
+test("all 21 diagnostic helpers are distinct and structurally present", () => {
   const labels = [...terminal.matchAll(/\{ label: "([^"]+)", command:/g)].map((x) => x[1]);
   assert.deepEqual(new Set(labels).size, labels.length, "Duplicate support commands");
   for (const label of expected) assert.ok(labels.includes(label), `Missing ${label}`);
@@ -59,4 +60,18 @@ test("diagnostic helpers do not dump signed kiosk URL, tokens or WiFi credential
   assert.doesNotMatch(wifi, /--show-secrets|show-password/);
   assert.doesNotMatch(terminal, /pgrep -af 'google-chrome/);
   assert.match(terminal, /Browserprocesser \(kun PID \/ navn/);
+});
+
+test("rendered Mutter/PipeWire helper preserves regex and shell line continuations", () => {
+  const match = terminal.match(/const LIVESTREAM_CAPTURE_DIAGNOSTICS_COMMAND = `([\s\S]*?)`;/);
+  assert.ok(match, "Missing zero-frame diagnostics helper");
+  const rendered = runInNewContext(`${match[0]}\nLIVESTREAM_CAPTURE_DIAGNOSTICS_COMMAND`);
+  assert.ok(rendered.includes(String.raw`fields = re.compile(r"\b`), "Regex word boundary must survive JS template evaluation");
+  assert.ok(rendered.includes(" -n 800 \\\n"), "Shell line continuation must survive JS template evaluation");
+  assert.ok(!rendered.includes("\x08"), "No interpreted backspace control character");
+  const parsed = spawnSync("bash", ["-n"], { input: rendered, encoding: "utf8" });
+  assert.equal(parsed.status, 0, parsed.stderr);
+  for (const forbidden of ["systemctl restart", "nmcli connection up", "nmcli device disconnect", "--show-secrets"]) {
+    assert.ok(!rendered.includes(forbidden), `Diagnostic helper must be read-only: ${forbidden}`);
+  }
 });

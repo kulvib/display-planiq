@@ -30,6 +30,18 @@ LOGINCTL = Path("/usr/bin/loginctl")
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 CAPTURE_HELPER = Path(__file__).with_name("livestream_wayland_capture.py")
 
+# Retrying a broken Mutter/PipeWire source every ~25 seconds did not yield
+# frames in the 2026-11-14 pilot. Back off without restarting GNOME, PipeWire
+# or the kiosk, and always remain responsive to a stop/new generation.
+RETRY_BASE_SECONDS = 5
+RETRY_MAX_SECONDS = 120
+HEALTHY_RESET_SECONDS = 180
+
+
+def retry_delay_seconds(attempt: int) -> int:
+    """Bounded exponential retry interval; no unbounded integer exponentiation."""
+    return min(RETRY_BASE_SECONDS * (2 ** min(max(attempt - 1, 0), 5)), RETRY_MAX_SECONDS)
+
 
 class Producer:
     def __init__(self) -> None:
@@ -37,6 +49,35 @@ class Producer:
         self.process: subprocess.Popen[bytes] | None = None
         self.generation_id: str | None = None
         self._last_start_attempt = 0.0
+        self._retry_generation: str | None = None
+        self._retry_attempts = 0
+        self._retry_deadline = 0.0
+        self._healthy_since: float | None = None
+
+    def _reset_retry(self, generation_id: str | None) -> None:
+        self._retry_generation = generation_id
+        self._retry_attempts = 0
+        self._retry_deadline = 0.0
+        self._healthy_since = None
+
+    def _schedule_retry(self, reason: str) -> None:
+        # Only code-owned reason labels are admitted; no raw GStreamer debug,
+        # signed media URLs or HTTP exception messages enter the status JSON.
+        if reason not in {"startup_failed", "capture_exited"}:
+            raise ValueError("Unknown capture retry reason")
+        self._retry_attempts = getattr(self, "_retry_attempts", 0) + 1
+        delay = retry_delay_seconds(self._retry_attempts)
+        self._retry_deadline = time.monotonic() + delay
+        next_retry_at = time.time() + delay
+        self.logger.warning(
+            "capture_retry_scheduled",
+            extra={"event": "capture_retry", "attempt": self._retry_attempts,
+                   "retry_after_seconds": delay, "reason": reason},
+        )
+        self._status(
+            "retrying", reason=reason, attempt=self._retry_attempts,
+            retry_after_seconds=delay, next_retry_at=next_retry_at,
+        )
 
     def _read_json(self, path: Path) -> dict[str, Any]:
         try:
@@ -348,38 +389,52 @@ class Producer:
                 wanted = desired.get("desired")
                 generation = str(desired.get("generation_id") or "")
                 if wanted == "running" and generation:
-                    # A capture helper can exit after a successful first HLS
-                    # segment (e.g. its bounded, post-start segment watchdog).
-                    # Record the real exit before _stop() resets process state;
-                    # systemd itself remains active and must not hide this fault.
+                    if getattr(self, "_retry_generation", None) != generation:
+                        self._reset_retry(generation)
+
+                    now = time.monotonic()
                     if self.process is not None:
                         exit_code = self.process.poll()
                         if exit_code is not None:
+                            # The systemd unit can remain active after its
+                            # unprivileged capture subprocess has failed.
                             self.logger.warning(
                                 "capture_process_exited",
                                 extra={"event": "capture_exit", "exit_code": exit_code},
                             )
                             self._status("failed", exit_code=exit_code)
-                    if self.generation_id != generation or self.process is None or self.process.poll() is not None:
-                        now = time.monotonic()
-                        if now - self._last_start_attempt < 2.0:
-                            time.sleep(0.25)
-                            continue
+                            self.process = None  # poll() already reaped the child
+                            self._healthy_since = None
+                            self._schedule_retry("capture_exited")
+                        elif (
+                            self._healthy_since is not None
+                            and now - self._healthy_since >= HEALTHY_RESET_SECONDS
+                        ):
+                            # A short-lived successful first segment is not
+                            # enough to reset a persistent crash loop.
+                            self._retry_attempts = 0
+                            self._retry_deadline = 0.0
+                            self._healthy_since = None
+
+                    if self.generation_id != generation:
+                        self._stop()
+                    if self.process is None and now >= getattr(self, "_retry_deadline", 0.0):
                         self._last_start_attempt = now
                         self._stop()
                         try:
                             self._start(generation)
+                            self._healthy_since = time.monotonic()
                         except Exception as exc:
                             self.logger.exception("producer_start_failed")
                             self.generation_id = generation
                             self._status("failed", error=str(exc)[:1000])
+                            self._healthy_since = None
+                            self._schedule_retry("startup_failed")
                 else:
                     if self.process is not None or self.generation_id is not None:
                         self._stop()
-                if self.process is not None and self.process.poll() is not None:
-                    code = self.process.returncode
-                    self.process = None
-                    self._status("failed", exit_code=code)
+                    if getattr(self, "_retry_generation", None) is not None:
+                        self._reset_retry(None)
                 time.sleep(1)
         except KeyboardInterrupt:
             return 0

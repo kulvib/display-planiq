@@ -129,6 +129,13 @@ export const SUPPORT_COMMAND_GUIDES = Object.freeze({
     output: "Se efter command_claimed/completed, hls_first_segment, source_buffers=0, producer_start_failed og upload_failed.",
     caution: "Kun læsning. Manglende logposter er ikke i sig selv bevis for, at der ikke er fejl; logfiltrering og tidsvindue betyder noget.",
   },
+  "Livestream / PipeWire årsagsdiagnose": {
+    risk: "read",
+    purpose: "Sammenholder ønsket Livestream-tilstand med producerens genforsøg og udvalgte Mutter/PipeWire-, GStreamer- og HLS-hændelser.",
+    when: "Brug den når Livestream står sort i over 15 sekunder, startforsøg gentages, eller når du vil undersøge en nylig capture-fejl uden enorme logs.",
+    output: "Kontrollér desired og producer-state, attempt/retry_after_seconds og clientflow_capture_startup_stage. source_buffers=0 peger mod manglende billeder før HLS.",
+    caution: "Kun læsning. Viser filtrerede hændelser uden fejltrace, medieindhold eller signerede URL'er. Manglende logs beviser ikke, at systemet er fejlfrit.",
+  },
   "Terminal logs": {
     risk: "read",
     purpose: "Viser de seneste hændelser fra terminal-agent og terminalbrokere.",
