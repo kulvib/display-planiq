@@ -12,8 +12,6 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "client/runtime"))
 CAPTURE = ROOT / "client/runtime/clientflow_runtime/livestream_wayland_capture.py"
