@@ -18,7 +18,9 @@ test("calendar dialog uses the central API client for every marked-days request"
 });
 
 test("central client preserves abort signals and performs one 401 refresh retry", () => {
-  assert.match(clientSource, /signal: config\?\.signal/);
+  assert.match(clientSource, /boundAuthSessionSignal\(config\?\.signal\)/);
+  assert.match(clientSource, /assertActiveAuthSession\(signal\)/);
+  assert.match(clientSource, /signal\.throwIfAborted\(\)/);
   assert.match(clientSource, /if \(res\.status === 401\)/);
   assert.match(clientSource, /await apiRefreshSession\(\)/);
   assert.match(clientSource, /headers: authHeaders/);

@@ -8,7 +8,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
-import { apiUrl, authenticatedFetch, authHeaders, updateClient } from "../../api";
+import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateClient } from "../../api";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
@@ -1284,7 +1284,7 @@ export default function ClientDetailsLivestreamSection({
           const resp = await fetch(`${apiUrl}/api/hls-cap/${clientId}/health`, {
             credentials: "omit",
             headers: { Authorization: `Bearer ${mediaCapabilityRef.current}` },
-            signal: AbortSignal.timeout(8000),
+            signal: AbortSignal.any([getAuthSessionSignal(), AbortSignal.timeout(8000)]),
           });
           if (resp.ok) {
             const data = await resp.json();

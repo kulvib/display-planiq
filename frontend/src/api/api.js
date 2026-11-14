@@ -76,6 +76,19 @@ export function getAuthSessionSignal() {
   return authSessionController.signal;
 }
 
+// Almindelige beskyttede kald skal dø med login-sessionen. Bevar både
+// callerens AbortSignal (komponent-unmount) og sessionens signal.
+export function boundAuthSessionSignal(callerSignal) {
+  const sessionSignal = getAuthSessionSignal();
+  if (!callerSignal || callerSignal === sessionSignal) return sessionSignal;
+  return AbortSignal.any([callerSignal, sessionSignal]);
+}
+
+export function assertActiveAuthSession(signal) {
+  signal?.throwIfAborted?.();
+  if (!getAuthToken()) throw new DOMException("Sessionen er afsluttet", "AbortError");
+}
+
 export function setAuthToken(token) {
   if (!token) {
     clearAuthToken();
@@ -218,18 +231,23 @@ export function refreshSession() {
 async function apiFetch(input, init = {}) {
   const url = typeof input === "string" ? input : input?.url || "";
   const { _retried, ...fetchInit } = init;
+  const requiresSession = !isPublicOrSessionEndpoint(url);
+  const signal = requiresSession ? boundAuthSessionSignal(fetchInit.signal) : fetchInit.signal;
+  if (requiresSession) assertActiveAuthSession(signal);
   const headers = authHeaders(fetchInit.headers || {});
   const first = await fetchWithFriendlyErrors(input, {
     ...fetchInit,
     headers,
+    signal,
     credentials: fetchInit.credentials || "include",
   });
+  signal?.throwIfAborted?.();
 
   if (first.status !== 401 || isPublicOrSessionEndpoint(url) || _retried) {
     return first;
   }
 
-  fetchInit.signal?.throwIfAborted?.();
+  signal?.throwIfAborted?.();
   try {
     await refreshAccessToken();
   } catch (error) {
@@ -242,9 +260,11 @@ async function apiFetch(input, init = {}) {
     throw error;
   }
 
-  fetchInit.signal?.throwIfAborted?.();
+  signal?.throwIfAborted?.();
+  if (requiresSession) assertActiveAuthSession(signal);
   return fetchWithFriendlyErrors(input, {
     ...fetchInit,
+    signal,
     headers: authHeaders(fetchInit.headers || {}),
     credentials: fetchInit.credentials || "include",
   });
