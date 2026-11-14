@@ -54,9 +54,9 @@ def inspect(repo: Path) -> dict:
     checks["no_1245_deployment_while_unapproved"] = (
         lock.get("schema_version") == 1
         and lock.get("approved") is False
-        and lock.get("approved_bundle_sha256") is None
-        and lock.get("approved_bundle_size") is None
-        and lock.get("approval_reference") is None
+        and lock.get("approved_bundle_sha256") == "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
+        and lock.get("approved_bundle_size") == 223610880
+        and lock.get("approval_reference") == "CF-1.3.44-1245-20261114-0685710-ffe58332-R2"
     )
     checks["exact_candidate_and_source_locked"] = (
         lock.get("release_id") == EXPECTED_RELEASE
