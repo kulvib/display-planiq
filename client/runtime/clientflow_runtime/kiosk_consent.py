@@ -45,3 +45,31 @@ CONSENT_CSS = ",\n".join(CONSENT_SELECTORS) + " {\n" + (
     "  pointer-events: none !important;\n"
     "  opacity: 0 !important;\n"
 ) + "}\n"
+
+
+def early_protection_script(css: str) -> str:
+    """Install narrow CMP-only CSS at document creation, without consenting.
+
+    Used by both Chrome's initial navigation and the persistent Browser Guard
+    DevTools subscription, including the kiosk timer's subsequent reloads.
+    """
+    import json
+
+    return f"""(() => {{
+  const css = {json.dumps(css)};
+  const install = () => {{
+    try {{
+      if (!document.documentElement) return;
+      let style = document.getElementById('clientflow-early-kiosk-protection');
+      if (!style) {{
+        style = document.createElement('style');
+        style.id = 'clientflow-early-kiosk-protection';
+        style.textContent = css;
+        document.documentElement.appendChild(style);
+      }}
+    }} catch (_) {{}}
+  }};
+  install();
+  try {{ new MutationObserver(install).observe(document, {{childList:true, subtree:true}}); }} catch (_) {{}}
+  try {{ document.addEventListener('readystatechange', install, true); }} catch (_) {{}}
+}})();"""

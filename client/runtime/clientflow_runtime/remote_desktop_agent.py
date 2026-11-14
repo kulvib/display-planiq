@@ -260,15 +260,25 @@ class RemoteDesktopAgent:
                 await asyncio.sleep(max(0.0, 1.0 / fps - (time.monotonic() - started)))
         except asyncio.CancelledError:
             raise
+        except (WebSocketException, OSError, TransportError) as exc:
+            # A broken websocket is not evidence of a Mutter/PipeWire fault.
+            self.logger.warning("transport_disconnected", extra={"session_id": session_id, "event": type(exc).__name__})
         except Exception as exc:
             self.logger.exception("capture_stream_failed", extra={"session_id": session_id})
-            await self._send_control({"type": "error", "session_id": session_id, "error": str(exc)[:500]})
+            try:
+                await self._send_control({"type": "error", "session_id": session_id, "error": str(exc)[:500]})
+            except (WebSocketException, OSError, TransportError):
+                self.logger.info("capture_error_report_transport_closed", extra={"session_id": session_id})
             try:
                 await self._event(session_id, "error", {"error": str(exc)[:500]})
             except Exception:
                 self.logger.exception("capture_stream_error_audit_failed", extra={"session_id": session_id})
         finally:
-            await self._send_control({"type": "stream_stopped", "session_id": session_id})
+            try:
+                await self._send_control({"type": "stream_stopped", "session_id": session_id})
+            except (WebSocketException, OSError, TransportError):
+                # Reconnection and the session owner perform the remote cleanup.
+                pass
             try:
                 await self._event(session_id, "capture_stopped")
             except Exception:

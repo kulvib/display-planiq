@@ -25,7 +25,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
-from .kiosk_consent import CONSENT_CSS
+from .kiosk_consent import CONSENT_CSS, early_protection_script
 
 try:
     import websockets
@@ -449,10 +449,25 @@ async def watch_javascript_dialogs(tab: dict) -> None:
             wsurl, max_size=1_000_000, open_timeout=WS_TIMEOUT, close_timeout=1
         ) as ws:
             await ws.send(json.dumps({"id": 1001, "method": "Page.enable"}))
+            # The initial navigation installs CMP-only CSS, but a CDP script
+            # registered by a short-lived connection may not survive later
+            # navigations. Keep a second registration alive in this existing
+            # long-lived subscription for timer-driven location.reload().
+            # This never clicks a consent button or changes website storage.
+            if COOKIE_MODE == "hide":
+                await ws.send(json.dumps({
+                    "id": 1003,
+                    "method": "Page.addScriptToEvaluateOnNewDocument",
+                    "params": {"source": early_protection_script(CONSENT_CSS)},
+                }))
             async for raw in ws:
                 payload = json.loads(raw)
                 if payload.get("id") == 1001 and "error" in payload:
                     raise RuntimeError("Chrome CDP Page.enable blev afvist")
+                if payload.get("id") == 1003 and "error" in payload:
+                    # Do not silently lose the native-dialog protection when
+                    # the early CSS registration is unsupported.
+                    log("Tidlig cookie-CSS kunne ikke registreres i CDP")
                 if payload.get("method") != "Page.javascriptDialogOpening":
                     continue
                 dialog_type = (payload.get("params") or {}).get("type")

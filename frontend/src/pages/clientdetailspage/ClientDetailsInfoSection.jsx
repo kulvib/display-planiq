@@ -2696,6 +2696,8 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const serviceIssues = serviceRows.filter((_, index) =>
     ["warn", "error"].includes(serviceLevels[index]),
   );
+  const systemdIssues = serviceIssues.filter((row) => row.label !== "Livestream process");
+  const livestreamProcessIssues = serviceIssues.filter((row) => row.label === "Livestream process");
 
   const lifecycleLabelMap = {
     reboot_started: "Genstart startet",
@@ -2710,7 +2712,8 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const attentionItems = [
     onlineValue === false ? { label: "Klienten er offline", level: "error", value: "Seneste kontakt fremgår af tekniske detaljer" } : null,
     networkUnavailable ? { label: "Netværk mangler", level: "error", value: networkMessage } : null,
-    serviceIssues.length > 0 ? { label: `${serviceIssues.length} systemd-status kræver tjek`, level: "error", value: serviceIssues.map((row) => row.label).join(", ") } : null,
+    systemdIssues.length > 0 ? { label: `${systemdIssues.length} systemd-status kræver tjek`, level: "error", value: systemdIssues.map((row) => row.label).join(", ") } : null,
+    livestreamProcessIssues.length > 0 ? { label: "Livestream-proces kræver tjek", level: "error", value: "Processtatus afviger fra ønsket livestream-tilstand" } : null,
     hasPendingChromeAction ? { label: "Pending browser-handling", level: "info", value: client?.pending_chrome_action } : null,
     client?.pending_reboot ? { label: "Pending reboot", level: "warn", value: "Ja" } : null,
     client?.pending_shutdown ? { label: "Pending shutdown", level: "warn", value: "Ja" } : null,

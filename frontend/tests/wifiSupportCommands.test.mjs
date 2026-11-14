@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND, WIFI_CHECKPOINT_TEST_COMMAND } from '../src/pages/clientdetailspage/terminal/wifiSupportCommands.mjs';
+import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND, WIFI_CHECKPOINT_TEST_COMMAND, WIFI_RECOVERY_AUDIT_COMMAND } from '../src/pages/clientdetailspage/terminal/wifiSupportCommands.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const dialog = readFileSync(path.join(HERE, '../src/pages/clientdetailspage/terminal/ClientTerminalDialog.jsx'), 'utf8');
@@ -55,7 +55,7 @@ test('PSK is not supplied in argv, environment, logging or the rendered support-
   assert.match(WIFI_STAGE_PROFILE_COMMAND, /printf 'psk=%s\\n' "\$escaped_psk"/);
   assert.doesNotMatch(WIFI_STAGE_PROFILE_COMMAND, /nmcli[^\n]*\b(?:psk|password)\b/i);
   assert.doesNotMatch(WIFI_STAGE_PROFILE_COMMAND, /export\s+(?:psk|password)|echo[^\n]*\$psk|set -x/);
-  assert.match(dialog, /item\.description \|\| item\.command/);
+  assert.match(dialog, /guide\?\.purpose \|\| item\.description/);
   assert.match(dialog, /WIFI_STAGE_PROFILE_COMMAND.*description: "Interaktiv/);
 });
 
@@ -79,4 +79,13 @@ test('safe remote WiFi test requires NetworkManager checkpoint and a human confi
   assert.match(WIFI_CHECKPOINT_TEST_COMMAND, /approval.*'TEST'/);
   assert.doesNotMatch(WIFI_CHECKPOINT_TEST_COMMAND, /(?:show-password|show-secrets|connection modify|nmcli connection delete|nmcli radio wifi)/);
   assert.doesNotMatch(WIFI_CHECKPOINT_TEST_COMMAND, /--timeout 0/);
+});
+
+
+test('WiFi recovery audit is read-only and never dumps unfiltered logs', () => {
+  requireValidScript(WIFI_RECOVERY_AUDIT_COMMAND, 'CLIENTFLOW_WIFI_RECOVERY');
+  assert.match(dialog, /label: "WiFi udfald og recovery".*adminOnly: true/);
+  assert.match(WIFI_RECOVERY_AUDIT_COMMAND, /journalctl -b --since/);
+  assert.match(WIFI_RECOVERY_AUDIT_COMMAND, /re\.compile/);
+  assert.doesNotMatch(WIFI_RECOVERY_AUDIT_COMMAND, /(?:--show-secrets|show-password|connection up|connection down|device disconnect|radio wifi)/);
 });
