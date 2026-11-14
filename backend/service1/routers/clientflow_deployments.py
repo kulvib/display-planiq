@@ -34,6 +34,13 @@ from ..clientflow_pilot_1242 import (
 from ..clientflow_pilot_1243 import (
     ClientFlowPilot1243Denied, PILOT_FLAG as PILOT_1243_FLAG, require_pilot_1243,
 )
+from ..clientflow_pilot_1245 import (
+    ClientFlowPilot1245Denied, PILOT_FLAG as PILOT_1245_FLAG, require_pilot_1245,
+)
+from ..clientflow_stable_rollout import (
+    ClientFlowStableRolloutDenied, ENABLED_FLAG as STABLE_ROLLOUT_FLAG,
+    require_stable_rollout,
+)
 from ..clientflow_release_security_policy import ClientFlowReleaseSecurityDenied
 from ..clientflow_releases import (
     ClientFlowArtifactUnavailable,
@@ -54,6 +61,11 @@ router = APIRouter(tags=["clientflow-deployments"])
 
 def _require_exact_scoped_pilot(*, release: dict, **kwargs) -> str:
     """Select one explicit pilot guard. Unknown release identity fails closed."""
+    # Stable rollout is separate from the pilot and always requires an
+    # explicit client allowlist, target release and approved SHA256.
+    if release.get("status") == "stable" and release.get("update_allowed") is True:
+        require_stable_rollout(release=release, catalog=load_catalog(), **kwargs)
+        return STABLE_ROLLOUT_FLAG
     if release.get("release_id") == "clientflow-1.3.40-seq-1241":
         require_pilot_1241(release=release, **kwargs)
         return PILOT_1241_FLAG
@@ -63,6 +75,9 @@ def _require_exact_scoped_pilot(*, release: dict, **kwargs) -> str:
     if release.get("release_id") == "clientflow-1.3.42-seq-1243":
         require_pilot_1243(release=release, **kwargs)
         return PILOT_1243_FLAG
+    if release.get("release_id") == "clientflow-1.3.44-seq-1245":
+        require_pilot_1245(release=release, **kwargs)
+        return PILOT_1245_FLAG
     raise ClientFlowPilot1242Denied("Ingen særskilt autoriseret ClientFlow-pilot for denne release")
 
 
@@ -285,7 +300,7 @@ def create_clientflow_deployment(
     # Defense-in-depth: catalog eligibility is not a per-client permission.
     # Deny all requests except the explicitly switched-on 1241/Heidi1 pilot.
     try:
-        _require_exact_scoped_pilot(
+        authorization_flag = _require_exact_scoped_pilot(
             client_id=client_id,
             current_version=current_version,
             release=release,
@@ -293,7 +308,7 @@ def create_clientflow_deployment(
             pre_first_activation_repair=body.pre_first_activation_repair,
             confirm_downgrade=body.confirm_downgrade,
         )
-    except (ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied) as exc:
+    except (ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowPilot1245Denied, ClientFlowStableRolloutDenied) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     target_version = str(release["version"])
@@ -342,7 +357,7 @@ def create_clientflow_deployment(
                 confirm_downgrade=body.confirm_downgrade,
                 artifact=artifact,
             )
-        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowReleaseSecurityDenied) as exc:
+        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowPilot1245Denied, ClientFlowStableRolloutDenied, ClientFlowReleaseSecurityDenied) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if locked_version != current_version:
             raise HTTPException(status_code=409, detail="Klientens aktive release ændrede sig under autorisation")
@@ -383,11 +398,7 @@ def create_clientflow_deployment(
                 "allow_downgrade": deployment.allow_downgrade,
                 "pilot_client_id": int(client.id),
                 "pilot_source_version": current_version,
-                "pilot_authorization_flag": (
-                    PILOT_1241_FLAG if int(release["release_sequence"]) == 1241
-                    else PILOT_1242_FLAG if int(release["release_sequence"]) == 1242
-                    else PILOT_1243_FLAG
-                ),
+                "pilot_authorization_flag": authorization_flag,
                 "pre_first_activation_repair": repair_binding is not None,
                 "repair_from_release_id": repair_binding.get("release_id") if repair_binding else None,
                 "repair_from_release_sequence": repair_binding.get("release_sequence") if repair_binding else None,

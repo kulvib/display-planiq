@@ -198,7 +198,34 @@ def load_catalog() -> dict[str, Any]:
             and newest.get("update_allowed") is False
         ):
             raise ClientFlowCatalogError("1244 reset skal alene indeholde fresh-only 1.3.43 uden update")
-        if (
+        # A separately authorized 1245 *update-only* pilot is the sole
+        # exception to newest-only fresh-install selection. Keep 1244 as the
+        # exact fresh-install default; require both entries and block any
+        # broader rollout, rollback, source downgrade or new default.
+        if data["catalog_sequence"] == 1245 and newest.get("status") == "supported":
+            baseline = releases[0] if len(releases) == 2 else {}
+            if not (
+                len(releases) == 2
+                and data.get("latest_stable") == "1.3.43"
+                and data.get("default_install_version") == "1.3.43"
+                and baseline.get("version") == "1.3.43"
+                and baseline.get("release_id") == "clientflow-1.3.43-seq-1244"
+                and baseline.get("status") == "stable"
+                and baseline.get("installable") is True
+                and baseline.get("update_allowed") is False
+                and baseline.get("install_modes") == ["fresh_install"]
+                and newest.get("version") == "1.3.44"
+                and newest.get("release_id") == "clientflow-1.3.44-seq-1245"
+                and newest.get("status") == "supported"
+                and newest.get("installable") is False
+                and newest.get("update_allowed") is True
+                and newest.get("install_modes") == ["in_place_update"]
+                and newest.get("min_current_version") == "1.3.43"
+                and newest.get("max_current_version") == "1.3.43"
+                and newest.get("requires_reboot") is True
+            ):
+                raise ClientFlowCatalogError("1245-katalog må kun tilføje en eksakt update-only pilot til 1244")
+        elif (
             data.get("latest_stable") != newest.get("version")
             or data.get("default_install_version") != newest.get("version")
             or newest.get("status") != "stable"
@@ -206,6 +233,13 @@ def load_catalog() -> dict[str, Any]:
             or "fresh_install" not in newest.get("install_modes", [])
         ):
             raise ClientFlowCatalogError("1244+ katalog skal bruge seneste release som stable/fresh-install")
+
+    if data["catalog_sequence"] >= 1244 and sum(
+        item.get("status") == "stable" for item in releases
+    ) != 1:
+        raise ClientFlowCatalogError("1244+ katalog kræver præcis én stabil release")
+    if data["catalog_sequence"] >= 1244 and data.get("latest_stable") != data.get("default_install_version"):
+        raise ClientFlowCatalogError("Nyeste stabile release og nyinstallationsstandard skal være identiske")
 
     latest = str(data.get("latest_stable") or "").strip()
     latest_release = next((item for item in releases if item.get("version") == latest), None)
