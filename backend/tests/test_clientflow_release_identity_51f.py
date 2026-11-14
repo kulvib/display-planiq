@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSION_PATH = ROOT / "client/VERSION"
 RELEASE_INPUT_PATH = ROOT / "client/release/release-input.json"
 CATALOG_PATH = ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
+LIVE_CATALOG_PATH = ROOT / "backend/service1/clientflow_release_catalog.json"
 PYPROJECT_PATH = ROOT / "client/runtime/pyproject.toml"
 HISTORICAL_RUNTIME_LOCK = ROOT / "client/runtime-artifacts.lock.json"
 
@@ -22,10 +23,12 @@ def _version() -> str:
 def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> None:
     version = _version()
     release_input = json.loads(RELEASE_INPUT_PATH.read_text(encoding="utf-8"))
-    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))  # immutable historical fixture
+    live_catalog = json.loads(LIVE_CATALOG_PATH.read_text(encoding="utf-8"))
 
     source_sequence = int(release_input["release_sequence"])
-    catalog_sequence = int(catalog["catalog_sequence"])
+    catalog_sequence = int(live_catalog["catalog_sequence"])
+    historical_sequence = int(catalog["catalog_sequence"])
     source_tuple = tuple(int(part) for part in version.split("."))
 
     assert source_sequence >= catalog_sequence
@@ -45,7 +48,10 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected["version"] == catalog["latest_stable"]
     assert selected["version"] == catalog["default_install_version"]
     assert selected["release_sequence"] == 1239
-    assert catalog_sequence == 1243
+    assert historical_sequence == 1243
+    assert catalog_sequence == 1244
+    assert live_catalog["latest_stable"] == "1.3.43"
+    assert live_catalog["releases"][0]["release_id"] == "clientflow-1.3.43-seq-1244"
     assert selected["release_id"] == f"clientflow-{selected['version']}-seq-{selected['release_sequence']}"
     assert selected["revision"] == selected["release_id"]
 
@@ -53,7 +59,7 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected_tuple <= source_tuple
     # 1240 remains revoked; 1241 and 1242 are update-only and never the default.
     # The default 1239 selector must never silently become an update target.
-    assert source_sequence == 1244 and catalog_sequence == 1243
+    assert source_sequence == 1245 and catalog_sequence == 1244 and historical_sequence == 1243
     assert selected_tuple < source_tuple
     pilot = catalog["releases"][1]
     assert pilot["release_sequence"] == 1241
@@ -67,7 +73,7 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert new_pilot["install_modes"] == ["in_place_update"]
     assert new_pilot["installable"] is False and new_pilot["rollback_allowed"] is False
     latest_pilot = catalog["releases"][3]
-    assert latest_pilot["release_sequence"] == catalog_sequence
+    assert latest_pilot["release_sequence"] == historical_sequence
     assert latest_pilot["release_id"] == "clientflow-1.3.42-seq-1243"
     assert latest_pilot["install_modes"] == ["in_place_update"]
     assert latest_pilot["installable"] is False and latest_pilot["rollback_allowed"] is False

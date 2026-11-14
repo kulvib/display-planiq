@@ -33,6 +33,13 @@ def fixture(tmp_path: Path) -> Path:
         ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json",
         repo / "backend/service1/clientflow_release_catalog.json",
     )
+    # Recreate the immutable 1244 source-stage input for its historical guard.
+    # The live source may have advanced to 1245; do not modify the 1244 guard.
+    (repo / "client/VERSION").write_text("1.3.43\n", encoding="utf-8")
+    staged = repo / "client/release/release-input.json"
+    payload = json.loads(staged.read_text(encoding="utf-8"))
+    payload["release_sequence"] = 1244
+    staged.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return repo
 
 
@@ -68,7 +75,8 @@ def test_malformed_identity_platform_or_premature_promotion_rejected(tmp_path):
     obj["release_sequence"] = 1243
     identity.write_text(json.dumps(obj))
     assert not inspect_source(repo)["source_stage_ready"]
-    shutil.copy2(ROOT / "client/release/release-input.json", identity)
+    obj["release_sequence"] = 1244
+    identity.write_text(json.dumps(obj))
     c = repo / "backend/service1/clientflow_release_catalog.json"
     obj = json.loads(c.read_text())
     obj["catalog_sequence"] = 1244
