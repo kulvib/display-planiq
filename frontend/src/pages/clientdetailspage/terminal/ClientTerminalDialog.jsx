@@ -46,7 +46,8 @@ import {
 import { compactDarkChipSx } from "../../../utils/chipStyles";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import { shouldAutoOpenTerminalPty } from "./terminalOpenPolicy.mjs";
-import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND, WIFI_CHECKPOINT_TEST_COMMAND } from "./wifiSupportCommands.mjs";
+import { WIFI_DIAGNOSTICS_COMMAND, WIFI_STAGE_PROFILE_COMMAND, WIFI_CHECKPOINT_TEST_COMMAND, WIFI_RECOVERY_AUDIT_COMMAND } from "./wifiSupportCommands.mjs";
+import { SUPPORT_COMMAND_GUIDES, SUPPORT_RISK_LABELS } from "./terminalSupportGuides.mjs";
 
 function nowTime() {
   return new Date().toLocaleTimeString("da-DK", { hour12: false });
@@ -229,8 +230,8 @@ else
 fi
 
 echo
-echo "== Browserprocesser =="
-pgrep -af 'google-chrome|chrome|chromium' || echo "Ingen browserprocesser fundet"
+echo "== Browserprocesser (kun PID / navn; ingen signerede URL'er) =="
+ps -eo pid,ppid,comm | grep -E '(^ *PID|chrome|chromium)' || echo "Ingen browserprocesser fundet"
 CLIENTFLOW_CMD`;
 
 const RELEASE_UPDATER_DIAGNOSTICS_COMMAND = `cat <<'CLIENTFLOW_CMD' | sudo bash
@@ -409,7 +410,8 @@ const SUPPORT_COMMAND_GROUPS = [
       { label: "Ubuntu / APT health", command: UBUNTU_APT_HEALTH_COMMAND, adminOnly: true },
       { label: "Disk, RAM og oppetid", command: SYSTEM_RESOURCES_DIAGNOSTICS_COMMAND },
       { label: "Netværk, DNS, tid og backend", command: NETWORK_TIME_DIAGNOSTICS_COMMAND, adminOnly: true },
-      { label: "WiFi / NetworkManager diagnose", command: WIFI_DIAGNOSTICS_COMMAND, adminOnly: true, description: "Kun læsning: netværk, WiFi, signal, DNS og hændelser (ingen adgangskoder)." },
+      { label: "WiFi / NetworkManager diagnose", command: WIFI_DIAGNOSTICS_COMMAND, adminOnly: true, description: "Kun læsning: netværk, WiFi, signal og DNS (ingen adgangskoder)." },
+      { label: "WiFi udfald og recovery", command: WIFI_RECOVERY_AUDIT_COMMAND, adminOnly: true, description: "Kun læsning: NetworkManager, DNS, forbindelsesskift og WiFi-radio de seneste 30 minutter. Ingen skift af aktivt netværk." },
       { label: "Tilføj WiFi-profil (uden aktivering)", command: WIFI_STAGE_PROFILE_COMMAND, adminOnly: true, description: "Interaktiv opsætning: gem WPA2/WPA3-personlig WiFi-profil med autoconnect slået fra. Skifter ikke aktivt netværk." },
       { label: "Test gemt WiFi (auto-rollback)", command: WIFI_CHECKPOINT_TEST_COMMAND, adminOnly: true, description: "Test en ny ClientFlow WiFi-profil via NetworkManager checkpoint, 120 sekunders rollback og eksplicit bekræftelse. Kun ved godkendt servicevindue." },
     ],
@@ -1333,7 +1335,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                   fontWeight: 900
                 }}>Supportkommandoer</Typography>
                 <Typography variant="caption" sx={{ color: "rgba(226,232,240,0.62)" }}>
-                  Skriver direkte i den aktive terminal. “Kør” sender kommandoen med Enter.
+                  Vælg en kommando efter behov. Åbn “Hvornår skal jeg bruge denne?” for formål, forventet resultat og sikkerhedsforhold. “Indsæt” indsætter uden at køre; “Kør” udfører kommandoen.
                 </Typography>
               </Box>
             </AccordionSummary>
@@ -1369,6 +1371,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                     <Stack spacing={0.75}>
                       {group.commands.map((item) => {
                         const itemDisabled = terminalDisabled || (item.adminOnly && !isAdminMode);
+                        const guide = SUPPORT_COMMAND_GUIDES[item.label];
                         return (
                           <Box
                             key={item.label}
@@ -1384,14 +1387,17 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                               border: "1px solid rgba(148,163,184,0.10)",
                             }}
                           >
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                fontWeight: 800,
-                                color: "#f8fafc"
+                            <Stack spacing={0.35} sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" sx={{ fontWeight: 800, color: "#f8fafc" }}>
+                                {item.label}{item.adminOnly ? " · Admin" : ""}
+                              </Typography>
+                              <Typography variant="caption" sx={{
+                                color: guide?.risk === "switch" ? "#fca5a5" : guide?.risk === "stage" ? "#fde68a" : "#94a3b8",
+                                fontWeight: guide?.risk === "read" ? 400 : 800,
                               }}>
-                              {item.label}{item.adminOnly ? " · Admin" : ""}
-                            </Typography>
+                                {SUPPORT_RISK_LABELS[guide?.risk] || "Sikkerhed ukendt"}
+                              </Typography>
+                            </Stack>
                             <Typography
                               variant="caption"
                               sx={{
@@ -1402,7 +1408,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                                 color: "rgba(226,232,240,0.62)",
                               }}
                             >
-                              {item.description || item.command}
+                              {guide?.purpose || item.description || "Se vejledning for denne kommando"}
                             </Typography>
                             <Button size="small" variant="outlined" onClick={() => insertCommand(item.command)} disabled={itemDisabled} sx={{ color: "#e2e8f0", borderColor: "rgba(148,163,184,0.28)" }}>
                               Indsæt
@@ -1413,6 +1419,27 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
                             <Button size="small" variant="text" startIcon={<ContentCopyIcon />} onClick={() => copyCommand(item.command)} sx={{ color: "#bfdbfe" }}>
                               Kopiér
                             </Button>
+                            <Box
+                              component="details"
+                              sx={{
+                                gridColumn: "1 / -1",
+                                borderTop: "1px solid rgba(148,163,184,0.16)",
+                                pt: 0.75,
+                                mt: 0.25,
+                                "& summary": { cursor: "pointer", color: "#bfdbfe", fontSize: "0.82rem", fontWeight: 700 },
+                              }}
+                            >
+                              <Box component="summary">Hvornår skal jeg bruge denne? · {SUPPORT_RISK_LABELS[guide?.risk] || "Se vejledning"}</Box>
+                              <Stack spacing={0.45} sx={{ pt: 1 }}>
+                                <Typography variant="caption" sx={{ color: "#e2e8f0", overflowWrap: "anywhere" }}><strong>Formål:</strong> {guide?.purpose}</Typography>
+                                <Typography variant="caption" sx={{ color: "#e2e8f0", overflowWrap: "anywhere" }}><strong>Brug den når:</strong> {guide?.when}</Typography>
+                                <Typography variant="caption" sx={{ color: "#e2e8f0", overflowWrap: "anywhere" }}><strong>Forventet resultat:</strong> {guide?.output}</Typography>
+                                <Typography variant="caption" sx={{ color: guide?.risk === "switch" ? "#fca5a5" : guide?.risk === "stage" ? "#fde68a" : "#cbd5e1", overflowWrap: "anywhere" }}>
+                                  <strong>{guide?.risk === "switch" ? "VIGTIG ADVARSEL" : "Sikkerhed / begrænsning"}:</strong> {guide?.caution}
+                                </Typography>
+                                {item.adminOnly && <Typography variant="caption" sx={{ color: "#93c5fd" }}>Kræver Admin-terminal og gyldig step-up.</Typography>}
+                              </Stack>
+                            </Box>
                           </Box>
                         );
                       })}

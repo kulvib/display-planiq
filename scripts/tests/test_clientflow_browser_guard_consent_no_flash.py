@@ -84,9 +84,12 @@ def test_native_browser_dialogs_are_dismissed_without_javascript_overrides(monke
     monkeypatch.setattr(browser_guard, "log", lambda _message: None)
     asyncio.run(browser_guard.watch_javascript_dialogs({"webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/1"}))
     assert sent[0]["method"] == "Page.enable"
-    decisions = [command["params"]["accept"] for command in sent[1:]]
+    assert sent[1]["method"] == "Page.addScriptToEvaluateOnNewDocument"
+    assert "#coiOverlay" in sent[1]["params"]["source"]
+    decisions = [command["params"]["accept"] for command in sent[2:]]
     assert decisions == [False, False, False, True]
-    assert all(command["method"] == "Page.handleJavaScriptDialog" for command in sent[1:])
+    assert all(command["method"] == "Page.handleJavaScriptDialog" for command in sent[2:])
+
 
 
 def test_dialog_monitors_do_not_survive_tab_disappearance(monkeypatch):
@@ -116,3 +119,16 @@ def test_dialog_monitors_do_not_survive_tab_disappearance(monkeypatch):
         assert tasks == {} and cancelled == ["page-1"]
 
     asyncio.run(check())
+
+
+def test_shared_early_cookie_guard_is_reinstalled_for_timer_reload():
+    # Both the first navigation and subsequent refresh must install the same
+    # cookie-only stylesheet before the destination page's own scripts.
+    initial = display_runtime.DisplayRuntime._early_protection_script()
+    persistent = kiosk_consent.early_protection_script(kiosk_consent.CONSENT_CSS)
+    assert json.dumps(display_runtime.EARLY_KIOSK_CSS) in initial
+    assert json.dumps(kiosk_consent.CONSENT_CSS) in persistent
+    assert "clientflow-early-kiosk-protection" in persistent
+    assert "MutationObserver" in persistent
+    assert "el.click" not in persistent
+    assert "location.reload();" in browser_guard.COUNTDOWN_JS

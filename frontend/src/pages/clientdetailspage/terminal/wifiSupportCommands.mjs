@@ -222,3 +222,47 @@ echo 'NetworkManager spørger efter Yes, hvis forbindelsen kan bekræftes.'
 nmcli device checkpoint --timeout 120 "$iface" -- nmcli connection up uuid "$uuid" ifname "$iface" </dev/tty
 echo 'WiFi-test afsluttet. Kontroller forbindelse og routing med netværksdiagnosen.'
 CLIENTFLOW_WIFI_CHECKPOINT`;
+
+
+export const WIFI_RECOVERY_AUDIT_COMMAND = `cat <<'CLIENTFLOW_WIFI_RECOVERY' | sudo bash
+set -uo pipefail
+
+echo "=== ClientFlow WiFi: hændelser / recovery (kun læsning) ==="
+echo "== Aktuel uplink =="
+nmcli -f RUNNING,STATE,CONNECTIVITY general status 2>&1 || true
+nmcli -f DEVICE,TYPE,STATE,CONNECTION device status 2>&1 || true
+ip route show default 2>&1 || true
+
+echo
+ echo "== NetworkManager / WiFi radio / DNS =="
+for unit in NetworkManager.service systemd-resolved.service wpa_supplicant.service; do
+  printf '%s: ' "$unit"
+  systemctl is-active "$unit" 2>&1 || true
+done
+
+echo
+ echo "== Netværkshændelser seneste 30 minutter =="
+# Filter by event names, not by arbitrary journal messages: raw journals may
+# contain URLs and secrets from third-party processes. Do not display PSK.
+journalctl -b --since '30 minutes ago' --no-pager -o json \
+  -u NetworkManager.service -u systemd-resolved.service -u wpa_supplicant.service 2>/dev/null | python3 -c '
+import json, re, sys
+wanted = re.compile(r"state change:|CTRL-EVENT-(DISCONNECTED|CONNECTED|AUTH-REJECT)|rfkill:|radio-control|CONNECTED_GLOBAL|DISCONNECTED|new lease|DNS server list", re.I)
+sensitive = re.compile(r"(?i)(psk|password|secret|token|authorization|cookie)(\s*[:=]\s*)([^\s,]+)")
+rows = []
+for raw in sys.stdin:
+    try:
+        row = json.loads(raw)
+        msg = str(row.get("MESSAGE", ""))
+        if not wanted.search(msg):
+            continue
+        msg = sensitive.sub(lambda match: match.group(1) + match.group(2) + "[REDACTED]", msg)
+        rows.append(msg[:450])
+    except (ValueError, TypeError):
+        continue
+for msg in rows[-80:]:
+    print(msg)
+' || true
+
+echo "WIFI_RECOVERY_AUDIT=COMPLETE"
+CLIENTFLOW_WIFI_RECOVERY`;

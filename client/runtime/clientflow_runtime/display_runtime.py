@@ -23,7 +23,7 @@ import websockets
 
 from .browser_fullscreen import probe_browser_fullscreen
 from .display_internet import InternetMonitor
-from .kiosk_consent import CONSENT_CSS
+from .kiosk_consent import CONSENT_CSS, early_protection_script
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
 from . import display_resolution
@@ -578,25 +578,7 @@ class DisplayRuntime:
 
     @staticmethod
     def _early_protection_script() -> str:
-        css = json.dumps(EARLY_KIOSK_CSS)
-        return f"""(() => {{
-  const css = {css};
-  const install = () => {{
-    try {{
-      if (!document.documentElement) return;
-      let style = document.getElementById('clientflow-early-kiosk-protection');
-      if (!style) {{
-        style = document.createElement('style');
-        style.id = 'clientflow-early-kiosk-protection';
-        style.textContent = css;
-        document.documentElement.appendChild(style);
-      }}
-    }} catch (_) {{}}
-  }};
-  install();
-  try {{ new MutationObserver(install).observe(document, {{childList:true, subtree:true}}); }} catch (_) {{}}
-  try {{ document.addEventListener('readystatechange', install, true); }} catch (_) {{}}
-}})();"""
+        return early_protection_script(EARLY_KIOSK_CSS)
 
     @staticmethod
     async def _cdp_register_and_navigate(ws_url: str, kiosk_url: str) -> None:

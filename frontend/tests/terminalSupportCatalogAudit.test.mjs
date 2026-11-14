@@ -13,13 +13,13 @@ const expected = [
   "ClientFlow samlet status", "Display / kiosk browser", "Aktiv release / updater",
   "Livestream v2 status", "Terminal status", "Remote Desktop status",
   "Aktive ClientFlow units", "Ubuntu / APT health", "Disk, RAM og oppetid",
-  "Netværk, DNS, tid og backend", "WiFi / NetworkManager diagnose",
+  "Netværk, DNS, tid og backend", "WiFi / NetworkManager diagnose", "WiFi udfald og recovery",
   "Tilføj WiFi-profil (uden aktivering)", "Test gemt WiFi (auto-rollback)",
   "Rollbackrapportering / outbox", "Display/browser logs", "Status/System logs",
   "Livestream logs", "Terminal logs", "Remote Desktop logs",
 ];
 
-test("all 19 diagnostic helpers are distinct and structurally present", () => {
+test("all 20 diagnostic helpers are distinct and structurally present", () => {
   const labels = [...terminal.matchAll(/\{ label: "([^"]+)", command:/g)].map((x) => x[1]);
   assert.deepEqual(new Set(labels).size, labels.length, "Duplicate support commands");
   for (const label of expected) assert.ok(labels.includes(label), `Missing ${label}`);
@@ -57,4 +57,6 @@ test("diagnostic helpers do not dump signed kiosk URL, tokens or WiFi credential
   assert.doesNotMatch(terminal, /cat "\$f" 2>\/dev\/null \| python3 -m json\.tool/);
   assert.doesNotMatch(terminal, /python3 -m json\.tool "\$f"/);
   assert.doesNotMatch(wifi, /--show-secrets|show-password/);
+  assert.doesNotMatch(terminal, /pgrep -af 'google-chrome/);
+  assert.match(terminal, /Browserprocesser \(kun PID \/ navn/);
 });
