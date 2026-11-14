@@ -19,7 +19,8 @@ export async function getMaintenanceStatus(signal) {
       method: "GET",
       credentials: "include",
       cache: "no-store",
-      headers: { "Cache-Control": "no-store" },
+      // Den offentlige status er allerede no-store på serveren. Ingen ekstra
+      // Cache-Control request-header: den udløser unødvendig CORS-preflight.
       signal,
     });
     return readJson(res, "Vedligeholdelsesstatus kunne ikke hentes");

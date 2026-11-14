@@ -18,7 +18,7 @@ import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import GridViewIcon from "@mui/icons-material/GridView";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import { Link } from "react-router-dom";
-import { apiUrl, authHeaders, authenticatedFetch, getControlRoomClients, getOrganizations } from "../../api";
+import { apiUrl, authHeaders, authenticatedFetch, getAuthSessionSignal, getControlRoomClients, getOrganizations } from "../../api";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
@@ -279,7 +279,7 @@ function LivestreamTile({ client, pageMediaActive }) {
         const resp = await fetch(`${apiUrl}/api/hls-cap/${client.id}/health`, {
           credentials: "omit",
           headers: { Authorization: `Bearer ${mediaCapabilityRef.current}` },
-          signal: AbortSignal.timeout(6000),
+          signal: AbortSignal.any([getAuthSessionSignal(), AbortSignal.timeout(6000)]),
         });
         if (resp.ok) {
           const health = await resp.json();

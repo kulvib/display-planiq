@@ -199,6 +199,10 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
 
   try {
     const api = await server.ssrLoadModule("/src/api/api.js");
+    // The executable contract exercises protected endpoints with an authenticated
+    // fixture. Production must still reject stale or logged-out sessions.
+    const fixtureToken = "contract-fixture-access-token";
+    api.setAuthToken(fixtureToken);
 
     for (const operation of contract.operations) {
       assert.equal(typeof invoke[operation.name], "function", `Missing executable frontend invocation for ${operation.name}`);
@@ -208,6 +212,7 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
       const result = await invoke[operation.name](api);
       assert.equal(calls.length, 1, `${operation.name} must issue exactly one HTTP request`);
       const call = calls[0];
+      assert.equal(call.init?.headers?.Authorization, `Bearer ${fixtureToken}`, `${operation.name} must use current session credentials`);
       const actualMethod = String(call.init?.method || "GET").toUpperCase();
       assert.equal(actualMethod, operation.method, `${operation.name} HTTP method drift`);
       assert.equal(pathAndQuery(call.input), operation.example_path, `${operation.name} HTTP path drift`);
@@ -296,6 +301,21 @@ test("ClientFlow frontend API functions execute the shared backend contract", as
       /konkret katalogversion/,
     );
     assert.equal(calls.length, 0, "Frontend must reject implicit latest before any backend request");
+
+    // Verify logout kills subsequent protected calls without touching the
+    // backend, and a new login installs an independent, usable session signal.
+    currentOperation = "getClients";
+    calls.length = 0;
+    api.clearAuthToken();
+    await assert.rejects(() => invoke.getClients(api), { name: "AbortError" });
+    assert.equal(calls.length, 0, "Logged-out session must not make a protected HTTP request");
+
+    api.setAuthToken("contract-fixture-relogin-token");
+    const reloginClients = await invoke.getClients(api);
+    assert.deepEqual(reloginClients, responseByOperation.getClients);
+    assert.equal(calls.length, 1, "Fresh login must make a new protected request");
+    assert.equal(calls[0].init?.headers?.Authorization, "Bearer contract-fixture-relogin-token");
+    api.clearAuthToken();
   } finally {
     await server.close();
   }

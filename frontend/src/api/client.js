@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, clearAuthToken, isTerminalSessionRefreshError, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
+import { apiUrl, authHeaders, assertActiveAuthSession, boundAuthSessionSignal, clearAuthToken, isTerminalSessionRefreshError, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
 import { createApiError, normalizeApiError } from "./apiError";
 
 const NETWORK_ERROR_MESSAGE = "Netværksfejl – tjek din internetforbindelse og prøv igen.";
@@ -127,6 +127,8 @@ async function parseResponse(res, path) {
 async function request(method, path, body, config = {}) {
   const built = buildUrl(path, config?.params, { sameOrigin: config?.sameOrigin === true });
 
+  const signal = boundAuthSessionSignal(config?.signal);
+  assertActiveAuthSession(signal);
   const isFormData = body instanceof FormData;
   const headers = authHeaders({ ...(config?.headers || {}) });
   let mappedBody = body;
@@ -139,9 +141,10 @@ async function request(method, path, body, config = {}) {
     method,
     headers,
     credentials: "include",
-    signal: config?.signal,
+    signal,
     body: method === "GET" || method === "HEAD" ? undefined : mappedBody,
   });
+  signal.throwIfAborted();
 
   if (res.status === 401) {
     try {
@@ -150,15 +153,17 @@ async function request(method, path, body, config = {}) {
       if (!isTerminalSessionRefreshError(error)) throw error;
       return parseResponse(res, path);
     }
+    assertActiveAuthSession(signal);
     res = await fetchWithFriendlyErrors(built, {
       method,
       headers: authHeaders({ ...(config?.headers || {}) }),
       credentials: "include",
-      signal: config?.signal,
+      signal,
       body: method === "GET" || method === "HEAD" ? undefined : mappedBody,
     });
   }
 
+  signal.throwIfAborted();
   return parseResponse(res, path);
 }
 
