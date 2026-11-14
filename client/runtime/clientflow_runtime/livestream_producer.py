@@ -348,6 +348,18 @@ class Producer:
                 wanted = desired.get("desired")
                 generation = str(desired.get("generation_id") or "")
                 if wanted == "running" and generation:
+                    # A capture helper can exit after a successful first HLS
+                    # segment (e.g. its bounded, post-start segment watchdog).
+                    # Record the real exit before _stop() resets process state;
+                    # systemd itself remains active and must not hide this fault.
+                    if self.process is not None:
+                        exit_code = self.process.poll()
+                        if exit_code is not None:
+                            self.logger.warning(
+                                "capture_process_exited",
+                                extra={"event": "capture_exit", "exit_code": exit_code},
+                            )
+                            self._status("failed", exit_code=exit_code)
                     if self.generation_id != generation or self.process is None or self.process.poll() is not None:
                         now = time.monotonic()
                         if now - self._last_start_attempt < 2.0:

@@ -294,15 +294,23 @@ def _build_pipeline(
 def _run_pipeline(pipeline: Gst.Pipeline, output: Path) -> None:
     """Log bounded stage progress without copying pixels or exposing screenshots.
 
-    The watchdog in livestream_producer owns the 25s startup deadline. These
-    counters distinguish missing PipeWire buffers, slow encoding and stalled
-    HLS muxing even when GStreamer emits no ERROR bus message.
+    The producer owns the 25s startup deadline. Once HLS becomes ready,
+    require new playlist/media output at least every 90s. Static desktops
+    remain valid: this checks transport output rather than pixel changes.
+    No network calls, screenshots or credentials enter the monitor.
     """
     counters = {"source": 0, "encoded": 0, "muxed": 0}
     probes = []
 
-    def count_buffer(_pad, _info, stage):
-        counters[stage] += 1
+    def count_buffer(_pad, info, stage):
+        # mpegtsmux may push Gst.BufferList, not just Gst.Buffer. A BUFFER-only
+        # probe reported muxed_buffers=0 while clients received valid HLS.
+        list_flag = getattr(Gst.PadProbeType, "BUFFER_LIST", 0)
+        if info is not None and list_flag and info.type & list_flag:
+            buffers = info.get_buffer_list()
+            counters[stage] += buffers.length() if buffers is not None else 1
+        else:
+            counters[stage] += 1
         return Gst.PadProbeReturn.OK
 
     for name, stage in (
@@ -316,13 +324,41 @@ def _run_pipeline(pipeline: Gst.Pipeline, output: Path) -> None:
         pad = element.get_static_pad("src")
         if pad is None:
             raise RuntimeError(f"GStreamer progress pad missing: {name}")
-        probe_id = pad.add_probe(Gst.PadProbeType.BUFFER, count_buffer, stage)
+        probe_id = pad.add_probe(
+            Gst.PadProbeType.BUFFER | getattr(Gst.PadProbeType, "BUFFER_LIST", 0),
+            count_buffer,
+            stage,
+        )
         probes.append((pad, probe_id))
 
     bus = pipeline.get_bus()
     started = time.monotonic()
     last_report = started
     ready_seen = False
+    last_output_marker = None
+    last_output_at = started
+    last_output_counters = counters.copy()
+    last_running_report = started
+
+    def output_marker():
+        """Observe HLS progress, not scene changes or JPEG/frame content."""
+        try:
+            stat = (output / "index.m3u8").stat()
+        except FileNotFoundError:
+            return None
+        latest = None
+        for segment in output.glob("segment-*.ts"):
+            try:
+                segment_stat = segment.stat()
+            except FileNotFoundError:  # hlssink rotates segments concurrently
+                continue
+            marker = (segment.name, segment_stat.st_mtime_ns, segment_stat.st_size)
+            if latest is None or marker[1] > latest[1]:
+                latest = marker
+        if latest is None:
+            return None
+        return (stat.st_mtime_ns, stat.st_size, latest)
+
     try:
         state_result = pipeline.set_state(Gst.State.PLAYING)
         if state_result == Gst.StateChangeReturn.FAILURE:
@@ -341,9 +377,48 @@ def _run_pipeline(pipeline: Gst.Pipeline, output: Path) -> None:
                         raise RuntimeError("GStreamer stream ended unexpectedly")
                     break
             now = time.monotonic()
-            if not ready_seen and (output / "index.m3u8").is_file() and any(output.glob("segment-*.ts")):
+            marker = output_marker()
+            if not ready_seen and marker is not None:
                 ready_seen = True
+                last_output_marker = marker
+                last_output_at = now
+                last_output_counters = counters.copy()
                 print(f"clientflow_hls_first_segment elapsed_s={now - started:.2f}", flush=True)
+            elif ready_seen:
+                if marker is not None and marker != last_output_marker:
+                    last_output_marker = marker
+                    last_output_at = now
+                    last_output_counters = counters.copy()
+                if now - last_running_report >= 30:
+                    last_running_report = now
+                    print(
+                        "clientflow_hls_running "
+                        f"elapsed_s={int(now - started)} "
+                        f"output_age_s={int(now - last_output_at)} "
+                        f"source_buffers={counters['source']} "
+                        f"encoded_buffers={counters['encoded']} "
+                        f"muxed_buffers={counters['muxed']}",
+                        flush=True,
+                    )
+                if now - last_output_at >= 90:
+                    if counters["source"] == last_output_counters["source"]:
+                        stage = "pipewire_no_buffers"
+                    elif counters["encoded"] == last_output_counters["encoded"]:
+                        stage = "encoder_no_buffers"
+                    elif counters["muxed"] == last_output_counters["muxed"]:
+                        stage = "mux_no_buffers"
+                    else:
+                        stage = "hls_sink_no_segments"
+                    print(
+                        "clientflow_hls_stalled "
+                        f"output_age_s={int(now - last_output_at)} "
+                        f"stage={stage} "
+                        f"source_buffers={counters['source']} "
+                        f"encoded_buffers={counters['encoded']} "
+                        f"muxed_buffers={counters['muxed']}",
+                        flush=True,
+                    )
+                    raise RuntimeError(f"HLS output stalled for 90 seconds ({stage})")
             if not ready_seen and now - last_report >= 5:
                 last_report = now
                 print(
