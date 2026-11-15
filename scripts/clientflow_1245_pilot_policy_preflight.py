@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only source-stage gate for 1245 pilot and stable-default policy.
+"""Read-only 1245 pilot catalog gate; runtime operator switches remain separate.
 
 A successful result is NOT a release approval or permission to deploy.
 """
@@ -40,20 +40,26 @@ def inspect(repo: Path) -> dict:
         read("client/VERSION").strip() == "1.3.44"
         and source.get("release_sequence") == 1245
     )
-    checks["unpromoted_1244_catalog"] = (
-        cat.get("catalog_sequence") == 1244
+    checks["update_only_1245_catalog"] = (
+        cat.get("catalog_sequence") == 1245
         and cat.get("latest_stable") == cat.get("default_install_version") == "1.3.43"
         and isinstance(releases, list)
-        and len(releases) == 1
+        and len(releases) == 2
         and isinstance(releases[0], dict)
         and releases[0].get("release_id") == "clientflow-1.3.43-seq-1244"
         and releases[0].get("status") == "stable"
         and releases[0].get("install_modes") == ["fresh_install"]
         and releases[0].get("update_allowed") is False
+        and releases[1].get("release_id") == EXPECTED_RELEASE
+        and releases[1].get("install_modes") == ["in_place_update"]
+        and releases[1].get("status") == "supported"
+        and releases[1].get("installable") is False
+        and releases[1].get("update_allowed") is True
+        and releases[1].get("rollback_allowed") is False
     )
-    checks["no_1245_deployment_while_unapproved"] = (
+    checks["exact_approval_but_separate_pilot_flags"] = (
         lock.get("schema_version") == 1
-        and lock.get("approved") is False
+        and lock.get("approved") is True
         and lock.get("approved_bundle_sha256") == "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
         and lock.get("approved_bundle_size") == 223610880
         and lock.get("approval_reference") == "CF-1.3.44-1245-20261114-0685710-ffe58332-R2"
@@ -83,9 +89,10 @@ def inspect(repo: Path) -> dict:
             'CLIENTFLOW_STABLE_ROLLOUT_CLIENT_IDS',
         )
     )
-    checks["source_gate_still_requires_no_release_promotion"] = (
-        "explicit_no_1245_catalog_promotion" in read("scripts/clientflow_1245_source_preflight.py")
-    )
+    checks["both_operator_flags_required"] = all(token in read("backend/service1/clientflow_pilot_1245.py") for token in (
+        "CLIENTFLOW_1245_PILOT_CLIENT_ID", "CLIENTFLOW_1245_PILOT_ARM_REFERENCE",
+        "os.environ.get(PILOT_ARM_FLAG) != PILOT_ARM_REFERENCE",
+    ))
     checks["deployment_rechecks_artifact_after_lock"] = all(
         token in read("backend/service1/routers/clientflow_deployments.py")
         for token in (
@@ -94,8 +101,8 @@ def inspect(repo: Path) -> dict:
         )
     )
     return {
-        "phase": "source_only",
-        "approved": False,
+        "phase": "pilot_catalog_ready_environment_disarmed",
+        "approved": True,
         "deployed": False,
         "stable_promoted": False,
         "ready": all(checks.values()),

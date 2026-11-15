@@ -1,0 +1,52 @@
+{
+  "manifest_schema": 4,
+  "channel": "canonical-release-catalog",
+  "catalog_sequence": 1245,
+  "latest_stable": "1.3.44",
+  "default_install_version": "1.3.44",
+  "retention_policy": {
+    "max_selectable_versions": 3,
+    "max_installable_versions": 1,
+    "keep_blocked_metadata": false
+  },
+  "releases": [
+    {
+      "version": "1.3.44",
+      "client_version": "1.3.44",
+      "release_sequence": 1245,
+      "revision": "clientflow-1.3.44-seq-1245",
+      "release_id": "clientflow-1.3.44-seq-1245",
+      "status": "stable",
+      "installable": true,
+      "update_allowed": true,
+      "rollback_allowed": false,
+      "requires_explicit_downgrade": false,
+      "requires_reboot": true,
+      "ubuntu_compatibility": {
+        "policy": "ubuntu-desktop-lts-minimum",
+        "minimum_lts_version": "26.04",
+        "maximum_certified_version": "26.04",
+        "certified_versions": [
+          "26.04"
+        ],
+        "architecture": "amd64",
+        "desktop": "gnome",
+        "display_stack": "wayland",
+        "requires_platform_preflight": true
+      },
+      "notes": [
+        "FUTURE STABLE PROMOTION TEMPLATE ONLY. This file is not the active catalog; do not install or promote 1245 until physical Viborg1 pilot, recovery, GitHub CI and operator review all pass.",
+        "One single stable ClientFlow release 1.3.44/1245 for both fresh installation and in-place update. The currently installed previous version on existing devices is not a second stable target.",
+        "Exact approved R2 TAR: SHA256 28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5; size 223610880; source 06857104952ebb40bf1394c423c01332d28f8d5e; candidate ffe58332c8e3b263e00f299e363dc95ecb9ac7e0176fd51888be98fecad9bd97; fresh-installer fc843b6b37772996ecbfa67ff08a0e6f372443bf7d6104ca28d616855bc5737a; approval CF-1.3.44-1245-20261114-0685710-ffe58332-R2.",
+        "Store retains 1.3.43/1244 as protected recovery artifact, but it is not selectable as a second fresh-install or update target. No automatic client upgrade, manual rollback or downgrade. Fresh-installs remain suspended by the separate maintenance flag until explicitly released; stable in-place rollout requires explicit allowlisted manual deployment."
+      ],
+      "artifact_type": "runtime_release",
+      "install_modes": [
+        "fresh_install",
+        "in_place_update"
+      ],
+      "min_current_version": "1.3.43",
+      "max_current_version": "1.3.43"
+    }
+  ]
+}

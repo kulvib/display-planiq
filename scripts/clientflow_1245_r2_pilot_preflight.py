@@ -24,6 +24,22 @@ BASELINE_SHA = "d3fdae8fb2a93f74431780f4aadde21625d10917e99cfbe6095ff2394e1e856b
 def inspect(repo: Path) -> dict:
     checks: dict[str, bool] = {}
 
+    def policy_bytes_without_pilot_prose(catalog: dict) -> dict:
+        """Permit edited human notes only in newest pilot; compare all policy fields.
+
+        Preserve exact 1244 baseline notes and all immutable release identity.
+        """
+        if not isinstance(catalog, dict):
+            return {}
+        copy = dict(catalog)
+        rows = copy.get("releases")
+        if not isinstance(rows, list) or len(rows) != 2 or not all(isinstance(x, dict) for x in rows):
+            return copy
+        safe_rows = [dict(item) for item in rows]
+        safe_rows[1].pop("notes", None)
+        copy["releases"] = safe_rows
+        return copy
+
     def load(path: str) -> dict:
         try:
             data = json.loads((repo / path).read_text(encoding="utf-8"))
@@ -32,16 +48,18 @@ def inspect(repo: Path) -> dict:
             return {}
 
     active = load("backend/service1/clientflow_release_catalog.json")
+    historic = load("scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json")
     staged = load("backend/service1/clientflow_release_catalog_1245_pilot.stage.json")
     lock = load("backend/service1/clientflow_pilot_1245_approval.json")
     active_releases = active.get("releases")
+    historic_releases = historic.get("releases")
     staged_releases = staged.get("releases")
-    baseline = active_releases[0] if isinstance(active_releases, list) and len(active_releases) == 1 and isinstance(active_releases[0], dict) else {}
+    baseline = historic_releases[0] if isinstance(historic_releases, list) and len(historic_releases) == 1 and isinstance(historic_releases[0], dict) else {}
     proposal = staged_releases[1] if isinstance(staged_releases, list) and len(staged_releases) == 2 and isinstance(staged_releases[1], dict) else {}
 
-    checks["active_catalog_still_1244_only"] = (
-        active.get("catalog_sequence") == 1244
-        and active.get("latest_stable") == active.get("default_install_version") == "1.3.43"
+    checks["historic_1244_baseline_preserved"] = (
+        historic.get("catalog_sequence") == 1244
+        and historic.get("latest_stable") == historic.get("default_install_version") == "1.3.43"
         and baseline.get("release_id") == BASELINE_RELEASE
         and baseline.get("status") == "stable"
         and baseline.get("installable") is True
@@ -54,11 +72,11 @@ def inspect(repo: Path) -> dict:
         isinstance(staged_releases, list) and len(staged_releases) == 2
         and staged_releases[0] == baseline
     )
-    checks["single_future_sequence_and_default"] = (
+    checks["single_pilot_sequence_and_default"] = (
         staged.get("catalog_sequence") == 1245
-        and staged.get("manifest_schema") == active.get("manifest_schema") == 4
-        and staged.get("channel") == active.get("channel") == "canonical-release-catalog"
-        and staged.get("retention_policy") == active.get("retention_policy") == {
+        and staged.get("manifest_schema") == historic.get("manifest_schema") == 4
+        and staged.get("channel") == historic.get("channel") == "canonical-release-catalog"
+        and staged.get("retention_policy") == historic.get("retention_policy") == {
             "max_selectable_versions": 3, "max_installable_versions": 1,
             "keep_blocked_metadata": False,
         }
@@ -80,9 +98,9 @@ def inspect(repo: Path) -> dict:
         and proposal.get("min_current_version") == proposal.get("max_current_version") == "1.3.43"
         and proposal.get("ubuntu_compatibility") == baseline.get("ubuntu_compatibility")
     )
-    checks["approval_lock_r2_exact_but_disabled"] = (
+    checks["approval_lock_r2_exact_ready"] = (
         lock == {
-            "schema_version": 1, "approved": False,
+            "schema_version": 1, "approved": True,
             "release_id": PILOT_RELEASE, "source_commit": SOURCE,
             "candidate_sha256": CANDIDATE_SHA,
             "installer_sha256": INSTALLER_SHA,
@@ -91,9 +109,12 @@ def inspect(repo: Path) -> dict:
             "approval_reference": APPROVAL_REF,
         }
     )
-    checks["no_live_pilot_promotion"] = (
-        all(isinstance(x, dict) and x.get("release_id") != PILOT_RELEASE for x in active_releases)
-        if isinstance(active_releases, list) else False
+    checks["live_catalog_exact_staged_pilot"] = (
+        policy_bytes_without_pilot_prose(active) == policy_bytes_without_pilot_prose(staged)
+        and isinstance(active_releases, list)
+        and all(proof in " ".join(str(n) for n in active_releases[1].get("notes", []))
+                for proof in (APPROVED_SHA, SOURCE, APPROVAL_REF))
+        and [item.get("release_sequence") for item in active_releases] == [1244, 1245]
     )
     checks["original_client_source_untouched"] = (
         (repo / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.44"
@@ -105,16 +126,17 @@ def inspect(repo: Path) -> dict:
         }
     )
     guard = repo / "backend/service1/clientflow_pilot_1245.py"
-    checks["separate_operator_flag_required"] = (
+    checks["two_separate_operator_flags_required"] = (
         guard.is_file()
         and 'os.environ.get(PILOT_FLAG) != str(PILOT_CLIENT_ID)' in guard.read_text(encoding="utf-8")
         and 'if approval.get("approved") is not True' in guard.read_text(encoding="utf-8")
+        and 'os.environ.get(PILOT_ARM_FLAG) != PILOT_ARM_REFERENCE' in guard.read_text(encoding="utf-8")
     )
     return {
-        "stage": "R2_exact_bytes_staged_only",
+        "stage": "R2_update_only_catalog_active_but_environment_disarmed",
         "ready": all(checks.values()),
         "pilot_authorized": False,
-        "catalog_promoted": False,
+        "catalog_promoted": True,
         "physical_recovery_verified": False,
         "checks": checks,
     }

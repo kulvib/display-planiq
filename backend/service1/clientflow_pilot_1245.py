@@ -1,9 +1,9 @@
 """Fail-closed, exact-byte 1244 -> 1245 single-device pilot guard.
 
 Source staging alone NEVER authorizes this pilot. The approval lock is checked
-from a versioned repository file and deliberately ships with approved=false.
-Future promotion requires a separate reviewed approval record, an immutable
-published release, a catalog change and an explicit operator flag.
+from a versioned repository file and ships approved only after dedicated source promotion.
+The source-approved pilot still needs two absent-by-default operator flags,
+a verified published artifact and an explicit superadmin order.
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import re
 from typing import Any
 
 PILOT_FLAG = "CLIENTFLOW_1245_PILOT_CLIENT_ID"
+PILOT_ARM_FLAG = "CLIENTFLOW_1245_PILOT_ARM_REFERENCE"
+PILOT_ARM_REFERENCE = "CF-1.3.44-1245-20261114-0685710-ffe58332-R2"
 PILOT_CLIENT_ID = 3
 PILOT_FROM_VERSION = "1.3.43"
 PILOT_TO_VERSION = "1.3.44"
@@ -52,7 +54,8 @@ def _approved_lock() -> dict[str, Any]:
     if approval.get("approved") is not True or type(approval.get("schema_version")) is not int or approval["schema_version"] != 1:
         raise ClientFlowPilot1245Denied("1245 er endnu ikke særskilt godkendt til pilot")
     if (
-        approval.get("release_id") != PILOT_RELEASE_ID
+        approval.get("approval_reference") != PILOT_ARM_REFERENCE
+        or approval.get("release_id") != PILOT_RELEASE_ID
         or approval.get("source_commit") != SOURCE_COMMIT
         or approval.get("candidate_sha256") != CANDIDATE_SHA256
         or approval.get("installer_sha256") != INSTALLER_SHA256
@@ -75,6 +78,8 @@ def require_pilot_1245(
     """Check before the DB lock and recheck immutable store bytes after it."""
     if os.environ.get(PILOT_FLAG) != str(PILOT_CLIENT_ID):
         raise ClientFlowPilot1245Denied("1245-piloten er ikke aktiveret for Viborg1")
+    if os.environ.get(PILOT_ARM_FLAG) != PILOT_ARM_REFERENCE:
+        raise ClientFlowPilot1245Denied("1245-pilotens særskilte operatøraktivering mangler")
     if any(os.environ.get(flag) for flag in CONFLICTING_PILOT_FLAGS):
         raise ClientFlowPilot1245Denied("Historiske 1241–1243-pilotflag skal være deaktiverede")
     if type(client_id) is not int or client_id != PILOT_CLIENT_ID:

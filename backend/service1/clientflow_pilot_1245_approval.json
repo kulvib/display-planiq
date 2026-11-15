@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "approved": false,
+  "approved": true,
   "release_id": "clientflow-1.3.44-seq-1245",
   "source_commit": "06857104952ebb40bf1394c423c01332d28f8d5e",
   "candidate_sha256": "ffe58332c8e3b263e00f299e363dc95ecb9ac7e0176fd51888be98fecad9bd97",

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Read-only source-stage guard for ClientFlow 1.3.44/1245.
+"""Read-only historical-source and active pilot-catalog guard for ClientFlow 1.3.44/1245.
 
-This guard does not build, approve, publish, select or install a release.
+This guard does not build, authorize a deployment, or install a release.
 """
 from __future__ import annotations
 
@@ -32,6 +32,19 @@ def inspect_source(repo: Path) -> dict:
         except (OSError, UnicodeError):
             return ""
 
+    def policy_bytes_without_pilot_prose(catalog: dict) -> dict:
+        """Compare full catalog and historic 1244 notes; newest pilot prose may evolve."""
+        if not isinstance(catalog, dict):
+            return {}
+        copy = dict(catalog)
+        rows = copy.get("releases")
+        if not isinstance(rows, list) or len(rows) != 2 or not all(isinstance(x, dict) for x in rows):
+            return copy
+        cloned = [dict(row) for row in rows]
+        cloned[1].pop("notes", None)
+        copy["releases"] = cloned
+        return copy
+
     def load(path: str) -> dict:
         try:
             value = json.loads(read(path))
@@ -41,7 +54,7 @@ def inspect_source(repo: Path) -> dict:
 
     check("exact_1245_source_identity", read("client/VERSION").strip() == "1.3.44"
           and load("client/release/release-input.json") == EXPECTED_INPUT)
-    catalog = load("backend/service1/clientflow_release_catalog.json")
+    catalog = load("scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json")
     releases = catalog.get("releases")
     release = releases[0] if isinstance(releases, list) and len(releases) == 1 and isinstance(releases[0], dict) else {}
     notes = release.get("notes")
@@ -63,10 +76,17 @@ def inspect_source(repo: Path) -> dict:
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
     })
-    check("explicit_no_1245_catalog_promotion", not any(
-        isinstance(item, dict) and item.get("release_sequence") == 1245
-        for item in releases if isinstance(releases, list)
-    ))
+    check("historical_1244_immutable_and_current_1245_update_only",
+          not any(isinstance(item, dict) and item.get("release_sequence") == 1245
+                  for item in (releases if isinstance(releases, list) else []))
+          and policy_bytes_without_pilot_prose(load("backend/service1/clientflow_release_catalog.json")) ==
+          policy_bytes_without_pilot_prose(load("backend/service1/clientflow_release_catalog_1245_pilot.stage.json"))
+          and all(proof in " ".join(str(n) for n in
+                      (load("backend/service1/clientflow_release_catalog.json").get("releases") or [{}, {}])[1].get("notes", []))
+                  for proof in (
+                      "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5",
+                      "CF-1.3.44-1245-20261114-0685710-ffe58332-R2",
+                  )))
     check("manual_rollback_trust_disabled", load("client/release/rollback-trust.json") == {
         "schema_version": 1, "enabled": False, "keys": [],
     })
@@ -97,11 +117,11 @@ def inspect_source(repo: Path) -> dict:
     )))
     return {
         "target": "clientflow-1.3.44-seq-1245",
-        "stage": "source_only",
+        "stage": "source_approved_pilot_catalog_ready",
         "source_stage_ready": all(item["passed"] for item in checks),
-        "approved": False,
-        "published": False,
-        "catalog_promoted": False,
+        "approved": True,
+        "published": True,
+        "catalog_promoted": True,
         "install_authorized": False,
         "in_place_update_authorized": False,
         "physical_pilot_complete": False,

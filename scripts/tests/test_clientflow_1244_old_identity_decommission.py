@@ -172,7 +172,9 @@ def test_transaction_rollback_on_missing_audit_table(db):
 
 
 def test_quiesce_and_catalog_guards(tmp_path,monkeypatch):
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    # Historical 1244 identity-retirement procedure must continue to reject the
+    # active 1245 pilot catalog. Test its original exact catalog from frozen bytes.
+    catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json").read_text())
     path = tmp_path / 'catalog.json'
     path.write_text(json.dumps(catalog))
     monkeypatch.delenv('CLIENTFLOW_FRESH_INSTALL_SUSPENDED',raising=False)

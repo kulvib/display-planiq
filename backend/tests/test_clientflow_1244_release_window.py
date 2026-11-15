@@ -10,7 +10,7 @@ import pytest
 from service1 import clientflow_releases as releases
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG = ROOT / "backend/service1/clientflow_release_catalog.json"
+CATALOG = ROOT / "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json"
 
 
 def _future(*sequences: int) -> dict:
@@ -35,6 +35,7 @@ def _future(*sequences: int) -> dict:
             "update_allowed": True,
             "install_modes": ["in_place_update"],
             "min_current_version": "1.3.43",
+            "max_current_version": "1.3.43",
         })
         rows.append(row)
     latest = rows[-1]
@@ -68,7 +69,7 @@ def _load(tmp_path, monkeypatch, payload):
 
 
 @pytest.mark.parametrize("sequences", [
-    (1244,), (1244, 1245), (1244, 1245, 1246), (1245, 1246, 1247),
+    (1244,), (1245,), (1244, 1245, 1246), (1245, 1246, 1247),
 ])
 def test_one_to_three_only_latest_stable(tmp_path, monkeypatch, sequences):
     payload = _future(*sequences)
@@ -98,7 +99,7 @@ def test_invalid_future_catalog_fails_closed(tmp_path, monkeypatch, mutate):
         _load(tmp_path, monkeypatch, payload)
 
 
-def test_current_catalog_is_exclusively_1244_after_reset():
+def test_frozen_catalog_is_exclusively_1244_after_reset():
     catalog = json.loads(CATALOG.read_text())
     assert catalog["catalog_sequence"] == 1244
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.43"
@@ -106,3 +107,10 @@ def test_current_catalog_is_exclusively_1244_after_reset():
     assert catalog["releases"][0]["installable"] is True
     assert catalog["releases"][0]["update_allowed"] is False
     assert catalog["releases"][0]["rollback_allowed"] is False
+
+
+def test_1245_stable_rejects_two_active_catalog_targets(tmp_path, monkeypatch):
+    # The pilot may temporarily have 1244 stable + 1245 supported, but
+    # once 1245 is stable it must be the *only* selectable catalog entry.
+    with pytest.raises(releases.ClientFlowCatalogError):
+        _load(tmp_path, monkeypatch, _future(1244, 1245))

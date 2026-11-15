@@ -225,6 +225,26 @@ def load_catalog() -> dict[str, Any]:
                 and newest.get("requires_reboot") is True
             ):
                 raise ClientFlowCatalogError("1245-katalog må kun tilføje en eksakt update-only pilot til 1244")
+        # Stable promotion of the exact same 1245 release is a *different*,
+        # separately reviewed catalog transition. Only one stable, fresh-install
+        # target may remain active, and it must serve both installation paths.
+        # The previous 1244 TAR stays in immutable store for recovery, not as an
+        # alternative selectable catalog release.
+        elif data["catalog_sequence"] == 1245 and newest.get("status") == "stable":
+            if not (
+                len(releases) == 1
+                and newest.get("version") == "1.3.44"
+                and newest.get("release_id") == "clientflow-1.3.44-seq-1245"
+                and newest.get("install_modes") == ["fresh_install", "in_place_update"]
+                and newest.get("installable") is True
+                and newest.get("update_allowed") is True
+                and newest.get("min_current_version") == "1.3.43"
+                and newest.get("max_current_version") == "1.3.43"
+                and newest.get("requires_reboot") is True
+            ):
+                raise ClientFlowCatalogError(
+                    "1245 stabil kræver én fælles release til nyinstallation og kontrolleret opdatering"
+                )
         elif (
             data.get("latest_stable") != newest.get("version")
             or data.get("default_install_version") != newest.get("version")

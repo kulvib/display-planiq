@@ -38,13 +38,7 @@ def _future_release() -> dict:
 
 def _future_approval() -> dict:
     locked = json.loads(pilot.APPROVAL_LOCK_PATH.read_text(encoding="utf-8"))
-    return {
-        **locked,
-        "approved": True,
-        "approved_bundle_sha256": "a" * 64,
-        "approved_bundle_size": 223610880,
-        "approval_reference": "CF-1245-EXACT-TEST-ONLY",
-    }
+    return {**locked, "approved": True}
 
 
 def _future_artifact(approval: dict) -> dict:
@@ -73,14 +67,15 @@ def fake_approval(monkeypatch, tmp_path):
     path.write_text(json.dumps(record), encoding="utf-8")
     monkeypatch.setattr(pilot, "APPROVAL_LOCK_PATH", path)
     monkeypatch.setenv(pilot.PILOT_FLAG, "3")
+    monkeypatch.setenv(pilot.PILOT_ARM_FLAG, pilot.PILOT_ARM_REFERENCE)
     for key in pilot.CONFLICTING_PILOT_FLAGS:
         monkeypatch.delenv(key, raising=False)
     return record, path
 
 
-def test_real_pilot_approval_file_is_disabled_by_default():
+def test_real_pilot_approval_file_exact_but_no_environment_autodeploy():
     record = json.loads((ROOT / "backend/service1/clientflow_pilot_1245_approval.json").read_text())
-    assert record["approved"] is False
+    assert record["approved"] is True
     assert record["approved_bundle_sha256"] == "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
     assert record["approved_bundle_size"] == 223610880
     assert record["approval_reference"] == "CF-1.3.44-1245-20261114-0685710-ffe58332-R2"
@@ -92,6 +87,19 @@ def test_real_pilot_approval_file_is_disabled_by_default():
 def test_pilot_rejects_without_environment_activation(fake_approval, monkeypatch):
     monkeypatch.delenv(pilot.PILOT_FLAG)
     with pytest.raises(pilot.ClientFlowPilot1245Denied):
+        pilot.require_pilot_1245(**_args())
+
+
+def test_pilot_rejects_without_distinct_operator_arm(fake_approval, monkeypatch):
+    monkeypatch.delenv(pilot.PILOT_ARM_FLAG)
+    with pytest.raises(pilot.ClientFlowPilot1245Denied, match="operatøraktivering"):
+        pilot.require_pilot_1245(**_args())
+
+
+@pytest.mark.parametrize("value", ["", "wrong", "true", "*"])
+def test_pilot_rejects_invalid_operator_arm(fake_approval, monkeypatch, value):
+    monkeypatch.setenv(pilot.PILOT_ARM_FLAG, value)
+    with pytest.raises(pilot.ClientFlowPilot1245Denied, match="operatøraktivering"):
         pilot.require_pilot_1245(**_args())
 
 
@@ -170,7 +178,9 @@ def test_missing_lock_fails(fake_approval):
 
 def test_unapproved_staged_lock_fails_even_when_flag_is_three(fake_approval):
     _, path = fake_approval
-    path.write_bytes((ROOT / "backend/service1/clientflow_pilot_1245_approval.json").read_bytes())
+    inactive = json.loads((ROOT / "backend/service1/clientflow_pilot_1245_approval.json").read_text())
+    inactive["approved"] = False
+    path.write_text(json.dumps(inactive), encoding="utf-8")
     with pytest.raises(pilot.ClientFlowPilot1245Denied):
         pilot.require_pilot_1245(**_args())
 
@@ -194,10 +204,9 @@ def test_simulated_approved_lock_accepts_only_exact_artifact(fake_approval):
 @pytest.fixture
 def staged_catalog(monkeypatch, tmp_path):
     live = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
-    assert live["catalog_sequence"] == 1244 and len(live["releases"]) == 1
+    assert live["catalog_sequence"] == 1245 and len(live["releases"]) == 2
     catalog = deepcopy(live)
-    catalog["catalog_sequence"] = 1245
-    catalog["releases"].append(_future_release())
+    assert catalog["releases"][1]["release_id"] == pilot.PILOT_RELEASE_ID
     path = tmp_path / "catalog.json"
     monkeypatch.setattr(releases, "CATALOG_PATH", path)
     releases.load_catalog.cache_clear()
@@ -205,11 +214,11 @@ def staged_catalog(monkeypatch, tmp_path):
     releases.load_catalog.cache_clear()
 
 
-def test_current_catalog_is_not_promoted():
+def test_current_catalog_is_pilot_only_and_not_stable_promoted():
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert catalog["catalog_sequence"] == 1244
+    assert catalog["catalog_sequence"] == 1245
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.43"
-    assert [r["release_sequence"] for r in catalog["releases"]] == [1244]
+    assert [r["release_sequence"] for r in catalog["releases"]] == [1244, 1245]
 
 
 def test_future_exact_update_only_catalog_is_allowed_without_changing_default(staged_catalog):
