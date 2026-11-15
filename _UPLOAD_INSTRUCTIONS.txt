@@ -1,0 +1,19 @@
+PlanIQ Display 61B-1 – testrettelse for udløbsdato
+
+Branch: feature/display-61b1-inert-release-planning-20261115
+
+Overskriv kun disse to eksisterende filer i din aktuelle branch:
+  backend/tests/test_clientflow_release_admin_61a_http.py
+  SHA256SUMS.txt
+
+Upload ikke _UPLOAD_INSTRUCTIONS.txt.
+
+Årsag: Testen skrev expires_at før created_at og udløste den korrekte
+ck_clientflow_rollout_wave_expiry databasebegrænsning.
+Rettelse: Den udløbne plan testes ved at simulere en fremtidig applikationstid
+uden ændringer i persistente tidsstempler. 409-afvisning og ingen review-audit
+kontrolleres fortsat. Global sikkerhedsdrift skal fortsat give 503.
+
+Ingen produktionskode, migrationer, CI-workflows eller runtimeindstillinger er ændret.
+
+Efter upload: Lad hele GitHub CI køre. Merge først ved grøn CI.

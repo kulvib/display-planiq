@@ -14,7 +14,7 @@ function formatDate(value) {
   return Number.isFinite(date.getTime()) ? date.toLocaleString("da-DK") : "–";
 }
 
-/** Safe phase-A console; draft authorizations are inert until a reviewed cutover. */
+/** Safe 61B-1 plan review; no action authorizes or deploys a client release. */
 export default function ClientFlowReleaseAdministration() {
   const [status, setStatus] = React.useState(null);
   const [error, setError] = React.useState("");
@@ -22,7 +22,8 @@ export default function ClientFlowReleaseAdministration() {
   const [loading, setLoading] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [kind, setKind] = React.useState("pilot");
-  const [clientIds, setClientIds] = React.useState("3");
+  const [clientIds, setClientIds] = React.useState("");
+  const [sourceVersion, setSourceVersion] = React.useState("");
   const [reason, setReason] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [expiry, setExpiry] = React.useState("24");
@@ -36,7 +37,10 @@ export default function ClientFlowReleaseAdministration() {
     try {
       const { data } = await client.get(RELEASE_PATH, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      if (!data || data.phase !== "additive_draft_only" || data.authorization_active !== false) {
+      if (!data || data.phase !== "additive_draft_only" || data.authorization_active !== false ||
+          data.planning_review_available !== true || data.fresh_install_open !== false ||
+          data.fleet_open !== false || data.cutover_enabled !== false ||
+          data.physical_pilot_accepted !== false) {
         throw new Error("Ukendt releaseadministrationskontrakt – adgang er lukket");
       }
       setStatus(data);
@@ -63,8 +67,8 @@ export default function ClientFlowReleaseAdministration() {
       setError("Indtast 1–25 entydige positive klient-ID'er adskilt med komma");
       return;
     }
-    if (kind === "pilot" && (ids.length !== 1 || ids[0] !== 3)) {
-      setError("Første pilot er begrænset til Viborg1 (klient-ID 3)");
+    if (kind === "pilot" && ids.length !== 1) {
+      setError("En pilotplan må kun indeholde én klient");
       return;
     }
     setSubmitting(true);
@@ -74,7 +78,7 @@ export default function ClientFlowReleaseAdministration() {
       await client.post(`${RELEASE_PATH}/drafts`, {
         kind,
         client_ids: ids,
-        source_version: "1.3.43",
+        source_version: sourceVersion.trim(),
         reason: reason.trim(),
         expires_in_hours: Number(expiry),
         expected_revision: status.revision,
@@ -82,7 +86,7 @@ export default function ClientFlowReleaseAdministration() {
       });
       setPassword("");
       setReason("");
-      setMessage("Kladde oprettet. Den giver IKKE udrulningstilladelse.");
+      setMessage("Inaktiv plan gemt. Ingen klientopdatering er godkendt eller startet.");
       await refresh();
     } catch (err) {
       setError(err?.message || "Kunne ikke oprette kladden");
@@ -91,23 +95,30 @@ export default function ClientFlowReleaseAdministration() {
     }
   };
 
-  const cancelDraft = async (wave) => {
+  const decidePlan = async (wave, action) => {
     if (!password || submitting || !status) {
-      setError("Indtast adgangskode for at annullere kladden");
+      setError("Indtast adgangskode for at bekræfte handlingen");
       return;
     }
+    const actions = {
+      review: "Planen er gennemgået, men giver ingen installationstilladelse.",
+      pause: "Planlægningen er sat på pause; ingen installation kan starte.",
+      resume: "Planlægningen kan fortsætte; ingen installation er autoriseret.",
+      cancel: "Planen er annulleret; ingen installation blev bestilt.",
+    };
+    if (!Object.hasOwn(actions, action)) return;
     setSubmitting(true);
     setError("");
     setMessage("");
     try {
-      await client.post(`${RELEASE_PATH}/drafts/${encodeURIComponent(wave.id)}/cancel`, {
+      await client.post(`${RELEASE_PATH}/drafts/${encodeURIComponent(wave.id)}/${action}`, {
         expected_revision: wave.revision, password,
       });
       setPassword("");
-      setMessage("Kladde annulleret. Ingen installation blev bestilt.");
+      setMessage(actions[action]);
       await refresh();
     } catch (err) {
-      setError(err?.message || "Kunne ikke annullere kladden");
+      setError(err?.message || "Kunne ikke gemme planændringen");
     } finally {
       setSubmitting(false);
     }
@@ -120,7 +131,7 @@ export default function ClientFlowReleaseAdministration() {
           <Box>
             <Typography variant="h5" sx={{ fontWeight: 900 }}>ClientFlow · Releases og udrulning</Typography>
             <Typography sx={{ color: "rgba(203,213,225,0.75)", mt: 0.5 }}>
-              Forbered udrulninger i databasen. Kun kladder er tilgængelige indtil den særskilte sikkerhedsgodkendelse.
+              Forbered og gennemgå inaktive udrulningsplaner. Ingen handling på denne side godkender en fysisk klientopdatering.
             </Typography>
           </Box>
           <AdminRefreshButton onClick={() => void refresh()} loading={loading} disabled={submitting} ariaLabel="Opdater ClientFlow releaseadministration" />
@@ -130,7 +141,7 @@ export default function ClientFlowReleaseAdministration() {
       {message && <Alert severity="success">{message}</Alert>}
       {!status ? (loading ? <CircularProgress aria-label="Henter releaseadministration" /> : <Alert severity="error">Releaseadministration ikke verificeret – ingen handlinger er tilladt.</Alert>) : (
         <>
-          <Alert severity="warning">Fase A: Alle klientopdateringer, nyinstallationer og pilotgodkendelser bruger fortsat eksisterende spærrer. En kladde starter aldrig en installation.</Alert>
+          <Alert severity="warning">61B-1 · Kun planlægning. Plangennemgang, pause og genoptagelse er IKKE releasegodkendelse. Alle eksisterende gates for nyinstallation, fleet og cutover forbliver lukkede; der oprettes ingen deployments.</Alert>
           <Paper elevation={0} sx={{ p: 2, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
             <Stack spacing={1.3}>
               <Typography fontWeight={900}>Én fælles stabil version</Typography>
@@ -148,18 +159,18 @@ export default function ClientFlowReleaseAdministration() {
             <Box component="form" onSubmit={createDraft}>
               <Stack spacing={1.6}>
                 <Typography variant="h6" fontWeight={900}>Opret udrulningskladde</Typography>
-                <TextField select SelectProps={{ native: true }} label="Type" value={kind} onChange={(event) => { setKind(event.target.value); if (event.target.value === "pilot") setClientIds("3"); }}>
-                  <option value="pilot">Fysisk pilot (kun Viborg1)</option>
+                <TextField select SelectProps={{ native: true }} label="Type" value={kind} onChange={(event) => setKind(event.target.value)}>
+                  <option value="pilot">Pilotplan (ingen automatisk pilotgodkendelse)</option>
                   <option value="controlled">Kontrolleret bølge (planlægning)</option>
                 </TextField>
-                <TextField required label="Klient-ID'er, adskilt med komma" value={clientIds} onChange={(event) => setClientIds(event.target.value)} helperText="Højst 25. Pilot: præcis klient 3." />
-                <TextField label="Kildeversion" value="1.3.43" disabled />
+                <TextField required label="Klient-ID'er, adskilt med komma" value={clientIds} onChange={(event) => setClientIds(event.target.value)} helperText="Pilotplan: præcis ét aktivt klient-ID. Bølge: højst 25. Bekræft fysisk klient og installeret version før en senere separat pilot." />
+                <TextField required label="Forventet kildeversion" value={sourceVersion} onChange={(event) => setSourceVersion(event.target.value)} placeholder="f.eks. 1.3.43" helperText="Planoplysning; verificeres igen inden en fremtidig reel opdatering." inputProps={{ maxLength: 40 }} />
                 <TextField select SelectProps={{ native: true }} label="Kladde udløber efter" value={expiry} onChange={(event) => setExpiry(event.target.value)}>
                   <option value="1">1 time</option><option value="24">24 timer</option><option value="72">3 dage</option><option value="168">7 dage</option>
                 </TextField>
                 <TextField required multiline minRows={2} label="Begrundelse" value={reason} onChange={(event) => setReason(event.target.value)} inputProps={{ maxLength: 500 }} />
                 <TextField required type="password" label="Genbekræft adgangskode" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-                <Button type="submit" variant="contained" disabled={submitting || reason.trim().length < 12 || !password}>
+                <Button type="submit" variant="contained" disabled={submitting || reason.trim().length < 12 || !/^\d+\.\d+\.\d+$/.test(sourceVersion.trim()) || !password}>
                   {submitting ? "Gemmer …" : "Gem kladde – starter ingen installation"}
                 </Button>
               </Stack>
@@ -175,11 +186,23 @@ export default function ClientFlowReleaseAdministration() {
                   <Box>
                     <Typography fontWeight={800}>{wave.kind === "pilot" ? "Pilot" : "Bølge"} · {wave.client_ids.join(", ")}</Typography>
                     <Typography variant="body2" color="text.secondary">{wave.source_version} → 1.3.44 · Udløb: {formatDate(wave.expires_at)}</Typography>
+                    <Typography variant="caption" color="text.secondary">Revision {wave.revision} · {wave.reviewed_for_planning ? `Plan gennemgået ${formatDate(wave.reviewed_at)}` : "Afventer plangennemgang"} · Udrulning ikke autoriseret</Typography>
                     <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>{wave.reason}</Typography>
                   </Box>
                   <Stack spacing={1} alignItems="flex-end">
-                    <Chip label={wave.state === "draft" ? "Kun kladde" : wave.state} size="small" />
-                    {wave.state === "draft" && <Button disabled={submitting} size="small" color="warning" onClick={() => void cancelDraft(wave)}>Annuller kladde</Button>}
+                    <Chip label={wave.state === "cancelled" ? "Annulleret" : wave.state === "paused" ? "Plan pauset" : wave.reviewed_for_planning ? "Plan gennemgået – inaktiv" : "Kun kladde"} size="small" />
+                    {wave.state === "draft" && !wave.reviewed_for_planning && (
+                      <Button disabled={submitting} size="small" onClick={() => void decidePlan(wave, "review")}>Gennemgå plan – ikke installation</Button>
+                    )}
+                    {wave.state === "draft" && wave.reviewed_for_planning && (
+                      <Button disabled={submitting} size="small" onClick={() => void decidePlan(wave, "pause")}>Pause plan</Button>
+                    )}
+                    {wave.state === "paused" && (
+                      <Button disabled={submitting} size="small" onClick={() => void decidePlan(wave, "resume")}>Genoptag plan</Button>
+                    )}
+                    {["draft", "paused"].includes(wave.state) && (
+                      <Button disabled={submitting} size="small" color="warning" onClick={() => void decidePlan(wave, "cancel")}>Annuller plan</Button>
+                    )}
                   </Stack>
                 </Box>
               ))}
