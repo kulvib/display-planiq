@@ -85,7 +85,7 @@ class ClientFlowRolloutTarget(SQLModel, table=True):
     state: str = Field(default="draft", max_length=16)
     created_at: datetime
     expires_at: datetime
-    consumed_deployment_id: Optional[str] = Field(default=None, foreign_key="clientflow_deployment.id")
+    consumed_deployment_id: Optional[str] = Field(default=None, max_length=36, foreign_key="clientflow_deployment.id")
 
 
 class ClientFlowPhysicalAcceptance(SQLModel, table=True):
