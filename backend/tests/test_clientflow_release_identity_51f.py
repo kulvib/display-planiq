@@ -50,11 +50,12 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected["release_sequence"] == 1239
     assert historical_sequence == 1243
     assert catalog_sequence == 1245
-    assert live_catalog["latest_stable"] == "1.3.43"
-    assert live_catalog["releases"][0]["release_id"] == "clientflow-1.3.43-seq-1244"
-    assert live_catalog["releases"][1]["release_id"] == "clientflow-1.3.44-seq-1245"
-    assert live_catalog["releases"][1]["install_modes"] == ["in_place_update"]
-    assert live_catalog["releases"][1]["installable"] is False
+    assert live_catalog["latest_stable"] == live_catalog["default_install_version"] == "1.3.44"
+    assert len(live_catalog["releases"]) == 1
+    assert live_catalog["releases"][0]["release_id"] == "clientflow-1.3.44-seq-1245"
+    assert live_catalog["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
+    assert live_catalog["releases"][0]["installable"] is True
+    assert live_catalog["releases"][0]["update_allowed"] is True
     assert selected["release_id"] == f"clientflow-{selected['version']}-seq-{selected['release_sequence']}"
     assert selected["revision"] == selected["release_id"]
 

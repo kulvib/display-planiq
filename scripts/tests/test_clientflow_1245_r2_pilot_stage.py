@@ -16,6 +16,8 @@ FILES = (
     "backend/service1/clientflow_release_catalog.json",
     "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json",
     "backend/service1/clientflow_release_catalog_1245_pilot.stage.json",
+    "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
+    "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
     "backend/service1/clientflow_pilot_1245_approval.json",
     "backend/service1/clientflow_pilot_1245.py",
     "client/VERSION",
@@ -76,8 +78,8 @@ def test_r2_lock_tampering_fails(tmp_path, name, value):
 
 @pytest.mark.parametrize("change", [
     lambda x: x.update(catalog_sequence=1244),
-    lambda x: x.update(latest_stable="1.3.44"),
-    lambda x: x.update(default_install_version="1.3.44"),
+    lambda x: x.update(latest_stable="1.3.43"),
+    lambda x: x.update(default_install_version="1.3.43"),
     lambda x: x["releases"].append({"release_id": "clientflow-1.3.44-seq-1245"}),
 ])
 def test_live_catalog_must_equal_exact_pilot_staging(tmp_path, change):

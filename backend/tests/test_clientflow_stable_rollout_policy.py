@@ -48,19 +48,27 @@ def _args(**overrides) -> dict:
 
 
 @pytest.fixture
-def configured(monkeypatch):
+def configured(monkeypatch, tmp_path):
+    # Simulate post-physical-pilot acceptance; real checked-in record remains
+    # false and forbids fleet rollout even if operator env is set.
+    approval = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    assert approval["physical_pilot_accepted"] is False
+    approved = tmp_path / "fleet.json"
+    approved.write_text(json.dumps({**approval, "physical_pilot_accepted": True}), encoding="utf-8")
+    monkeypatch.setattr(rollout, "FLEET_ACCEPTANCE_PATH", approved)
     monkeypatch.setenv(rollout.ENABLED_FLAG, "1")
     monkeypatch.setenv(rollout.RELEASE_FLAG, "clientflow-1.3.44-seq-1245")
     monkeypatch.setenv(rollout.CLIENTS_FLAG, "3,7")
     monkeypatch.setenv(rollout.BUNDLE_FLAG, R2_LOCK["approved_bundle_sha256"])
 
 
-def test_real_current_catalog_retains_1244_standard():
+def test_real_current_catalog_has_one_stable_1245_but_no_fleet_authority():
     current = releases.load_catalog()
-    assert current["latest_stable"] == "1.3.43"
-    assert current["default_install_version"] == "1.3.43"
-    assert len(current["releases"]) == 2
-    assert current["releases"][1]["status"] == "supported"
+    assert current["latest_stable"] == "1.3.44"
+    assert current["default_install_version"] == "1.3.44"
+    assert len(current["releases"]) == 1
+    assert current["releases"][0]["status"] == "stable"
+    assert json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text())["physical_pilot_accepted"] is False
 
 
 def test_unpromoted_source_never_changes_existing_default(tmp_path, monkeypatch):
@@ -75,7 +83,7 @@ def test_unpromoted_source_never_changes_existing_default(tmp_path, monkeypatch)
     finally:
         releases.load_catalog.cache_clear()
     # Read-only synthetic test never changed the live catalog.
-    assert json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())["latest_stable"] == "1.3.43"
+    assert json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())["latest_stable"] == "1.3.44"
 
 
 def test_stable_requires_explicit_operator_flag(monkeypatch):
@@ -185,5 +193,35 @@ def test_stable_r2_provenance_rejects_well_formed_wrong_values(configured, field
 
 def test_stable_1245_rejects_unapproved_bundle_env_even_if_well_formed(configured, monkeypatch):
     monkeypatch.setenv(rollout.BUNDLE_FLAG, "f" * 64)
+    with pytest.raises(rollout.ClientFlowStableRolloutDenied):
+        rollout.require_stable_rollout(**_args())
+
+
+def test_fleet_rollout_blocked_even_with_operator_flags_until_physical_pilot(monkeypatch):
+    monkeypatch.setenv(rollout.ENABLED_FLAG, "1")
+    monkeypatch.setenv(rollout.RELEASE_FLAG, "clientflow-1.3.44-seq-1245")
+    monkeypatch.setenv(rollout.CLIENTS_FLAG, "3,7")
+    monkeypatch.setenv(rollout.BUNDLE_FLAG, R2_LOCK["approved_bundle_sha256"])
+    with pytest.raises(rollout.ClientFlowStableRolloutDenied, match="fysisk Viborg1-pilot"):
+        rollout.require_stable_rollout(**_args(artifact=_artifact()))
+
+
+def test_fleet_rollout_rejects_tampered_acceptance_even_when_marked_true(configured):
+    approval = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    for tamper in ("release_id", "approved_bundle_sha256", "approval_reference", "source_commit"):
+        altered = dict(approval)
+        altered[tamper] = "tampered"
+        rollout.FLEET_ACCEPTANCE_PATH.write_text(json.dumps(altered), encoding="utf-8")
+        with pytest.raises(rollout.ClientFlowStableRolloutDenied):
+            rollout.require_stable_rollout(**_args())
+    rollout.FLEET_ACCEPTANCE_PATH.unlink()
+    with pytest.raises(rollout.ClientFlowStableRolloutDenied):
+        rollout.require_stable_rollout(**_args())
+
+
+def test_non_boolean_fleet_acceptance_never_qualifies(configured):
+    acceptance = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    acceptance["physical_pilot_accepted"] = 1  # JSON number is not JSON true
+    rollout.FLEET_ACCEPTANCE_PATH.write_text(json.dumps(acceptance), encoding="utf-8")
     with pytest.raises(rollout.ClientFlowStableRolloutDenied):
         rollout.require_stable_rollout(**_args())

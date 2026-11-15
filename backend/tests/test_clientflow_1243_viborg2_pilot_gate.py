@@ -152,14 +152,12 @@ def test_source_and_catalog_do_not_enable_pilot_by_merging():
     assert source["releases"][-1]["rollback_allowed"] is False
     live = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
     assert live["catalog_sequence"] == 1245
-    assert live["latest_stable"] == live["default_install_version"] == "1.3.43"
-    assert [row["release_id"] for row in live["releases"]] == [
-        "clientflow-1.3.43-seq-1244", "clientflow-1.3.44-seq-1245",
-    ]
-    assert live["releases"][1]["install_modes"] == ["in_place_update"]
-    assert live["releases"][1]["installable"] is False
-    assert live["releases"][0]["install_modes"] == ["fresh_install"]
-    assert live["releases"][0]["update_allowed"] is False
+    assert live["latest_stable"] == live["default_install_version"] == "1.3.44"
+    assert [row["release_id"] for row in live["releases"]] == ["clientflow-1.3.44-seq-1245"]
+    assert live["releases"][0]["status"] == "stable"
+    assert live["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
+    assert live["releases"][0]["installable"] is True
+    assert live["releases"][0]["update_allowed"] is True
     assert live["releases"][0]["rollback_allowed"] is False
     router = (ROOT / "backend/service1/routers/clientflow_deployments.py").read_text()
     create = router[router.index("def create_clientflow_deployment("):router.index("@router.get(", router.index("def create_clientflow_deployment("))]

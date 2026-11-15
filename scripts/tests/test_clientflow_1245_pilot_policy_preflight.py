@@ -35,7 +35,8 @@ def test_read_only_pilot_policy_with_two_environment_gates():
     assert result["ready"], result
     assert len(result["checks"]) == 9
     assert result["approved"] is True
-    assert result["deployed"] is result["stable_promoted"] is False
+    assert result["deployed"] is False
+    assert result["stable_promoted"] is True
 
 
 def test_preflight_cannot_modify_any_files(tmp_path):
@@ -68,6 +69,6 @@ def test_preflight_fails_on_catalog_promotion(tmp_path):
     dst = _fixture(tmp_path)
     p = dst / "backend/service1/clientflow_release_catalog.json"
     cat = json.loads(p.read_text())
-    cat["latest_stable"] = cat["default_install_version"] = "1.3.44"
+    cat["latest_stable"] = cat["default_install_version"] = "1.3.43"
     p.write_text(json.dumps(cat))
     assert not inspect(dst)["ready"]

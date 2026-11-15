@@ -14,7 +14,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("flag", [None, "0"])
-def test_normal_operation_unaffected(monkeypatch, flag):
+def test_normal_operation_unaffected_after_physical_acceptance(monkeypatch, tmp_path, flag):
+    import json
+    from service1 import clientflow_stable_rollout as rollout
+    approved = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text())
+    assert approved["physical_pilot_accepted"] is False
+    accepted_file = tmp_path / "accepted.json"
+    accepted_file.write_text(json.dumps({**approved, "physical_pilot_accepted": True}))
+    monkeypatch.setattr(rollout, "FLEET_ACCEPTANCE_PATH", accepted_file)
     if flag is None:
         monkeypatch.delenv(FRESH_INSTALL_SUSPENDED_FLAG, raising=False)
     else:
@@ -49,3 +56,10 @@ def test_hold_cannot_be_activated_from_catalog_or_client_parameters():
     source = (ROOT / "backend/service1/clientflow_fresh_install_maintenance.py").read_text()
     assert 'os.environ.get(FRESH_INSTALL_SUSPENDED_FLAG, "0") != "0"' in source
     assert "CLIENTFLOW_FRESH_INSTALL_SUSPENDED" in source
+
+
+def test_fresh_install_blocked_by_physical_gate_even_if_maintenance_flag_absent(monkeypatch):
+    monkeypatch.delenv(FRESH_INSTALL_SUSPENDED_FLAG, raising=False)
+    with pytest.raises(HTTPException, match="fysisk pilotaccept") as exc:
+        require_fresh_install_not_suspended()
+    assert exc.value.status_code == 503

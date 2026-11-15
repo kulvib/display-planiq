@@ -24,22 +24,6 @@ BASELINE_SHA = "d3fdae8fb2a93f74431780f4aadde21625d10917e99cfbe6095ff2394e1e856b
 def inspect(repo: Path) -> dict:
     checks: dict[str, bool] = {}
 
-    def policy_bytes_without_pilot_prose(catalog: dict) -> dict:
-        """Permit edited human notes only in newest pilot; compare all policy fields.
-
-        Preserve exact 1244 baseline notes and all immutable release identity.
-        """
-        if not isinstance(catalog, dict):
-            return {}
-        copy = dict(catalog)
-        rows = copy.get("releases")
-        if not isinstance(rows, list) or len(rows) != 2 or not all(isinstance(x, dict) for x in rows):
-            return copy
-        safe_rows = [dict(item) for item in rows]
-        safe_rows[1].pop("notes", None)
-        copy["releases"] = safe_rows
-        return copy
-
     def load(path: str) -> dict:
         try:
             data = json.loads((repo / path).read_text(encoding="utf-8"))
@@ -50,6 +34,7 @@ def inspect(repo: Path) -> dict:
     active = load("backend/service1/clientflow_release_catalog.json")
     historic = load("scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json")
     staged = load("backend/service1/clientflow_release_catalog_1245_pilot.stage.json")
+    stable_stage = load("backend/service1/clientflow_release_catalog_1245_stable.stage.json")
     lock = load("backend/service1/clientflow_pilot_1245_approval.json")
     active_releases = active.get("releases")
     historic_releases = historic.get("releases")
@@ -109,12 +94,21 @@ def inspect(repo: Path) -> dict:
             "approval_reference": APPROVAL_REF,
         }
     )
-    checks["live_catalog_exact_staged_pilot"] = (
-        policy_bytes_without_pilot_prose(active) == policy_bytes_without_pilot_prose(staged)
-        and isinstance(active_releases, list)
-        and all(proof in " ".join(str(n) for n in active_releases[1].get("notes", []))
+    stable_rows = stable_stage.get("releases") or []
+    checks["live_catalog_exact_one_stable_1245"] = (
+        active.get("catalog_sequence") == stable_stage.get("catalog_sequence") == 1245
+        and active.get("latest_stable") == active.get("default_install_version") == "1.3.44"
+        and isinstance(active_releases, list) and len(active_releases) == 1
+        and isinstance(stable_rows, list) and len(stable_rows) == 1
+        and active_releases[0].get("release_id") == PILOT_RELEASE
+        and active_releases[0].get("status") == "stable"
+        and active_releases[0].get("install_modes") == ["fresh_install", "in_place_update"]
+        and active_releases[0].get("installable") is True
+        and active_releases[0].get("update_allowed") is True
+        and all(proof in " ".join(str(n) for n in active_releases[0].get("notes", []))
                 for proof in (APPROVED_SHA, SOURCE, APPROVAL_REF))
-        and [item.get("release_sequence") for item in active_releases] == [1244, 1245]
+        and {key: value for key, value in active_releases[0].items() if key != "notes"}
+        == {key: value for key, value in stable_rows[0].items() if key != "notes"}
     )
     checks["original_client_source_untouched"] = (
         (repo / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.44"
@@ -133,7 +127,7 @@ def inspect(repo: Path) -> dict:
         and 'os.environ.get(PILOT_ARM_FLAG) != PILOT_ARM_REFERENCE' in guard.read_text(encoding="utf-8")
     )
     return {
-        "stage": "R2_update_only_catalog_active_but_environment_disarmed",
+        "stage": "R2_one_stable_catalog_active_but_environment_disarmed",
         "ready": all(checks.values()),
         "pilot_authorized": False,
         "catalog_promoted": True,
