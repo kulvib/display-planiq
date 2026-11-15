@@ -1,21 +1,34 @@
-PlanIQ Display – rettelse af CI-schemafejl for migration 61a
-
-Kilde: kulvib/display-planiq
+PlanIQ Display 61a – CI-fix for Starlette TestClient / httpx2
+Kilde: Den uploadede ZIP display-planiq-feature-clientflow-release-admin-db-foundation-61a-20261115.zip
 Branch: feature/clientflow-release-admin-db-foundation-61a-20261115
-Fil: backend/service1/clientflow_release_admin_models.py
 
-Denne ZIP indeholder KUN den rettede fil, ikke hele repositoryet.
+ÆNDRET FIL:
+backend/tests/test_clientflow_release_admin_61a_http.py
 
-Rettelse:
-- Tilføj max_length=36 til ClientFlowRolloutTarget.consumed_deployment_id.
-- Matcher den eksisterende migration 61a og skemakontrakt VARCHAR(36).
-- Ingen andre kodeændringer, databasemigrationer eller konfigurationsændringer.
+FEJLÅRSAG:
+Testfilen importerede fastapi.testclient.TestClient. Repositoryets låste
+CI-afhængigheder indeholder ikke pakken httpx2, som den valgte Starlette-version
+kræver ved import af testklienten.
 
-Sådan anvendes filen:
-1. Pak ZIP'en ud.
-2. Gå til den nævnte branch i GitHub.
-3. Udskift backend/service1/clientflow_release_admin_models.py med filen herfra.
-4. Commit ændringen til branchen, og lad GitHub Actions køre alle CI-tests.
-5. Merge/deploy først, når alle obligatoriske kontroller er grønne.
+RETTELSE:
+Erstat Starlette/FastAPI TestClient i denne ene test med samme dependency-frie
+in-process ASGI-mønster, som allerede findes i:
+  backend/tests/test_clientflow_operational_http_integration.py
 
-Kontrol: Python-syntaks er kompileret lokalt; hele projektets CI er ikke kørt lokalt.
+De oprindelige fire 61a HTTP-tests er bevaret. Ingen produktionskilde,
+migrationer, databasekontrakter, testudeladelser, afhængighedsfiler
+eller CI-workflows er ændret.
+
+INSTALLATION:
+1. Pak denne ZIP ud.
+2. Upload/erstat backend/tests/test_clientflow_release_admin_61a_http.py
+   på ovenstående feature-branch med samme mappestruktur.
+3. Kør branchens fulde GitHub CI. Vent med merge og deployment til alle gates er grønne.
+
+UDFØRTE KONTROLLER:
+- Python-syntakskontrol af rettet testfil: BESTÅET
+- Repoets validate_dependency_contract.py: BESTÅET
+- Isoleret FastAPI/ASGI-smoketest: GET 200, POST 201, GET 404, POST 422: BESTÅET
+- Kontrol: fire eksisterende 61a tests bevaret og max_length=36-fix stadig i source: BESTÅET
+- Komplet 61a-test-suite/GitHub CI: IKKE KØRT. Korrekt versionslåst testmiljø
+  kunne ikke installeres lokalt pga. manglende netværks-/pakkeadgang.
