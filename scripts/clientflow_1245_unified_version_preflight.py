@@ -45,7 +45,6 @@ def inspect(repo: Path) -> dict:
     runtime = load("client/release/release-input.json")
     rows = active.get("releases") or []
     future = stage.get("releases") or []
-    pilot = rows[1] if len(rows) == 2 else {}
     stable = future[0] if len(future) == 1 else {}
     notes = " ".join(stable.get("notes") or []) if isinstance(stable, dict) else ""
 
