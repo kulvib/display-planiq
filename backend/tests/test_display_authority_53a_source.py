@@ -38,12 +38,13 @@ def test_53a_remains_reviewed_predecessor_under_53b_system_authority():
     assert 'enrollment_binding_revision.down_revision != REVIEWED_DISPLAY_OPERATIONAL_PARITY_REVISION' in runner
     assert 'REVIEWED_CALENDAR_DELIVERY_REVISION = "20260922_56a_calendar_rev"' in runner
     assert 'calendar_delivery_revision.down_revision != REVIEWED_ENROLLMENT_BINDING_REVISION' in runner
-    # Step 58A remains the reviewed historical anchor, but the current head
-    # has two independent, source-pinned successors: 59A -> 60A.
+    # Step 58A remains the reviewed historical anchor; 59A -> 60A -> 61A
+    # are successive, independently reviewed migrations.
     assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD != REVIEWED_MAINTENANCE_REVISION' in runner
     assert 'head != REVIEWED_RELEASE_ADMIN_61A_REVISION' in runner
     assert 'rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION' in runner
-    assert 'head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION' in runner
+    assert 'incident_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION' in runner
+    assert 'head_revision.down_revision != REVIEWED_INCIDENT_60A_REVISION' in runner
 
 
 def test_client_aggregate_no_longer_has_display_config_storage_fields():
