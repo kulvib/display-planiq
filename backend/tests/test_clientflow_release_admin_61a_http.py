@@ -307,14 +307,26 @@ def test_61b_expired_or_corrupted_targets_fail_closed(environment, monkeypatch):
     http, session = environment
     wave_id = http.post("/api/clientflow/release-administration/drafts", json=_payload()).json()["id"]
     target = session.exec(select(ClientFlowRolloutTarget)).one()
-    # A stolen / pre-approved / consumed target must never be reviewed.
-    target.state = "approved"
-    session.add(target)
-    session.commit()
-    assert _plan_action(http, wave_id, "review", 1).status_code == 409
+    # An unexpectedly authorized target is GLOBAL security drift, not an
+    # ordinary per-plan conflict: _bound_control must fail closed with 503.
+    for unexpected_state in ("approved", "consumed"):
+        target.state = unexpected_state
+        session.add(target)
+        session.commit()
+        refused = _plan_action(http, wave_id, "review", 1)
+        assert refused.status_code == 503, refused.text
+        assert http.get("/api/clientflow/release-administration").status_code == 503
+        wave = session.get(ClientFlowRolloutWave, wave_id)
+        assert wave.revision == 1 and wave.approved_at is None
+        assert not session.exec(select(AuditLog).where(
+            AuditLog.action == "clientflow_rollout_plan_reviewed"
+        )).all()
+    # After the drift is corrected, the read-only administration view works;
+    # expired plans must still be rejected as ordinary 409 conflicts.
     target.state = "draft"
     session.add(target)
     session.commit()
+    assert http.get("/api/clientflow/release-administration").status_code == 200
     from datetime import timedelta
     wave = session.get(ClientFlowRolloutWave, wave_id)
     now = route._utcnow()

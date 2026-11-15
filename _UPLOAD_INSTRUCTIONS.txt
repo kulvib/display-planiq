@@ -1,0 +1,16 @@
+PlanIQ Display 61B-1 – CI rettelse: global drift 503 vs 409
+
+Branch: feature/display-61b1-inert-release-planning-20261115
+
+Overskriv kun disse TO filer i roden af den aktuelle branch:
+  SHA256SUMS.txt
+  backend/tests/test_clientflow_release_admin_61a_http.py
+
+_UPLOAD_INSTRUCTIONS.txt er kun en leveringsvejledning og skal IKKE uploades til repo.
+
+Global uventet godkendelse af et klientmaal skal fail-close med HTTP 503.
+Konflikter i en enkelt plan, herunder udloebet plan, skal give HTTP 409.
+Testen kontrollerer begge drift-tilstande og at ingen godkendelse/audit skrives.
+Produktionskode, database, migrationshistorik, pipelines og sikkerhedsgates er uaendrede.
+
+Efter upload: koer GitHub CI, og vent med merge til alle tests er groenne.
