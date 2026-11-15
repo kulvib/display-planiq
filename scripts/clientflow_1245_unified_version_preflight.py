@@ -52,23 +52,22 @@ def inspect(repo: Path) -> dict:
         read("client/VERSION").strip() == "1.3.44"
         and runtime.get("release_sequence") == 1245
     )
-    checks["pilot_1244_remains_only_stable_default"] = (
+    checks["active_one_stable_1245"] = (
         active.get("catalog_sequence") == 1245
-        and active.get("latest_stable") == active.get("default_install_version") == "1.3.43"
-        and len(rows) == 2
-        and rows[0].get("release_id") == "clientflow-1.3.43-seq-1244"
+        and active.get("latest_stable") == active.get("default_install_version") == "1.3.44"
+        and len(rows) == 1
+        and rows[0].get("release_id") == RELEASE_ID
         and rows[0].get("status") == "stable"
-        and rows[0].get("install_modes") == ["fresh_install"]
-        and rows[1].get("release_id") == RELEASE_ID
-        and rows[1].get("status") == "supported"
-        and rows[1].get("install_modes") == ["in_place_update"]
-        and rows[1].get("installable") is False
-        and rows[1].get("update_allowed") is True
+        and rows[0].get("install_modes") == ["fresh_install", "in_place_update"]
+        and rows[0].get("installable") is True
+        and rows[0].get("update_allowed") is True
     )
-    checks["stable_template_not_active"] = (
-        stage != active
-        and stage.get("catalog_sequence") == 1245
+    checks["stage_matches_active_release_policy"] = (
+        stage.get("catalog_sequence") == 1245
         and stage.get("latest_stable") == stage.get("default_install_version") == "1.3.44"
+        and len(rows) == len(future) == 1
+        and {k: v for k, v in rows[0].items() if k != "notes"}
+            == {k: v for k, v in future[0].items() if k != "notes"}
     )
     checks["one_common_stable_release_for_both_paths"] = (
         len(future) == 1
@@ -123,16 +122,27 @@ def inspect(repo: Path) -> dict:
     checks["rollback_trust_disabled"] = load("client/release/rollback-trust.json") == {
         "schema_version": 1, "enabled": False, "keys": []
     }
+    fleet = load(BASE + "clientflow_1245_fleet_acceptance.json")
+    checks["fleet_remains_unaccepted_pending_physical_pilot"] = (
+        fleet == {
+            "schema_version": 1, "release_id": RELEASE_ID,
+            "physical_pilot_accepted": False,
+            "approved_bundle_sha256": SHA256,
+            "approval_reference": REFERENCE,
+            "source_commit": SOURCE,
+        }
+        and "FLEET_ACCEPTANCE_PATH" in read(BASE + "clientflow_stable_rollout.py")
+    )
     checks["stage_does_not_modify_client_or_installer"] = (
         stable.get("artifact_type") == "runtime_release"
         and stable.get("ubuntu_compatibility", {}).get("minimum_lts_version") == "26.04"
         and stable.get("requires_reboot") is True
     )
     return {
-        "phase": "1245_pilot_now_stable_promotion_after_physical_acceptance",
+        "phase": "1245_one_stable_catalog_pilot_rollout_separately_gated",
         "ready": all(checks.values()),
         "pilot_enabled_by_this_preflight": False,
-        "stable_promotion_applied": False,
+        "stable_promotion_applied": True,
         "fresh_install_hold_changed": False,
         "checks": checks,
     }

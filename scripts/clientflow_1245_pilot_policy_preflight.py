@@ -40,22 +40,17 @@ def inspect(repo: Path) -> dict:
         read("client/VERSION").strip() == "1.3.44"
         and source.get("release_sequence") == 1245
     )
-    checks["update_only_1245_catalog"] = (
+    checks["one_stable_1245_catalog"] = (
         cat.get("catalog_sequence") == 1245
-        and cat.get("latest_stable") == cat.get("default_install_version") == "1.3.43"
-        and isinstance(releases, list)
-        and len(releases) == 2
-        and isinstance(releases[0], dict)
-        and releases[0].get("release_id") == "clientflow-1.3.43-seq-1244"
+        and cat.get("latest_stable") == cat.get("default_install_version") == "1.3.44"
+        and isinstance(releases, list) and len(releases) == 1
+        and releases[0].get("release_id") == EXPECTED_RELEASE
         and releases[0].get("status") == "stable"
-        and releases[0].get("install_modes") == ["fresh_install"]
-        and releases[0].get("update_allowed") is False
-        and releases[1].get("release_id") == EXPECTED_RELEASE
-        and releases[1].get("install_modes") == ["in_place_update"]
-        and releases[1].get("status") == "supported"
-        and releases[1].get("installable") is False
-        and releases[1].get("update_allowed") is True
-        and releases[1].get("rollback_allowed") is False
+        and releases[0].get("install_modes") == ["fresh_install", "in_place_update"]
+        and releases[0].get("installable") is True
+        and releases[0].get("update_allowed") is True
+        and releases[0].get("rollback_allowed") is False
+        and releases[0].get("min_current_version") == releases[0].get("max_current_version") == "1.3.43"
     )
     checks["exact_approval_but_separate_pilot_flags"] = (
         lock.get("schema_version") == 1
@@ -101,10 +96,10 @@ def inspect(repo: Path) -> dict:
         )
     )
     return {
-        "phase": "pilot_catalog_ready_environment_disarmed",
+        "phase": "one_stable_1245_catalog_operator_disarmed",
         "approved": True,
         "deployed": False,
-        "stable_promoted": False,
+        "stable_promoted": True,
         "ready": all(checks.values()),
         "checks": checks,
     }

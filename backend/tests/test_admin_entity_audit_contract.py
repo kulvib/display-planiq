@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+import tempfile
 import unittest
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("ENVIRONMENT", "development")
@@ -162,6 +166,28 @@ def _request(method: str = "POST", path: str = "/api/admin-contract") -> Request
     )
     request.state.request_id = "batch4-audit-contract"
     return request
+
+
+@contextmanager
+def _accepted_1245_only_for_audit_contract():
+    """Exercise audit/transaction paths with a validated, test-only physical acceptance.
+
+    The checked-in acceptance remains false. The real fail-closed validator runs
+    against an isolated temporary copy carrying the exact R2 release identity.
+    """
+    from service1 import clientflow_stable_rollout as rollout
+
+    original = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    assert original["physical_pilot_accepted"] is False
+    with tempfile.TemporaryDirectory(prefix="cf1245-audit-acceptance-") as temp_dir:
+        accepted = Path(temp_dir) / "test-only-physical-acceptance.json"
+        accepted.write_text(
+            json.dumps({**original, "physical_pilot_accepted": True}),
+            encoding="utf-8",
+        )
+        with patch.object(rollout, "FLEET_ACCEPTANCE_PATH", accepted):
+            rollout.require_1245_physical_acceptance()
+            yield
 
 
 class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
@@ -370,7 +396,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
             "source_commit": "c" * 40,
         }
 
-        with patch(
+        with _accepted_1245_only_for_audit_contract(), patch(
             "service1.routers.enrollment.fresh_install_release_snapshot",
             return_value=fresh_install_snapshot,
         ), patch(
@@ -435,16 +461,17 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.session.commit()
         self.session.refresh(token)
 
-        response = claim_enrollment_token(
-            _request("POST", "/api/enrollment/claim"),
-            _canonical_enrollment_claim(
-                token=token,
-                code=code,
-                hostname="batch4-screen",
-                machine_id="batch4-machine-id",
-            ),
-            self.session,
-        )
+        with _accepted_1245_only_for_audit_contract():
+            response = claim_enrollment_token(
+                _request("POST", "/api/enrollment/claim"),
+                _canonical_enrollment_claim(
+                    token=token,
+                    code=code,
+                    hostname="batch4-screen",
+                    machine_id="batch4-machine-id",
+                ),
+                self.session,
+            )
 
         issuer_by_domain = {row.domain: row.token_issuer for row in response.credentials}
         self.assertEqual(issuer_by_domain["livestream"], "clientflow-api")
@@ -492,7 +519,7 @@ class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):
         self.session.refresh(token)
         token_id = token.id
 
-        with patch(
+        with _accepted_1245_only_for_audit_contract(), patch(
             "service1.routers.enrollment.add_audit_log",
             side_effect=RuntimeError("forced-audit-failure"),
         ):

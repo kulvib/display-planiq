@@ -1,3 +1,5 @@
+> **OPDATERET STATUS 15.11.2026:** Dette dokument beskriver den tidligere to-fasede implementeringsplan og er bevaret som historisk begrundelse. Den valgte plan er nu gennemført i den nye *kodekandidat*: Det aktive katalog har én stabil 1245-release til både nyinstallation og opdatering, men fysisk pilot og almindelig installation er fortsat spærret af særskilte låse. Se `docs/CLIENTFLOW_1245_ONE_STABLE_VERSION_ACTIVE_GATED_20261115.md` for den gældende tekniske kontrakt. Intet er aktiveret i produktion alene ved at oprette kildekandidaten.
+
 # PlanIQ Display – én stabil ClientFlow-version til nyinstallation og opdatering
 
 **Designbeslutning 2026-11-15:** Der skal være **præcis én gældende stabil ClientFlow-version** på tværs af nyinstallationer og kontrollerede opdateringer. En midlertidig pilot er ikke en anden standardversion. Eksisterende klienter kan fortsat køre en tidligere installeret version, indtil deres eksplicit godkendte opdatering er gennemført.

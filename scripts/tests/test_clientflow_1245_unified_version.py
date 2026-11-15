@@ -19,6 +19,7 @@ SOURCE_FILES = (
     "backend/service1/clientflow_release_catalog.json",
     "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
     "backend/service1/clientflow_pilot_1245_approval.json",
+    "backend/service1/clientflow_1245_fleet_acceptance.json",
     "backend/service1/clientflow_pilot_1245.py",
     "backend/service1/clientflow_stable_rollout.py",
     "backend/service1/clientflow_fresh_install_maintenance.py",
@@ -47,9 +48,9 @@ def _mutate(repo, name, change):
 def test_pilot_stage_and_single_stable_are_distinct_read_only_phases():
     result = inspect(ROOT)
     assert result["ready"], result
-    assert len(result["checks"]) == 12
+    assert len(result["checks"]) == 13
     assert result["pilot_enabled_by_this_preflight"] is False
-    assert result["stable_promotion_applied"] is False
+    assert result["stable_promotion_applied"] is True
     assert result["fresh_install_hold_changed"] is False
 
 
@@ -103,10 +104,11 @@ def test_single_stable_template_rejects_policy_mutations(tmp_path, monkeypatch, 
 
 @pytest.mark.parametrize("mutate_file,change", [
     ("backend/service1/clientflow_pilot_1245_approval.json", lambda d: d.update(approved_bundle_sha256="0" * 64)),
-    ("backend/service1/clientflow_release_catalog.json", lambda d: d.update(latest_stable="1.3.44")),
+    ("backend/service1/clientflow_release_catalog.json", lambda d: d.update(latest_stable="1.3.43")),
     ("backend/service1/clientflow_release_catalog_1245_stable.stage.json", lambda d: d.update(default_install_version="1.3.43")),
     ("backend/service1/clientflow_release_catalog_1245_stable.stage.json", lambda d: d["releases"][0].update(install_modes=["fresh_install"])),
     ("backend/service1/clientflow_release_catalog_1245_stable.stage.json", lambda d: d["releases"][0].update(rollback_allowed=True)),
+    ("backend/service1/clientflow_1245_fleet_acceptance.json", lambda d: d.update(physical_pilot_accepted=True)),
 ])
 def test_preflight_fails_on_mutated_release_identity(tmp_path, mutate_file, change):
     repo = _copy(tmp_path)

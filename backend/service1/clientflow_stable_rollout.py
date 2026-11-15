@@ -6,7 +6,9 @@ SHA256. The ordinary superadmin, row-lock and published-bundle checks remain.
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 import re
 from typing import Any
 
@@ -17,12 +19,34 @@ RELEASE_FLAG = "CLIENTFLOW_STABLE_ROLLOUT_RELEASE_ID"
 CLIENTS_FLAG = "CLIENTFLOW_STABLE_ROLLOUT_CLIENT_IDS"
 BUNDLE_FLAG = "CLIENTFLOW_STABLE_ROLLOUT_BUNDLE_SHA256"
 MAX_WAVE_CLIENTS = 25
+FLEET_ACCEPTANCE_PATH = Path(__file__).with_name("clientflow_1245_fleet_acceptance.json")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _IDS = re.compile(r"[1-9][0-9]*(?:,[1-9][0-9]*)*\Z")
 
 
 class ClientFlowStableRolloutDenied(ValueError):
     """A stable release rollout was not explicitly authorized for this client."""
+
+
+def require_1245_physical_acceptance() -> None:
+    """Reviewed physical-pilot gate for 1245 fleet rollout and fresh install.
+
+    Read-only and fail closed. A release label, an env flag or successful CI
+    alone cannot grant fleet/fresh-install authority before physical acceptance.
+    """
+    try:
+        acceptance = json.loads(FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ClientFlowStableRolloutDenied("1245 mangler fysisk pilotaccept") from exc
+    if not isinstance(acceptance, dict) or type(acceptance.get("physical_pilot_accepted")) is not bool or acceptance != {
+        "schema_version": 1,
+        "release_id": "clientflow-1.3.44-seq-1245",
+        "physical_pilot_accepted": True,
+        "approved_bundle_sha256": "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5",
+        "approval_reference": "CF-1.3.44-1245-20261114-0685710-ffe58332-R2",
+        "source_commit": "06857104952ebb40bf1394c423c01332d28f8d5e",
+    }:
+        raise ClientFlowStableRolloutDenied("1245 kræver særskilt godkendt fysisk Viborg1-pilot")
 
 
 def require_stable_rollout(
@@ -86,6 +110,7 @@ def require_stable_rollout(
     # candidate or approval reference cannot be authorized just by changing
     # an environment variable. Future releases retain the generic rollout rule.
     if release_id == "clientflow-1.3.44-seq-1245":
+        require_1245_physical_acceptance()
         from .clientflow_pilot_1245 import (
             _approved_lock, ClientFlowPilot1245Denied,
             SOURCE_COMMIT, CANDIDATE_SHA256, PILOT_ARM_REFERENCE,

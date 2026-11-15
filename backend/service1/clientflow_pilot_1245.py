@@ -1,4 +1,4 @@
-"""Fail-closed, exact-byte 1244 -> 1245 single-device pilot guard.
+"""Fail-closed, exact-byte 1244 -> stable 1245 single-device pilot guard.
 
 Source staging alone NEVER authorizes this pilot. The approval lock is checked
 from a versioned repository file and ships approved only after dedicated source promotion.
@@ -90,9 +90,9 @@ def require_pilot_1245(
         or release.get("release_id") != PILOT_RELEASE_ID
         or type(release.get("release_sequence")) is not int
         or release["release_sequence"] != PILOT_RELEASE_SEQUENCE
-        or release.get("install_modes") != ["in_place_update"]
-        or release.get("status") != "supported"
-        or release.get("installable") is not False
+        or release.get("install_modes") != ["fresh_install", "in_place_update"]
+        or release.get("status") != "stable"
+        or release.get("installable") is not True
         or release.get("update_allowed") is not True
         or release.get("rollback_allowed") is not False
         or release.get("requires_explicit_downgrade") is not False
@@ -100,7 +100,7 @@ def require_pilot_1245(
         or release.get("min_current_version") != PILOT_FROM_VERSION
         or release.get("max_current_version") != PILOT_FROM_VERSION
     ):
-        raise ClientFlowPilot1245Denied("1245-piloten kræver eksakt 1244 → 1245 og kun in-place-opdatering")
+        raise ClientFlowPilot1245Denied("1245-piloten kræver eksakt 1244 → 1245 på den ene stabile R2-release")
     if pre_first_activation_repair or confirm_downgrade:
         raise ClientFlowPilot1245Denied("1245-piloten tillader ikke repair, downgrade eller manuel rollback")
     if not isinstance(reason, str) or len(reason.strip()) < 12:

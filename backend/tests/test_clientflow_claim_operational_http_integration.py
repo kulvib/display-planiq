@@ -258,6 +258,22 @@ def claimed_operational_http(monkeypatch, tmp_path):
     # Test-only trust material; all keys are exactly 32 bytes after URL-safe decoding.
     key_b64 = base64.urlsafe_b64encode(bytes(range(32))).decode("ascii")
     monkeypatch.setenv("CLIENTFLOW_FRESH_INSTALL_AUTH_KEY_B64", key_b64)
+
+    # Test-only physical acceptance permits the REAL enrollment routes to
+    # exercise signed-binding, identity-isolation, and resume/approval flows.
+    # Never edit the checked-in acceptance file or bypass its validator.
+    from service1 import clientflow_stable_rollout as rollout
+
+    original_acceptance = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    assert original_acceptance["physical_pilot_accepted"] is False
+    isolated_acceptance = tmp_path / "test-only-1245-physical-acceptance.json"
+    isolated_acceptance.write_text(
+        json.dumps({**original_acceptance, "physical_pilot_accepted": True}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rollout, "FLEET_ACCEPTANCE_PATH", isolated_acceptance)
+    rollout.require_1245_physical_acceptance()
+
     monkeypatch.setenv("CLIENTFLOW_ROOT_TERMINAL_KEY_B64", key_b64)
     monkeypatch.setenv("CLIENTFLOW_ROOT_TERMINAL_KEY_ID", "claim-integration-root-key")
     monkeypatch.setenv("CLIENTFLOW_TERMINAL_AUTH_KEY_B64", key_b64)

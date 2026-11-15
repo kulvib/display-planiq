@@ -38,10 +38,10 @@ def inspect_source(repo: Path) -> dict:
             return {}
         copy = dict(catalog)
         rows = copy.get("releases")
-        if not isinstance(rows, list) or len(rows) != 2 or not all(isinstance(x, dict) for x in rows):
+        if not isinstance(rows, list) or len(rows) != 1 or not all(isinstance(x, dict) for x in rows):
             return copy
         cloned = [dict(row) for row in rows]
-        cloned[1].pop("notes", None)
+        cloned[0].pop("notes", None)
         copy["releases"] = cloned
         return copy
 
@@ -76,13 +76,23 @@ def inspect_source(repo: Path) -> dict:
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
     })
-    check("historical_1244_immutable_and_current_1245_update_only",
+    active = load("backend/service1/clientflow_release_catalog.json")
+    stable_stage = load("backend/service1/clientflow_release_catalog_1245_stable.stage.json")
+    stage_rows = stable_stage.get("releases") or []
+    active_rows = active.get("releases") or []
+    # Preserve the historical frozen two-entry pilot design as evidence, but
+    # require one common stable 1245 as the *current* selectable catalog.
+    check("historical_1244_immutable_and_current_1245_stable",
           not any(isinstance(item, dict) and item.get("release_sequence") == 1245
                   for item in (releases if isinstance(releases, list) else []))
-          and policy_bytes_without_pilot_prose(load("backend/service1/clientflow_release_catalog.json")) ==
-          policy_bytes_without_pilot_prose(load("backend/service1/clientflow_release_catalog_1245_pilot.stage.json"))
-          and all(proof in " ".join(str(n) for n in
-                      (load("backend/service1/clientflow_release_catalog.json").get("releases") or [{}, {}])[1].get("notes", []))
+          and active.get("catalog_sequence") == stable_stage.get("catalog_sequence") == 1245
+          and active.get("latest_stable") == active.get("default_install_version") == "1.3.44"
+          and len(active_rows) == len(stage_rows) == 1
+          and isinstance(active_rows[0], dict)
+          and policy_bytes_without_pilot_prose(active) == policy_bytes_without_pilot_prose(stable_stage)
+          and active_rows[0].get("status") == "stable"
+          and active_rows[0].get("install_modes") == ["fresh_install", "in_place_update"]
+          and all(proof in " ".join(str(n) for n in active_rows[0].get("notes", []))
                   for proof in (
                       "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5",
                       "CF-1.3.44-1245-20261114-0685710-ffe58332-R2",
@@ -117,7 +127,7 @@ def inspect_source(repo: Path) -> dict:
     )))
     return {
         "target": "clientflow-1.3.44-seq-1245",
-        "stage": "source_approved_pilot_catalog_ready",
+        "stage": "source_approved_single_stable_catalog_ready",
         "source_stage_ready": all(item["passed"] for item in checks),
         "approved": True,
         "published": True,

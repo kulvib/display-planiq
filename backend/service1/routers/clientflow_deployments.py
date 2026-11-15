@@ -7,6 +7,7 @@ history, cancellation and immutable release snapshots.
 from __future__ import annotations
 
 from datetime import datetime
+import os
 import re
 from typing import Optional
 
@@ -61,8 +62,16 @@ router = APIRouter(tags=["clientflow-deployments"])
 
 def _require_exact_scoped_pilot(*, release: dict, **kwargs) -> str:
     """Select one explicit pilot guard. Unknown release identity fails closed."""
-    # Stable rollout is separate from the pilot and always requires an
-    # explicit client allowlist, target release and approved SHA256.
+    # Same stable release TAR serves both paths; the pilot is an independent
+    # client-level authorization, not a second selectable release version.
+    # A partially armed pilot must fail closed instead of falling through to
+    # fleet rollout. Full fleet authority requires later physical acceptance.
+    if release.get("release_id") == "clientflow-1.3.44-seq-1245" and (
+        os.environ.get(PILOT_1245_FLAG) is not None
+        or os.environ.get("CLIENTFLOW_1245_PILOT_ARM_REFERENCE") is not None
+    ):
+        require_pilot_1245(release=release, **kwargs)
+        return PILOT_1245_FLAG
     if release.get("status") == "stable" and release.get("update_allowed") is True:
         require_stable_rollout(release=release, catalog=load_catalog(), **kwargs)
         return STABLE_ROLLOUT_FLAG

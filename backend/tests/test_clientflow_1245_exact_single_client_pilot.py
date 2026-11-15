@@ -23,9 +23,9 @@ def _future_release() -> dict:
         "version": "1.3.44", "client_version": "1.3.44",
         "release_id": pilot.PILOT_RELEASE_ID, "revision": pilot.PILOT_RELEASE_ID,
         "release_sequence": 1245, "artifact_type": "runtime_release",
-        "status": "supported", "installable": False, "update_allowed": True,
+        "status": "stable", "installable": True, "update_allowed": True,
         "rollback_allowed": False, "requires_explicit_downgrade": False,
-        "requires_reboot": True, "install_modes": ["in_place_update"],
+        "requires_reboot": True, "install_modes": ["fresh_install", "in_place_update"],
         "min_current_version": "1.3.43", "max_current_version": "1.3.43",
         "ubuntu_compatibility": {
             "policy": "ubuntu-desktop-lts-minimum", "minimum_lts_version": "26.04",
@@ -132,8 +132,8 @@ def test_wrong_or_missing_current_release_fails(fake_approval, current):
 @pytest.mark.parametrize("field,value", [
     ("version", "1.3.43"), ("release_id", "clientflow-1.3.43-seq-1244"),
     ("release_sequence", 1244), ("release_sequence", "1245"),
-    ("install_modes", ["fresh_install", "in_place_update"]),
-    ("status", "stable"), ("installable", True), ("update_allowed", False),
+    ("install_modes", ["in_place_update"]),
+    ("status", "supported"), ("installable", False), ("update_allowed", False),
     ("rollback_allowed", True), ("requires_explicit_downgrade", True),
     ("requires_reboot", False), ("min_current_version", "1.3.42"),
     ("max_current_version", "1.3.44"),
@@ -203,7 +203,9 @@ def test_simulated_approved_lock_accepts_only_exact_artifact(fake_approval):
 
 @pytest.fixture
 def staged_catalog(monkeypatch, tmp_path):
-    live = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text(encoding="utf-8"))
+    # Historical pilot selector continues to be tested, without using it as
+    # the active standard after promotion.
+    live = json.loads((ROOT / "backend/service1/clientflow_release_catalog_1245_pilot.stage.json").read_text(encoding="utf-8"))
     assert live["catalog_sequence"] == 1245 and len(live["releases"]) == 2
     catalog = deepcopy(live)
     assert catalog["releases"][1]["release_id"] == pilot.PILOT_RELEASE_ID
@@ -214,11 +216,13 @@ def staged_catalog(monkeypatch, tmp_path):
     releases.load_catalog.cache_clear()
 
 
-def test_current_catalog_is_pilot_only_and_not_stable_promoted():
+def test_current_catalog_is_one_stable_1245_with_two_install_modes():
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
     assert catalog["catalog_sequence"] == 1245
-    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.43"
-    assert [r["release_sequence"] for r in catalog["releases"]] == [1244, 1245]
+    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.44"
+    assert [r["release_sequence"] for r in catalog["releases"]] == [1245]
+    assert catalog["releases"][0]["status"] == "stable"
+    assert catalog["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
 
 
 def test_future_exact_update_only_catalog_is_allowed_without_changing_default(staged_catalog):
@@ -253,3 +257,12 @@ def test_future_catalog_refuses_broadened_authority(staged_catalog, mutation):
     path.write_text(json.dumps(catalog), encoding="utf-8")
     with pytest.raises(releases.ClientFlowCatalogError):
         releases.load_catalog()
+
+
+def test_same_stable_1245_route_selects_supervised_pilot_before_fleet_policy():
+    source = (ROOT / "backend/service1/routers/clientflow_deployments.py").read_text()
+    scoped = source.split("def _require_exact_scoped_pilot(", 1)[1].split("class ClientFlowDeploymentCreate", 1)[0]
+    assert 'os.environ.get(PILOT_1245_FLAG) is not None' in scoped
+    assert 'os.environ.get("CLIENTFLOW_1245_PILOT_ARM_REFERENCE") is not None' in scoped
+    assert scoped.index("require_pilot_1245(release=release, **kwargs)") < scoped.index("require_stable_rollout(release=release")
+    # No catalog-only automatic installation; both guards still wrap the same release.

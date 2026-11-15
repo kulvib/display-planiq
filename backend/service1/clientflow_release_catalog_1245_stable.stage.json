@@ -35,7 +35,7 @@
         "requires_platform_preflight": true
       },
       "notes": [
-        "FUTURE STABLE PROMOTION TEMPLATE ONLY. This file is not the active catalog; do not install or promote 1245 until physical Viborg1 pilot, recovery, GitHub CI and operator review all pass.",
+        "REFERENCE STABLE-CATALOG TEMPLATE ONLY. The active catalog now uses the same single stable 1245 release policy; this archived template is not a deployment authorization. Physical pilot and recovery acceptance remain outstanding.",
         "One single stable ClientFlow release 1.3.44/1245 for both fresh installation and in-place update. The currently installed previous version on existing devices is not a second stable target.",
         "Exact approved R2 TAR: SHA256 28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5; size 223610880; source 06857104952ebb40bf1394c423c01332d28f8d5e; candidate ffe58332c8e3b263e00f299e363dc95ecb9ac7e0176fd51888be98fecad9bd97; fresh-installer fc843b6b37772996ecbfa67ff08a0e6f372443bf7d6104ca28d616855bc5737a; approval CF-1.3.44-1245-20261114-0685710-ffe58332-R2.",
         "Store retains 1.3.43/1244 as protected recovery artifact, but it is not selectable as a second fresh-install or update target. No automatic client upgrade, manual rollback or downgrade. Fresh-installs remain suspended by the separate maintenance flag until explicitly released; stable in-place rollout requires explicit allowlisted manual deployment."
