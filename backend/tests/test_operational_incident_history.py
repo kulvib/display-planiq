@@ -121,7 +121,7 @@ def test_60a_schema_fingerprint_and_frozen_59a_predecessor():
     import run_migrations as runner
     migration = ROOT / "backend/migrations/versions/20261024_60a_operational_incidents.py"
     assert hashlib.sha256(migration.read_bytes()).hexdigest() == runner.REVIEWED_INCIDENT_60A_SOURCE_SHA256
-    assert contract.EXPECTED_HEAD_REVISION == runner.REVIEWED_INCIDENT_60A_REVISION
+    assert contract.EXPECTED_HEAD_REVISION == runner.REVIEWED_RELEASE_ADMIN_61A_REVISION
     assert runner.REVIEWED_ROLLBACK_59A_REVISION == "20261023_59a_rollback"
     assert contract.EXPECTED_TABLES >= runner.INCIDENT_60A_TABLES
     assert contract.EXPECTED_TABLES >= runner.ROLLBACK_59A_TABLES

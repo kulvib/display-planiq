@@ -23,7 +23,7 @@ def _contract():
 
 def test_signed_rollback_schema_contract_is_exact_and_frozen():
     contract = _contract()
-    assert contract.EXPECTED_HEAD_REVISION == '20261024_60a_incidents'
+    assert contract.EXPECTED_HEAD_REVISION == '20261115_61a_cf_release_admin'
     new = {'clientflow_rollback_permit', 'clientflow_rollback_event'}
     assert new <= contract.EXPECTED_TABLES
     assert set(contract.EXPECTED_COLUMNS['clientflow_rollback_permit']) == {

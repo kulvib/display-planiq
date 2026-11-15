@@ -162,12 +162,59 @@ def _require_reviewed_60a_extension() -> None:
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
     except OSError as exc:
         raise RuntimeError("Reviewed 60A-migration mangler") from exc
-    if EXPECTED_HEAD_REVISION != REVIEWED_INCIDENT_60A_REVISION or digest != REVIEWED_INCIDENT_60A_SOURCE_SHA256:
+    if digest != REVIEWED_INCIDENT_60A_SOURCE_SHA256:
         raise RuntimeError("60A-udvidelsen er ikke gennemgået for den aktuelle Alembic-kæde")
 
 
+
+# 61A extends – never edits – the frozen 59A/60A legacy contracts.
+REVIEWED_RELEASE_ADMIN_61A_REVISION = "20261115_61a_cf_release_admin"
+REVIEWED_RELEASE_ADMIN_61A_SOURCE_SHA256 = "4e94cddc81ae8d2d9f89b647f616ff323c858619f4c892249f77d01e2368cb64"
+RELEASE_ADMIN_61A_TABLES = frozenset({"clientflow_release_control", "clientflow_rollout_wave", "clientflow_rollout_target", "clientflow_physical_acceptance"})
+RELEASE_ADMIN_61A_CONSTRAINTS = frozenset({
+    "clientflow_release_control_pkey", "clientflow_release_control_updated_by_user_id_fkey",
+    "ck_clientflow_release_control_singleton", "ck_clientflow_release_control_revision", "ck_clientflow_release_control_sha256",
+    "clientflow_rollout_wave_pkey", "clientflow_rollout_wave_created_by_user_id_fkey",
+    "clientflow_rollout_wave_approved_by_user_id_fkey", "ck_clientflow_rollout_wave_kind",
+    "ck_clientflow_rollout_wave_state", "ck_clientflow_rollout_wave_sha256", "ck_clientflow_rollout_wave_expiry",
+    "ck_clientflow_rollout_wave_revision", "clientflow_rollout_target_pkey",
+    "clientflow_rollout_target_wave_id_fkey", "clientflow_rollout_target_client_id_fkey",
+    "clientflow_rollout_target_consumed_deployment_id_fkey", "uq_clientflow_rollout_target_wave_client",
+    "ck_clientflow_rollout_target_state", "ck_clientflow_rollout_target_expiry",
+    "clientflow_physical_acceptance_pkey", "clientflow_physical_acceptance_client_id_fkey",
+    "clientflow_physical_acceptance_actor_user_id_fkey", "ck_clientflow_physical_acceptance_sha256",
+    "ck_clientflow_physical_acceptance_decision",
+})
+RELEASE_ADMIN_61A_INDEXES = frozenset({
+    "clientflow_release_control_pkey", "clientflow_rollout_wave_pkey", "ix_clientflow_rollout_wave_state_expiry",
+    "ix_clientflow_rollout_wave_created", "clientflow_rollout_target_pkey",
+    "uq_clientflow_rollout_target_wave_client", "ix_clientflow_rollout_target_client_state",
+    "ix_clientflow_rollout_target_wave", "uq_clientflow_rollout_target_active_client",
+    "clientflow_physical_acceptance_pkey", "ix_clientflow_physical_acceptance_release",
+})
+
+def _require_reviewed_61a_extension():
+    source = ROOT / "migrations/versions/20261115_61a_clientflow_release_admin.py"
+    try:
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise RuntimeError("Reviewed 61A-migration mangler") from exc
+    if EXPECTED_HEAD_REVISION != REVIEWED_RELEASE_ADMIN_61A_REVISION or digest != REVIEWED_RELEASE_ADMIN_61A_SOURCE_SHA256:
+        raise RuntimeError("61A releaseadministration-migration matcher ikke reviewed kilde")
+
+def _without_release_admin_61a_schema(columns, constraints, indexes):
+    _require_reviewed_61a_extension()
+    if not RELEASE_ADMIN_61A_TABLES <= columns.keys() or not RELEASE_ADMIN_61A_CONSTRAINTS <= constraints.keys() or not RELEASE_ADMIN_61A_INDEXES <= indexes.keys():
+        raise RuntimeError("61A mangler i head-skema")
+    return (
+        {n: dict(v) for n, v in columns.items() if n not in RELEASE_ADMIN_61A_TABLES},
+        {n: v for n, v in constraints.items() if n not in RELEASE_ADMIN_61A_CONSTRAINTS},
+        {n: v for n, v in indexes.items() if n not in RELEASE_ADMIN_61A_INDEXES},
+    )
+
 def _without_incident_60a_schema(columns, constraints, indexes):
     _require_reviewed_60a_extension()
+    columns, constraints, indexes = _without_release_admin_61a_schema(columns, constraints, indexes)
     if not INCIDENT_60A_TABLES <= columns.keys() or not INCIDENT_60A_CONSTRAINTS <= constraints.keys() or not INCIDENT_60A_INDEXES <= indexes.keys():
         raise RuntimeError("Head-kontrakten mangler Step 60A-objekter")
     return (
@@ -186,8 +233,7 @@ def _require_reviewed_59a_extension() -> None:
     except OSError as exc:
         raise RuntimeError("Reviewed 59A-migration mangler") from exc
     if (
-        EXPECTED_HEAD_REVISION != REVIEWED_INCIDENT_60A_REVISION
-        or digest != REVIEWED_ROLLBACK_59A_SOURCE_SHA256
+        digest != REVIEWED_ROLLBACK_59A_SOURCE_SHA256
     ):
         raise RuntimeError("59A-udvidelsen er ikke gennemgået for den aktuelle Alembic-kæde")
 
@@ -1035,6 +1081,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
     cfg, script, head = _alembic_config(connection)
     _require_reviewed_59a_extension()
     _require_reviewed_60a_extension()
+    _require_reviewed_61a_extension()
     current_heads = MigrationContext.configure(connection).get_current_heads()
     if len(current_heads) > 1:
         raise RuntimeError(f"Databasen har flere Alembic-heads: {current_heads}")
@@ -1083,7 +1130,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 )
             _require_reviewed_59a_extension()
             _require_reviewed_60a_extension()
-            if head != REVIEWED_INCIDENT_60A_REVISION:
+            if head != REVIEWED_RELEASE_ADMIN_61A_REVISION:
                 raise RuntimeError(
                     "Legacy-revision reconciliation er ikke gennemgået for dette repo-head"
                 )
@@ -1110,6 +1157,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
             impersonation_revision = script.get_revision(REVIEWED_IMPERSONATION_REVISION)
             maintenance_revision = script.get_revision(REVIEWED_MAINTENANCE_REVISION)
             head_revision = script.get_revision(head)
+            incident_revision = script.get_revision(REVIEWED_INCIDENT_60A_REVISION)
             rollback_revision = script.get_revision(REVIEWED_ROLLBACK_59A_REVISION)
             if any(
                 item is None
@@ -1120,7 +1168,7 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                     database_contract_revision, canonical_foundations_revision, clientflow_deployment_revision,
                     clientflow_update_auth_revision, client_liveness_revision, display_authority_revision,
                     system_authority_revision, display_operational_parity_revision, enrollment_binding_revision,
-                    calendar_delivery_revision, impersonation_revision, maintenance_revision, rollback_revision, head_revision,
+                    calendar_delivery_revision, impersonation_revision, maintenance_revision, rollback_revision, incident_revision, head_revision,
                 )
             ):
                 raise RuntimeError("Legacy-revision reconciliation mangler kendte Alembic-noder")
@@ -1147,7 +1195,8 @@ def _upgrade_and_verify(connection) -> tuple[str | None, str, dict[str, int], bo
                 or impersonation_revision.down_revision != REVIEWED_CALENDAR_DELIVERY_REVISION
                 or maintenance_revision.down_revision != REVIEWED_IMPERSONATION_REVISION
                 or rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION
-                or head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION
+                or incident_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION
+                or head_revision.down_revision != REVIEWED_INCIDENT_60A_REVISION
             ):
                 raise RuntimeError(
                     "Legacy-revision reconciliation kræver den reviewed Step 39A -> 40A -> 41A -> 42A -> 43A -> 44A -> 45A -> 46A -> 47A -> 48A -> 49A -> 50A -> 51A -> 51B -> 52A -> 53A -> 53B -> 54A -> 55A -> 56A -> 57A -> 58A-kæde"

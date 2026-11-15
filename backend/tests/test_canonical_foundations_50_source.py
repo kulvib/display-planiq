@@ -107,7 +107,7 @@ def test_rd_capture_user_is_rendered_from_kiosk_user_not_frozen_hostname():
 def test_final_schema_contract_head_is_step50():
     contract = read("scripts/display_schema_contract.py")
     runner = read("scripts/run_migrations.py")
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261024_60a_incidents"'
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261115_61a_cf_release_admin"'
     assert 'REVIEWED_CANONICAL_FOUNDATIONS_REVISION = "20260819_50a_canonical"' in runner
 
 
