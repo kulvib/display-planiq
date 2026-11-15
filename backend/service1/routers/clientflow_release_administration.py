@@ -1,8 +1,9 @@
-"""Default-closed ClientFlow release administration foundation (phase A).
+"""Default-closed ClientFlow planning (61B-1).
 
-The controls are deliberately NOT wired into deployment/fresh-install routes yet.
-No HTTP endpoint approves a rollout, flips cutover, or records physical acceptance.
-An existing Render pilot flag is still needed until the separately audited cutover.
+Review, pause and cancellation are strictly PLAN intentions: target rows are
+never approved or consumed here, and no deployment/fresh-install handler
+reads these decisions as authorization. Gates stay closed until a separately
+reviewed physical pilot and cutover.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from ..clientflow_release_admin_models import (
     ClientFlowReleaseControl,
     ClientFlowRolloutTarget,
     ClientFlowRolloutWave,
+    ClientFlowPhysicalAcceptance,
 )
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog
 from ..db import get_session
@@ -73,6 +75,18 @@ def _bound_control(session: Session, *, lock: bool = False) -> ClientFlowRelease
         or row.fleet_open is not False
     ):
         raise HTTPException(status_code=503, detail="Releaseadministrationen er endnu ikke godkendt til cutover")
+    # Do not conceal a drifted/authorized state behind a hardcoded false in
+    # the admin UI. This remains a strictly inert planning control plane.
+    if (
+        session.exec(select(ClientFlowRolloutTarget.id).where(
+            ClientFlowRolloutTarget.state.in_(["approved", "consumed"])
+        ).limit(1)).first() is not None
+        or session.exec(select(ClientFlowRolloutWave.id).where(
+            ClientFlowRolloutWave.state.in_(["approved", "running", "completed", "failed"])
+        ).limit(1)).first() is not None
+        or session.exec(select(ClientFlowPhysicalAcceptance.id).limit(1)).first() is not None
+    ):
+        raise HTTPException(status_code=503, detail="Uventet udrulningsautorisation eller pilotaccept; planlægning spærret")
     return row
 
 
@@ -107,7 +121,7 @@ def _reauth(request: Request, session: Session, user: User, password: str) -> No
 class RolloutDraftCreate(BaseModel):
     kind: str = Field(pattern="^(pilot|controlled)$")
     client_ids: list[int] = Field(min_length=1, max_length=25)
-    source_version: str = Field(min_length=5, max_length=40)
+    source_version: str = Field(min_length=5, max_length=40, pattern=r"^\d+\.\d+\.\d+$")
     reason: str = Field(min_length=12, max_length=500)
     expires_in_hours: int = Field(ge=1, le=168)
     expected_revision: int = Field(ge=1)
@@ -129,7 +143,7 @@ class RolloutDraftCreate(BaseModel):
         return values
 
 
-class CancelDraft(BaseModel):
+class PlanDecision(BaseModel):
     password: str = Field(min_length=1, max_length=256)
     expected_revision: int = Field(ge=1)
 
@@ -141,6 +155,10 @@ def _wave_json(row: ClientFlowRolloutWave, client_ids: list[int]) -> dict:
         "source_version": row.source_version, "client_ids": client_ids,
         "reason": row.reason, "created_at": row.created_at,
         "expires_at": row.expires_at, "revision": row.revision,
+        "reviewed_for_planning": row.approved_at is not None,
+        "reviewed_at": row.approved_at,
+        # A reviewed plan is NEVER deployment authorization (target stays draft).
+        "deployment_authorized": False,
     }
 
 
@@ -171,7 +189,8 @@ def read_release_administration(
     for target in targets:
         ids.setdefault(target.wave_id, []).append(target.client_id)
     return {
-        "phase": "additive_draft_only",
+        "phase": "additive_draft_only",  # 61A compatibility: all targets remain drafts.
+        "planning_review_available": True,
         "authorization_active": False,
         "stable_release_id": control.stable_release_id,
         "stable_version": "1.3.44",
@@ -198,15 +217,10 @@ def create_rollout_draft(
     control = _bound_control(session, lock=True)
     if control.revision != payload.expected_revision:
         raise HTTPException(status_code=409, detail="Releasepolitikken har ændret sig; hent den igen")
-    # Drafts never authorize deployment. Before physical acceptance the only
-    # permissible draft pilot is Viborg1 1244->1245; fleet plans may be drafted
-    # but cannot be approved or consumed in this phase.
-    if payload.kind == "pilot" and payload.client_ids != [3]:
-        raise HTTPException(status_code=409, detail="Første pilot er låst til Viborg1 (klient-ID 3)")
-    if payload.kind == "pilot" and payload.source_version != "1.3.43":
-        raise HTTPException(status_code=409, detail="Viborg1-pilot kræver kilderelease 1244")
-    if payload.kind == "controlled" and len(payload.client_ids) > 25:
-        raise HTTPException(status_code=400, detail="Maksimalt 25 klienter per bølge")
+    # All candidates are only PLANS. No hard-coded pilot identity: operators
+    # must verify the actual physical device at the separate pilot gate.
+    if payload.kind == "pilot" and len(payload.client_ids) != 1:
+        raise HTTPException(status_code=409, detail="En pilotplan må kun have én klient")
     for client_id in payload.client_ids:
         client = session.get(Client, client_id)
         if client is None or client.status != "approved" or client.deleted_at is not None:
@@ -239,33 +253,130 @@ def create_rollout_draft(
     return _wave_json(wave, payload.client_ids)
 
 
-@router.post("/drafts/{wave_id}/cancel")
-def cancel_rollout_draft(
-    wave_id: str, payload: CancelDraft, request: Request, response: Response,
+def _locked_plan(session: Session, wave_id: str, expected_revision: int, control: ClientFlowReleaseControl):
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", wave_id):
+        raise HTTPException(status_code=404, detail="Udrulningsplanen findes ikke")
+    wave = session.exec(
+        select(ClientFlowRolloutWave).where(ClientFlowRolloutWave.id == wave_id).with_for_update()
+    ).first()
+    if wave is None:
+        raise HTTPException(status_code=404, detail="Udrulningsplanen findes ikke")
+    if wave.revision != expected_revision:
+        raise HTTPException(status_code=409, detail="Udrulningsplanen er ændret; hent den igen")
+    if wave.release_id != control.stable_release_id or wave.bundle_sha256 != control.stable_bundle_sha256:
+        raise HTTPException(status_code=409, detail="Planens release afviger fra låst stabil version")
+    targets = session.exec(
+        select(ClientFlowRolloutTarget)
+        .where(ClientFlowRolloutTarget.wave_id == wave.id)
+        .order_by(ClientFlowRolloutTarget.client_id)
+        .with_for_update()
+    ).all()
+    if not targets or any(t.state != "draft" or t.consumed_deployment_id is not None for t in targets):
+        raise HTTPException(status_code=409, detail="Planmålene er ikke længere inaktive kladder")
+    return wave, targets
+
+
+def _plan_audit(session: Session, request: Request, user: User, wave: ClientFlowRolloutWave, action: str, targets: list[ClientFlowRolloutTarget]):
+    add_audit_log(
+        session, action=action, request=request,
+        actor=user, entity_type="clientflow_rollout_wave", entity_label=wave.id,
+        severity="warning", details={
+            "wave_id": wave.id, "revision": wave.revision,
+            "state": wave.state, "client_ids": [t.client_id for t in targets],
+            "release_id": wave.release_id, "bundle_sha256": wave.bundle_sha256,
+            "planning_only": True, "deployment_authorized": False,
+        },
+    )
+
+
+@router.post("/drafts/{wave_id}/review")
+def review_rollout_plan(
+    wave_id: str, payload: PlanDecision, request: Request, response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_superadmin_user),
+):
+    """Record review intent without creating approved targets or permissions."""
+    _no_store(response)
+    _reauth(request, session, user, payload.password)
+    control = _bound_control(session, lock=True)
+    wave, targets = _locked_plan(session, wave_id, payload.expected_revision, control)
+    if wave.state != "draft" or wave.approved_at is not None or wave.expires_at <= _utcnow():
+        raise HTTPException(status_code=409, detail="Kun en aktiv, ikke-gennemgået kladde kan gennemgås")
+    for target in targets:
+        client = session.get(Client, target.client_id)
+        if client is None or client.status != "approved" or client.deleted_at is not None:
+            raise HTTPException(status_code=409, detail="Klientens godkendelse eller status er ændret")
+    # Deliberately keep wave.state='draft' and target.state='draft'.
+    # Existing 61A cutover and live deployments never authorize this review.
+    wave.approved_at = _utcnow()
+    wave.approved_by_user_id = int(user.id)
+    wave.revision += 1
+    _plan_audit(session, request, user, wave, "clientflow_rollout_plan_reviewed", targets)
+    session.commit()
+    return {"id": wave.id, "state": wave.state, "revision": wave.revision,
+            "reviewed_for_planning": True, "deployment_authorized": False}
+
+
+@router.post("/drafts/{wave_id}/pause")
+def pause_rollout_plan(
+    wave_id: str, payload: PlanDecision, request: Request, response: Response,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_superadmin_user),
 ):
     _no_store(response)
     _reauth(request, session, user, payload.password)
-    _bound_control(session, lock=True)
-    wave = session.exec(
-        select(ClientFlowRolloutWave).where(ClientFlowRolloutWave.id == wave_id).with_for_update()
-    ).first()
-    if wave is None:
-        raise HTTPException(status_code=404, detail="Udrulningskladde findes ikke")
-    if wave.state != "draft" or wave.revision != payload.expected_revision:
-        raise HTTPException(status_code=409, detail="Kun en uændret kladde kan annulleres")
-    targets = session.exec(select(ClientFlowRolloutTarget).where(ClientFlowRolloutTarget.wave_id == wave.id)).all()
-    if any(target.state != "draft" for target in targets):
-        raise HTTPException(status_code=409, detail="Kladde indeholder ikke-draft autorisationer")
+    control = _bound_control(session, lock=True)
+    wave, targets = _locked_plan(session, wave_id, payload.expected_revision, control)
+    if wave.state != "draft" or wave.approved_at is None or wave.expires_at <= _utcnow():
+        raise HTTPException(status_code=409, detail="Kun en gennemgået, aktiv plan kan sættes på pause")
+    wave.state = "paused"
+    wave.revision += 1
+    _plan_audit(session, request, user, wave, "clientflow_rollout_plan_paused", targets)
+    session.commit()
+    return {"id": wave.id, "state": "paused", "revision": wave.revision, "deployment_authorized": False}
+
+
+@router.post("/drafts/{wave_id}/resume")
+def resume_rollout_plan(
+    wave_id: str, payload: PlanDecision, request: Request, response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_superadmin_user),
+):
+    _no_store(response)
+    _reauth(request, session, user, payload.password)
+    control = _bound_control(session, lock=True)
+    wave, targets = _locked_plan(session, wave_id, payload.expected_revision, control)
+    if wave.state != "paused" or wave.approved_at is None or wave.expires_at <= _utcnow():
+        raise HTTPException(status_code=409, detail="Kun en gyldig, pauset plan kan genoptages")
+    for target in targets:
+        client = session.get(Client, target.client_id)
+        if client is None or client.status != "approved" or client.deleted_at is not None:
+            raise HTTPException(status_code=409, detail="Klientens godkendelse eller status er ændret")
+    wave.state = "draft"  # NEVER approved: this is still an inert reviewed plan.
+    wave.revision += 1
+    _plan_audit(session, request, user, wave, "clientflow_rollout_plan_resumed", targets)
+    session.commit()
+    return {"id": wave.id, "state": "draft", "revision": wave.revision,
+            "reviewed_for_planning": True, "deployment_authorized": False}
+
+
+@router.post("/drafts/{wave_id}/cancel")
+def cancel_rollout_draft(
+    wave_id: str, payload: PlanDecision, request: Request, response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_superadmin_user),
+):
+    _no_store(response)
+    _reauth(request, session, user, payload.password)
+    control = _bound_control(session, lock=True)
+    wave, targets = _locked_plan(session, wave_id, payload.expected_revision, control)
+    if wave.state not in ("draft", "paused"):
+        raise HTTPException(status_code=409, detail="Kun en inaktiv, uforbrugt plan kan annulleres")
     wave.state = "cancelled"
     wave.revision += 1
     for target in targets:
         target.state = "revoked"
-    add_audit_log(
-        session, action="clientflow_rollout_draft_cancelled", request=request,
-        actor=user, entity_type="clientflow_rollout_wave", entity_label=wave.id,
-        severity="warning", details={"wave_id": wave.id, "new_state": "cancelled"},
-    )
+    _plan_audit(session, request, user, wave, "clientflow_rollout_draft_cancelled", targets)
     session.commit()
-    return {"id": wave.id, "state": "cancelled", "revision": wave.revision}
+    return {"id": wave.id, "state": "cancelled", "revision": wave.revision,
+            "deployment_authorized": False}

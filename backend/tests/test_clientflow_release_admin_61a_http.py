@@ -18,6 +18,7 @@ from sqlmodel import SQLModel, Session, create_engine, select
 
 from service1.clientflow_release_admin_models import (
     ClientFlowReleaseControl, ClientFlowRolloutTarget, ClientFlowRolloutWave,
+    ClientFlowPhysicalAcceptance,
 )
 from service1.db import get_session
 from service1.auth import get_current_superadmin_user
@@ -140,6 +141,7 @@ def environment(monkeypatch):
     SQLModel.metadata.create_all(engine, tables=[
         User.__table__, Client.__table__, AuditLog.__table__,
         ClientFlowReleaseControl.__table__, ClientFlowRolloutWave.__table__, ClientFlowRolloutTarget.__table__,
+        ClientFlowPhysicalAcceptance.__table__,
     ])
     with Session(engine) as session:
         admin = User(id=1, username="admin-test", email="admin@example.com", hashed_password="stored", role="superadmin", is_active=True)
@@ -234,3 +236,169 @@ def test_control_drift_fails_closed(environment):
     assert res.status_code == 503
     assert http.post("/api/clientflow/release-administration/drafts", json=_payload()).status_code == 503
     assert not session.exec(select(ClientFlowRolloutWave)).all()
+
+
+# 61B-1: Planning review and pause are deliberately inert. Existing 61A
+# database gates and deployment handlers remain unchanged.
+def _plan_action(http, wave_id, action, revision, password="correct-password"):
+    return http.post(f"/api/clientflow/release-administration/drafts/{wave_id}/{action}", json={
+        "expected_revision": revision, "password": password,
+    })
+
+
+def test_61b_plan_review_pause_resume_cancel_never_authorizes_deployments(environment):
+    http, session = environment
+    created = http.post("/api/clientflow/release-administration/drafts", json=_payload())
+    assert created.status_code == 201, created.text
+    wave_id = created.json()["id"]
+    reviewed = _plan_action(http, wave_id, "review", 1)
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json() == {
+        "id": wave_id, "state": "draft", "revision": 2,
+        "reviewed_for_planning": True, "deployment_authorized": False,
+    }
+    wave = session.get(ClientFlowRolloutWave, wave_id)
+    assert wave.approved_at is not None and wave.approved_by_user_id == 1
+    assert wave.state == "draft"
+    targets = session.exec(select(ClientFlowRolloutTarget)).all()
+    assert len(targets) == 1 and targets[0].state == "draft"
+    assert targets[0].consumed_deployment_id is None
+    assert _plan_action(http, wave_id, "review", 2).status_code == 409
+    paused = _plan_action(http, wave_id, "pause", 2)
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["state"] == "paused" and paused.json()["revision"] == 3
+    assert _plan_action(http, wave_id, "pause", 3).status_code == 409
+    assert _plan_action(http, wave_id, "resume", 2).status_code == 409  # stale revision
+    resumed = _plan_action(http, wave_id, "resume", 3)
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["state"] == "draft" and resumed.json()["revision"] == 4
+    assert _plan_action(http, wave_id, "resume", 4).status_code == 409
+    cancelled = _plan_action(http, wave_id, "cancel", 4)
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["state"] == "cancelled" and cancelled.json()["revision"] == 5
+    assert _plan_action(http, wave_id, "review", 5).status_code == 409
+    assert session.get(ClientFlowReleaseControl, 1).cutover_enabled is False
+    assert session.get(ClientFlowReleaseControl, 1).fleet_open is False
+    assert session.get(ClientFlowReleaseControl, 1).fresh_install_open is False
+    assert session.exec(select(ClientFlowRolloutTarget)).one().state == "revoked"
+    assert len(session.exec(select(AuditLog).where(AuditLog.action == "clientflow_rollout_plan_reviewed")).all()) == 1
+    assert len(session.exec(select(AuditLog).where(AuditLog.action == "clientflow_rollout_plan_paused")).all()) == 1
+    assert len(session.exec(select(AuditLog).where(AuditLog.action == "clientflow_rollout_plan_resumed")).all()) == 1
+    assert len(session.exec(select(AuditLog).where(AuditLog.action == "clientflow_rollout_draft_cancelled")).all()) == 1
+    policy = http.get("/api/clientflow/release-administration").json()
+    assert policy["planning_review_available"] is True
+    assert policy["authorization_active"] is False
+    assert policy["physical_pilot_accepted"] is False
+    assert policy["waves"][0]["deployment_authorized"] is False
+
+
+def test_61b_review_wrong_password_or_revision_never_changes_plan(environment):
+    http, session = environment
+    wave_id = http.post("/api/clientflow/release-administration/drafts", json=_payload()).json()["id"]
+    assert _plan_action(http, wave_id, "review", 1, password="wrong-password").status_code == 403
+    assert _plan_action(http, wave_id, "review", 2).status_code == 409
+    assert _plan_action(http, wave_id, "pause", 1).status_code == 409
+    wave = session.get(ClientFlowRolloutWave, wave_id)
+    assert wave.revision == 1 and wave.approved_at is None and wave.state == "draft"
+    assert not session.exec(select(AuditLog).where(AuditLog.action == "clientflow_rollout_plan_reviewed")).all()
+
+
+def test_61b_expired_or_corrupted_targets_fail_closed(environment, monkeypatch):
+    http, session = environment
+    wave_id = http.post("/api/clientflow/release-administration/drafts", json=_payload()).json()["id"]
+    target = session.exec(select(ClientFlowRolloutTarget)).one()
+    # A stolen / pre-approved / consumed target must never be reviewed.
+    target.state = "approved"
+    session.add(target)
+    session.commit()
+    assert _plan_action(http, wave_id, "review", 1).status_code == 409
+    target.state = "draft"
+    session.add(target)
+    session.commit()
+    from datetime import timedelta
+    wave = session.get(ClientFlowRolloutWave, wave_id)
+    now = route._utcnow()
+    wave.expires_at = now - timedelta(seconds=1)
+    session.add(wave)
+    session.commit()
+    assert _plan_action(http, wave_id, "review", 1).status_code == 409
+    assert session.get(ClientFlowRolloutWave, wave_id).approved_at is None
+
+
+def test_61b_any_active_client_can_be_a_proposed_pilot_without_hardcoded_id(environment):
+    http, session = environment
+    session.add(Client(id=4, name="Ny testklient", status="approved", ubuntu_version="26.04"))
+    session.commit()
+    proposed = http.post("/api/clientflow/release-administration/drafts", json=_payload(
+        client_ids=[4], source_version="1.3.42",
+    ))
+    assert proposed.status_code == 201, proposed.text
+    assert proposed.json()["client_ids"] == [4]
+    assert proposed.json()["source_version"] == "1.3.42"
+    assert session.exec(select(ClientFlowRolloutTarget)).one().state == "draft"
+    assert http.post("/api/clientflow/release-administration/drafts", json=_payload(client_ids=[3, 4])).status_code == 409
+    assert http.post("/api/clientflow/release-administration/drafts", json=_payload(source_version="invalid")).status_code == 422
+
+
+def test_61b_paused_plan_can_be_cancelled_without_resuming(environment):
+    http, session = environment
+    wave_id = http.post("/api/clientflow/release-administration/drafts", json=_payload()).json()["id"]
+    assert _plan_action(http, wave_id, "review", 1).status_code == 200
+    assert _plan_action(http, wave_id, "pause", 2).status_code == 200
+    assert _plan_action(http, wave_id, "cancel", 3).status_code == 200
+    assert session.exec(select(ClientFlowRolloutTarget)).one().state == "revoked"
+    assert _plan_action(http, wave_id, "resume", 4).status_code == 409
+
+
+def test_61b_gates_remain_fail_closed_during_planning(environment):
+    http, session = environment
+    wave_id = http.post("/api/clientflow/release-administration/drafts", json=_payload()).json()["id"]
+    policy = session.get(ClientFlowReleaseControl, 1)
+    policy.cutover_enabled = True
+    session.add(policy)
+    session.commit()
+    assert _plan_action(http, wave_id, "review", 1).status_code == 503
+    assert _plan_action(http, wave_id, "cancel", 1).status_code == 503
+    assert http.get("/api/clientflow/release-administration").status_code == 503
+    assert session.get(ClientFlowRolloutWave, wave_id).state == "draft"
+
+
+def test_61b_non_superadmin_rejected(environment):
+    http, session = environment
+    ordinary = User(id=6, username="regular", email="regular@example.com", hashed_password="stored", role="user", is_active=True)
+    http.app.dependency_overrides[get_current_superadmin_user] = lambda: ordinary
+    assert http.get("/api/clientflow/release-administration").status_code == 403
+    assert http.post("/api/clientflow/release-administration/drafts", json=_payload()).status_code == 403
+
+
+def test_61b_unexpected_physical_acceptance_fails_closed(environment):
+    http, session = environment
+    from service1.clientflow_release_admin_models import ClientFlowPhysicalAcceptance
+    row = ClientFlowPhysicalAcceptance(
+        id="00000000-0000-4000-8000-000000000001", release_id=RELEASE_ID,
+        bundle_sha256=SHA, client_id=3, actor_user_id=1,
+        decision="accepted", evidence={"test_only": True},
+        created_at=datetime(2026, 11, 15, 13, 0),
+    )
+    session.add(row)
+    session.commit()
+    assert http.get("/api/clientflow/release-administration").status_code == 503
+    assert http.post("/api/clientflow/release-administration/drafts", json=_payload()).status_code == 503
+
+
+def test_61b_impersonation_and_real_actor_mismatch_rejected(environment):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    _http, session = environment
+    user = session.get(User, 1)
+    request = Request({"type": "http", "headers": []})
+    request.state.impersonation_active = True
+    with pytest.raises(HTTPException) as denied:
+        route._require_actor(request, user)
+    assert denied.value.status_code == 409
+    request.state.impersonation_active = False
+    request.state.real_actor = User(id=42, username="not-admin", email="other@example.com",
+                                    hashed_password="stored", role="superadmin", is_active=True)
+    with pytest.raises(HTTPException) as denied:
+        route._require_actor(request, user)
+    assert denied.value.status_code == 409
