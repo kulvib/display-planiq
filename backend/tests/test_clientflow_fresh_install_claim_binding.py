@@ -192,7 +192,7 @@ def test_legacy_unbound_receipt_fails_closed_instead_of_bypassing_release_bindin
     assert "legacy" in str(exc.value.detail)
 
 
-def test_consuming_claim_rejects_mismatched_binding_without_client_or_token_mutation(monkeypatch):
+def test_consuming_claim_rejects_mismatched_binding_without_client_or_token_mutation(monkeypatch, tmp_path):
     class QueryResult:
         def __init__(self, value, mode: str):
             self.value = value
@@ -271,6 +271,20 @@ def test_consuming_claim_rejects_mismatched_binding_without_client_or_token_muta
         "canonical_update_public_key",
         lambda _value: ("update-public", "update-key", {}, "thumbprint"),
     )
+
+    # Allow this one trust-boundary test to reach its expected signed-binding
+    # rejection without weakening the production physical-acceptance gate.
+    from service1 import clientflow_stable_rollout as rollout
+
+    original = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
+    assert original["physical_pilot_accepted"] is False
+    accepted = tmp_path / "test-only-physical-acceptance.json"
+    accepted.write_text(
+        json.dumps({**original, "physical_pilot_accepted": True}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rollout, "FLEET_ACCEPTANCE_PATH", accepted)
+    rollout.require_1245_physical_acceptance()
 
     with pytest.raises(HTTPException) as exc:
         enrollment_router.claim_enrollment_token(SimpleNamespace(), request_data, session)
