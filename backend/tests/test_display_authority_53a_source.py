@@ -24,7 +24,7 @@ def test_53a_remains_reviewed_predecessor_under_53b_system_authority():
     assert 'op.drop_column("client", "kiosk_url")' in migration
     assert 'op.drop_column("client", "browser_refresh_interval_sec")' in migration
     assert 'class DisplayDesiredConfiguration(SQLModel, table=True):' in model
-    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261024_60a_incidents"'
+    assert contract.rsplit("EXPECTED_HEAD_REVISION = ", 1)[1].splitlines()[0] == '"20261115_61a_cf_release_admin"'
     assert 'REVIEWED_BASELINE_ADOPTION_HEAD = "20260929_58a_maintenance"' in runner
     assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD = "20260929_58a_maintenance"' in runner
     assert 'REVIEWED_DISPLAY_AUTHORITY_REVISION = "20260823_53a_display_authority"' in runner
@@ -41,7 +41,7 @@ def test_53a_remains_reviewed_predecessor_under_53b_system_authority():
     # Step 58A remains the reviewed historical anchor, but the current head
     # has two independent, source-pinned successors: 59A -> 60A.
     assert 'REVIEWED_LEGACY_RECONCILIATION_HEAD != REVIEWED_MAINTENANCE_REVISION' in runner
-    assert 'head != REVIEWED_INCIDENT_60A_REVISION' in runner
+    assert 'head != REVIEWED_RELEASE_ADMIN_61A_REVISION' in runner
     assert 'rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION' in runner
     assert 'head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION' in runner
 

@@ -1242,3 +1242,82 @@ EXPECTED_INDEXES.update({
 # Exact SHA-256 over the canonical JSON contract, recomputed when the 60A
 # reviewed migration and this append-only extension are changed.
 EXPECTED_FINGERPRINT = "d002b8e6abb91552cc66aeb0355e3954531e549a356c6f553671684d379d7df3"
+
+
+# Step 61A: additive, deactivated release control plane. The existing 60A
+# fingerprint and all previously reviewed schema contracts remain frozen.
+EXPECTED_HEAD_REVISION = "20261115_61a_cf_release_admin"
+EXPECTED_TABLES = set(EXPECTED_TABLES)
+EXPECTED_TABLES.update((
+    "clientflow_release_control", "clientflow_rollout_wave",
+    "clientflow_rollout_target", "clientflow_physical_acceptance",
+))
+EXPECTED_COLUMNS["clientflow_release_control"] = {
+    "id": _rbi(), "stable_release_id": _rbv(160),
+    "stable_bundle_sha256": _rbv(64),
+    "fresh_install_open": _rollback_column("boolean", "bool", default="false"),
+    "fleet_open": _rollback_column("boolean", "bool", default="false"),
+    "cutover_enabled": _rollback_column("boolean", "bool", default="false"),
+    "revision": _rollback_column("integer", "int4", default="1"),
+    "updated_at": _rbts(), "updated_by_user_id": _rbi(True),
+}
+EXPECTED_COLUMNS["clientflow_rollout_wave"] = {
+    "id": _rbv(36), "kind": _rbv(16), "state": _rbv(16),
+    "release_id": _rbv(160), "bundle_sha256": _rbv(64),
+    "source_version": _rbv(40), "reason": _rbt(),
+    "created_by_user_id": _rbi(), "approved_by_user_id": _rbi(True),
+    "created_at": _rbts(), "expires_at": _rbts(), "approved_at": _rbts(True),
+    "revision": _rollback_column("integer", "int4", default="1"),
+}
+EXPECTED_COLUMNS["clientflow_rollout_target"] = {
+    "id": _rbv(36), "wave_id": _rbv(36), "client_id": _rbi(),
+    "state": _rbv(16), "created_at": _rbts(), "expires_at": _rbts(),
+    "consumed_deployment_id": _rbv(36, nullable=True),
+}
+EXPECTED_COLUMNS["clientflow_physical_acceptance"] = {
+    "id": _rbv(36), "release_id": _rbv(160),
+    "bundle_sha256": _rbv(64), "client_id": _rbi(),
+    "actor_user_id": _rbi(), "decision": _rbv(16),
+    "evidence": _rollback_column("jsonb", "jsonb"), "created_at": _rbts(),
+}
+EXPECTED_CONSTRAINTS.update({
+    "clientflow_release_control_pkey": "PRIMARY KEY (id)",
+    "clientflow_release_control_updated_by_user_id_fkey": 'FOREIGN KEY (updated_by_user_id) REFERENCES "user"(id)',
+    "ck_clientflow_release_control_singleton": "CHECK (id = 1)",
+    "ck_clientflow_release_control_revision": "CHECK (revision >= 1)",
+    "ck_clientflow_release_control_sha256": "CHECK (length(stable_bundle_sha256::text) = 64)",
+    "clientflow_rollout_wave_pkey": "PRIMARY KEY (id)",
+    "clientflow_rollout_wave_created_by_user_id_fkey": 'FOREIGN KEY (created_by_user_id) REFERENCES "user"(id)',
+    "clientflow_rollout_wave_approved_by_user_id_fkey": 'FOREIGN KEY (approved_by_user_id) REFERENCES "user"(id)',
+    "ck_clientflow_rollout_wave_kind": "CHECK (kind::text = ANY (ARRAY['pilot'::character varying::text, 'controlled'::character varying::text]))",
+    "ck_clientflow_rollout_wave_state": "CHECK (state::text = ANY (ARRAY['draft'::character varying::text, 'approved'::character varying::text, 'running'::character varying::text, 'paused'::character varying::text, 'completed'::character varying::text, 'failed'::character varying::text, 'cancelled'::character varying::text]))",
+    "ck_clientflow_rollout_wave_sha256": "CHECK (length(bundle_sha256::text) = 64)",
+    "ck_clientflow_rollout_wave_expiry": "CHECK (expires_at > created_at)",
+    "ck_clientflow_rollout_wave_revision": "CHECK (revision >= 1)",
+    "clientflow_rollout_target_pkey": "PRIMARY KEY (id)",
+    "clientflow_rollout_target_wave_id_fkey": "FOREIGN KEY (wave_id) REFERENCES clientflow_rollout_wave(id) ON DELETE RESTRICT",
+    "clientflow_rollout_target_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES client(id)",
+    "clientflow_rollout_target_consumed_deployment_id_fkey": "FOREIGN KEY (consumed_deployment_id) REFERENCES clientflow_deployment(id)",
+    "uq_clientflow_rollout_target_wave_client": "UNIQUE (wave_id, client_id)",
+    "ck_clientflow_rollout_target_state": "CHECK (state::text = ANY (ARRAY['draft'::character varying::text, 'approved'::character varying::text, 'consumed'::character varying::text, 'revoked'::character varying::text]))",
+    "ck_clientflow_rollout_target_expiry": "CHECK (expires_at > created_at)",
+    "clientflow_physical_acceptance_pkey": "PRIMARY KEY (id)",
+    "clientflow_physical_acceptance_client_id_fkey": "FOREIGN KEY (client_id) REFERENCES client(id)",
+    "clientflow_physical_acceptance_actor_user_id_fkey": 'FOREIGN KEY (actor_user_id) REFERENCES "user"(id)',
+    "ck_clientflow_physical_acceptance_sha256": "CHECK (length(bundle_sha256::text) = 64)",
+    "ck_clientflow_physical_acceptance_decision": "CHECK (decision::text = ANY (ARRAY['accepted'::character varying::text, 'rejected'::character varying::text]))",
+})
+EXPECTED_INDEXES.update({
+    "clientflow_release_control_pkey": "CREATE UNIQUE INDEX clientflow_release_control_pkey ON public.clientflow_release_control USING btree (id)",
+    "clientflow_rollout_wave_pkey": "CREATE UNIQUE INDEX clientflow_rollout_wave_pkey ON public.clientflow_rollout_wave USING btree (id)",
+    "ix_clientflow_rollout_wave_state_expiry": "CREATE INDEX ix_clientflow_rollout_wave_state_expiry ON public.clientflow_rollout_wave USING btree (state, expires_at)",
+    "ix_clientflow_rollout_wave_created": "CREATE INDEX ix_clientflow_rollout_wave_created ON public.clientflow_rollout_wave USING btree (created_at)",
+    "clientflow_rollout_target_pkey": "CREATE UNIQUE INDEX clientflow_rollout_target_pkey ON public.clientflow_rollout_target USING btree (id)",
+    "uq_clientflow_rollout_target_wave_client": "CREATE UNIQUE INDEX uq_clientflow_rollout_target_wave_client ON public.clientflow_rollout_target USING btree (wave_id, client_id)",
+    "ix_clientflow_rollout_target_client_state": "CREATE INDEX ix_clientflow_rollout_target_client_state ON public.clientflow_rollout_target USING btree (client_id, state)",
+    "ix_clientflow_rollout_target_wave": "CREATE INDEX ix_clientflow_rollout_target_wave ON public.clientflow_rollout_target USING btree (wave_id)",
+    "uq_clientflow_rollout_target_active_client": "CREATE UNIQUE INDEX uq_clientflow_rollout_target_active_client ON public.clientflow_rollout_target USING btree (client_id) WHERE ((state)::text = 'approved'::text)",
+    "clientflow_physical_acceptance_pkey": "CREATE UNIQUE INDEX clientflow_physical_acceptance_pkey ON public.clientflow_physical_acceptance USING btree (id)",
+    "ix_clientflow_physical_acceptance_release": "CREATE INDEX ix_clientflow_physical_acceptance_release ON public.clientflow_physical_acceptance USING btree (release_id, created_at)",
+})
+EXPECTED_FINGERPRINT = "65be82d1e396ed08788328edb3b7ff143a4a1511841818f1aa7b70314dd50e86"

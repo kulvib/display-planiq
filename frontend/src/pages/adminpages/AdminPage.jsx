@@ -25,6 +25,7 @@ import AccessErrorBoundary from "./AccessErrorBoundary";
 import EnrollmentTokensPage from "./EnrollmentTokensPage";
 import AuditLog from "./AuditLog";
 import MaintenanceAdministration from "./MaintenanceAdministration";
+import ClientFlowReleaseAdministration from "./ClientFlowReleaseAdministration";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import {
@@ -67,6 +68,13 @@ const SECTIONS = [
     label: "Installation",
     icon: <RocketLaunchIcon fontSize="small" />,
     superadminOnly: true,
+  },
+  {
+    key: "clientflow-releases",
+    label: "ClientFlow Releases",
+    icon: <RocketLaunchIcon fontSize="small" />,
+    superadminOnly: true,
+    viewerAllowed: false,
   },
   {
     key: "livestream",
@@ -243,7 +251,8 @@ export default function AdminPage() {
                 gridTemplateColumns: {
                   xs: "1fr",
                   sm: "repeat(2, minmax(0, 1fr))",
-                  lg: `repeat(${visibleSections.length}, minmax(0, 1fr))`,
+                  lg: "repeat(4, minmax(0, 1fr))",
+                  xl: `repeat(${visibleSections.length}, minmax(0, 1fr))`,
                 },
                 gap: 1,
               }}
@@ -304,6 +313,9 @@ export default function AdminPage() {
               Kun superadministratorer og Se adgang kan se installationskoder.
             </Alert>
           ))}
+
+        {activeSection === "clientflow-releases" &&
+          (isSuperadmin ? <ClientFlowReleaseAdministration /> : <Alert severity="error">Kun superadministratorer kan se releaseadministration.</Alert>)}
 
         {activeSection === "livestream" &&
           (isSuperadmin ? (

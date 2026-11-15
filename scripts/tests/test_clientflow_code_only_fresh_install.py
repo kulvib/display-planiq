@@ -447,9 +447,9 @@ def test_55a_is_wired_into_canonical_database_contract_and_migration_runner():
     assert 'calendar_delivery_revision.down_revision != REVIEWED_ENROLLMENT_BINDING_REVISION' in runner
     # Step 55A remains a reviewed predecessor. The current, source-pinned head
     # is 60A, reached through the reviewed 58A -> 59A -> 60A chain.
-    assert contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0] == '"20261024_60a_incidents"'
+    assert contract.rsplit('EXPECTED_HEAD_REVISION = ', 1)[1].splitlines()[0] == '"20261115_61a_cf_release_admin"'
     assert 'REVIEWED_ROLLBACK_59A_REVISION = "20261023_59a_rollback"' in runner
     assert 'REVIEWED_INCIDENT_60A_REVISION = "20261024_60a_incidents"' in runner
-    assert 'head != REVIEWED_INCIDENT_60A_REVISION' in runner
+    assert 'head != REVIEWED_RELEASE_ADMIN_61A_REVISION' in runner
     assert 'rollback_revision.down_revision != REVIEWED_MAINTENANCE_REVISION' in runner
     assert 'head_revision.down_revision != REVIEWED_ROLLBACK_59A_REVISION' in runner

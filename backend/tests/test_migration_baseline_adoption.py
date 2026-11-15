@@ -103,7 +103,7 @@ class BaselineAdoptionTests(unittest.TestCase):
         import copy
 
         with patch.object(runner, "EXPECTED_HEAD_REVISION", "20261024_60a_unreviewed"):
-            with self.assertRaisesRegex(RuntimeError, "59A-udvidelsen"):
+            with self.assertRaisesRegex(RuntimeError, "61A releaseadministration-migration"):
                 runner._baseline_schema_contract()
         with patch.object(runner, "REVIEWED_ROLLBACK_59A_SOURCE_SHA256", "0" * 64):
             with self.assertRaisesRegex(RuntimeError, "59A-udvidelsen"):
@@ -348,6 +348,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_MAINTENANCE_REVISION)
                 if revision == runner.REVIEWED_INCIDENT_60A_REVISION:
                     return Revision(runner.REVIEWED_ROLLBACK_59A_REVISION)
+                if revision == runner.REVIEWED_RELEASE_ADMIN_61A_REVISION:
+                    return Revision(runner.REVIEWED_INCIDENT_60A_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         def verify(_connection, **kwargs):
@@ -400,7 +402,7 @@ class BaselineAdoptionTests(unittest.TestCase):
         self.assertEqual(after, runner.EXPECTED_HEAD_REVISION)
         self.assertEqual(counts, {"user": 1})
         self.assertFalse(adopted)
-        self.assertEqual(runner.EXPECTED_HEAD_REVISION, runner.REVIEWED_INCIDENT_60A_REVISION)
+        self.assertEqual(runner.EXPECTED_HEAD_REVISION, runner.REVIEWED_RELEASE_ADMIN_61A_REVISION)
         self.assertEqual(
             calls,
             [
@@ -770,6 +772,8 @@ class BaselineAdoptionTests(unittest.TestCase):
                     return Revision(runner.REVIEWED_MAINTENANCE_REVISION)
                 if revision == runner.REVIEWED_INCIDENT_60A_REVISION:
                     return Revision(runner.REVIEWED_ROLLBACK_59A_REVISION)
+                if revision == runner.REVIEWED_RELEASE_ADMIN_61A_REVISION:
+                    return Revision(runner.REVIEWED_INCIDENT_60A_REVISION)
                 raise AssertionError(f"unexpected revision lookup: {revision}")
 
         with patch.object(
