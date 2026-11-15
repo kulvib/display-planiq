@@ -15,6 +15,8 @@ REQUIRED = (
     "client/release/rollback-trust.json",
     "client/release/runtime-platform-inputs.lock.json",
     "backend/service1/clientflow_release_catalog.json",
+    "backend/service1/clientflow_release_catalog_1245_pilot.stage.json",
+    "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json",
     "backend/service1/clientflow_release_security_policy.json",
     ".github/workflows/release-build.yml", ".github/workflows/release-approve.yml",
     "scripts/clientflow_1244_source_preflight.py",
@@ -36,20 +38,20 @@ def test_exact_new_identity_staged_without_any_deployment_authority():
     result = inspect_source(ROOT)
     assert result["source_stage_ready"], result["checks"]
     assert result["target"] == "clientflow-1.3.44-seq-1245"
-    assert result["stage"] == "source_only"
-    for name in (
-        "approved", "published", "catalog_promoted", "install_authorized",
-        "in_place_update_authorized", "physical_pilot_complete",
-    ):
+    assert result["stage"] == "source_approved_pilot_catalog_ready"
+    assert result["approved"] is result["published"] is result["catalog_promoted"] is True
+    for name in ("install_authorized", "in_place_update_authorized", "physical_pilot_complete"):
         assert result[name] is False
 
 
-def test_staged_identity_stays_one_above_live_catalog():
+def test_staged_identity_is_now_exact_live_pilot_catalog():
     release = json.loads((ROOT / "client/release/release-input.json").read_text())
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert release["release_sequence"] == catalog["catalog_sequence"] + 1 == 1245
-    assert len(catalog["releases"]) == 1
+    assert release["release_sequence"] == catalog["catalog_sequence"] == 1245
+    assert len(catalog["releases"]) == 2
     assert catalog["releases"][0]["install_modes"] == ["fresh_install"]
+    assert catalog["releases"][1]["install_modes"] == ["in_place_update"]
+    assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.43"
 
 
 def test_staging_never_mutates_repository(tmp_path):
@@ -86,7 +88,7 @@ def test_catalog_promotion_or_old_release_overwrite_is_rejected(tmp_path):
     path = repo / "backend/service1/clientflow_release_catalog.json"
     baseline = json.loads(path.read_text(encoding="utf-8"))
     modified = json.loads(path.read_text(encoding="utf-8"))
-    modified["catalog_sequence"] = 1245
+    modified["catalog_sequence"] = 1246
     modified["latest_stable"] = modified["default_install_version"] = "1.3.44"
     modified["releases"][0]["release_id"] = "clientflow-1.3.44-seq-1245"
     modified["releases"][0]["version"] = "1.3.44"

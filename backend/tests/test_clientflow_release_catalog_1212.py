@@ -81,7 +81,9 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
     assert data["catalog_sequence"] == 1243
     assert data["catalog_sequence"] == 1243  # immutable pre-reset history
     current = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert current["catalog_sequence"] + 1 == release_input["release_sequence"] == 1245
+    # The active 1245 pilot catalog now has the same sequence as its source;
+    # the immutable pre-reset 1243 fixture above remains unchanged.
+    assert current["catalog_sequence"] == release_input["release_sequence"] == 1245
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert release["release_id"] == "clientflow-1.3.38-seq-1239"

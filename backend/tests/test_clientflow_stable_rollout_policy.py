@@ -16,29 +16,25 @@ from service1 import clientflow_stable_rollout as rollout
 ROOT = Path(__file__).resolve().parents[2]
 
 
+R2_LOCK = json.loads((ROOT / "backend/service1/clientflow_pilot_1245_approval.json").read_text())
+
+
 def _stable() -> dict:
-    old = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    row = deepcopy(old["releases"][0])
-    row.update({
-        "version": "1.3.44", "client_version": "1.3.44",
-        "release_id": "clientflow-1.3.44-seq-1245",
-        "revision": "clientflow-1.3.44-seq-1245", "release_sequence": 1245,
-        "status": "stable", "installable": True, "update_allowed": True,
-        "install_modes": ["fresh_install", "in_place_update"],
-        "min_current_version": "1.3.43", "max_current_version": "1.3.43",
-    })
-    old.update(catalog_sequence=1245, latest_stable="1.3.44", default_install_version="1.3.44", releases=[row])
-    return old
+    # Same real, read-only stable promotion template that will be reviewed
+    # after the pilot; it is NOT the active production catalog.
+    return json.loads(
+        (ROOT / "backend/service1/clientflow_release_catalog_1245_stable.stage.json").read_text()
+    )
 
 
 def _artifact() -> dict:
     return {
         "target_release_id": "clientflow-1.3.44-seq-1245",
-        "bundle_sha256": "a" * 64,
-        "bundle_size": 123_456_789,
-        "release_approval_reference": "CF-1245-APPROVED-TEST-ONLY",
-        "release_candidate_sha256": "b" * 64,
-        "source_commit": "c" * 40,
+        "bundle_sha256": R2_LOCK["approved_bundle_sha256"],
+        "bundle_size": R2_LOCK["approved_bundle_size"],
+        "release_approval_reference": R2_LOCK["approval_reference"],
+        "release_candidate_sha256": R2_LOCK["candidate_sha256"],
+        "source_commit": R2_LOCK["source_commit"],
     }
 
 
@@ -56,14 +52,15 @@ def configured(monkeypatch):
     monkeypatch.setenv(rollout.ENABLED_FLAG, "1")
     monkeypatch.setenv(rollout.RELEASE_FLAG, "clientflow-1.3.44-seq-1245")
     monkeypatch.setenv(rollout.CLIENTS_FLAG, "3,7")
-    monkeypatch.setenv(rollout.BUNDLE_FLAG, "a" * 64)
+    monkeypatch.setenv(rollout.BUNDLE_FLAG, R2_LOCK["approved_bundle_sha256"])
 
 
 def test_real_current_catalog_retains_1244_standard():
     current = releases.load_catalog()
     assert current["latest_stable"] == "1.3.43"
     assert current["default_install_version"] == "1.3.43"
-    assert len(current["releases"]) == 1
+    assert len(current["releases"]) == 2
+    assert current["releases"][1]["status"] == "supported"
 
 
 def test_unpromoted_source_never_changes_existing_default(tmp_path, monkeypatch):
@@ -171,3 +168,22 @@ def test_stable_rollout_does_not_allow_raw_authority_from_catalog(configured):
     args["catalog"]["releases"][0]["status"] = "supported"
     with pytest.raises(rollout.ClientFlowStableRolloutDenied):
         rollout.require_stable_rollout(**args)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("bundle_size", 223610879),
+    ("release_approval_reference", "CF-FAKE-1245-SAME-BYTES"),
+    ("release_candidate_sha256", "0" * 64),
+    ("source_commit", "0" * 40),
+])
+def test_stable_r2_provenance_rejects_well_formed_wrong_values(configured, field, value):
+    artifact = _artifact()
+    artifact[field] = value
+    with pytest.raises(rollout.ClientFlowStableRolloutDenied):
+        rollout.require_stable_rollout(**_args(artifact=artifact))
+
+
+def test_stable_1245_rejects_unapproved_bundle_env_even_if_well_formed(configured, monkeypatch):
+    monkeypatch.setenv(rollout.BUNDLE_FLAG, "f" * 64)
+    with pytest.raises(rollout.ClientFlowStableRolloutDenied):
+        rollout.require_stable_rollout(**_args())

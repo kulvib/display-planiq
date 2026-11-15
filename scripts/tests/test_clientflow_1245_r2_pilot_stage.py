@@ -14,6 +14,7 @@ from clientflow_1245_r2_pilot_preflight import inspect  # noqa: E402
 
 FILES = (
     "backend/service1/clientflow_release_catalog.json",
+    "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json",
     "backend/service1/clientflow_release_catalog_1245_pilot.stage.json",
     "backend/service1/clientflow_pilot_1245_approval.json",
     "backend/service1/clientflow_pilot_1245.py",
@@ -44,7 +45,7 @@ def test_r2_staged_source_passes_but_does_not_authorize_pilot():
     assert result["ready"], result
     assert len(result["checks"]) == 9
     assert result["pilot_authorized"] is False
-    assert result["catalog_promoted"] is False
+    assert result["catalog_promoted"] is True
     assert result["physical_recovery_verified"] is False
 
 
@@ -57,7 +58,7 @@ def test_preflight_is_read_only(tmp_path):
 
 
 @pytest.mark.parametrize("name,value", [
-    ("approved", True),
+    ("approved", False),
     ("approved", "false"),
     ("approved_bundle_sha256", "0" * 64),
     ("approved_bundle_size", 1),
@@ -70,16 +71,16 @@ def test_r2_lock_tampering_fails(tmp_path, name, value):
     dest = _copy(tmp_path)
     _edit(dest, "backend/service1/clientflow_pilot_1245_approval.json", lambda x: x.update({name: value}))
     assert not inspect(dest)["ready"]
-    assert not inspect(dest)["checks"]["approval_lock_r2_exact_but_disabled"]
+    assert not inspect(dest)["checks"]["approval_lock_r2_exact_ready"]
 
 
 @pytest.mark.parametrize("change", [
-    lambda x: x.update(catalog_sequence=1245),
+    lambda x: x.update(catalog_sequence=1244),
     lambda x: x.update(latest_stable="1.3.44"),
     lambda x: x.update(default_install_version="1.3.44"),
     lambda x: x["releases"].append({"release_id": "clientflow-1.3.44-seq-1245"}),
 ])
-def test_live_catalog_must_stay_1244(tmp_path, change):
+def test_live_catalog_must_equal_exact_pilot_staging(tmp_path, change):
     dest = _copy(tmp_path)
     _edit(dest, "backend/service1/clientflow_release_catalog.json", change)
     assert not inspect(dest)["ready"]
@@ -111,15 +112,16 @@ def test_missing_stage_file_fails(tmp_path):
     assert not inspect(dest)["ready"]
 
 
-def test_pilot_guard_stays_disabled_with_real_record_even_when_env_is_three(monkeypatch):
+def test_pilot_guard_requires_second_operator_gate_even_when_client_id_is_three(monkeypatch):
     sys.path.insert(0, str(ROOT / "backend"))
     from service1 import clientflow_pilot_1245 as pilot
 
     monkeypatch.setenv(pilot.PILOT_FLAG, "3")
+    monkeypatch.delenv(pilot.PILOT_ARM_FLAG, raising=False)
     release = json.loads(
         (ROOT / "backend/service1/clientflow_release_catalog_1245_pilot.stage.json").read_text(encoding="utf-8")
     )["releases"][1]
-    with pytest.raises(pilot.ClientFlowPilot1245Denied, match="ikke særskilt godkendt"):
+    with pytest.raises(pilot.ClientFlowPilot1245Denied, match="særskilte operatøraktivering mangler"):
         pilot.require_pilot_1245(
             client_id=3, current_version="1.3.43", release=release,
             reason="Afgrænset pilot på Viborg1",

@@ -12,7 +12,7 @@ from scripts import clientflow_1244_transition_policy as pinned
 from scripts import preflight_clientflow_1244_catalog_promotion as preflight
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG = ROOT / "backend/service1/clientflow_release_catalog.json"
+CATALOG = ROOT / "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json"
 HISTORY = ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"
 
 
@@ -72,7 +72,8 @@ def test_original_1243_catalog_is_immutable_historical_test_evidence():
     assert len(actual()["releases"]) == 1  # The frozen fixture is never the production catalog.
 
 
-def test_runtime_fresh_only_policy_and_retired_versions_are_not_selectable():
+def test_runtime_fresh_only_policy_and_retired_versions_are_not_selectable(monkeypatch):
+    monkeypatch.setattr(releases, "CATALOG_PATH", CATALOG)
     releases.load_catalog.cache_clear()
     assert releases.load_catalog()["catalog_sequence"] == 1244
     assert releases.resolve_fresh_install_release()["release_id"] == pinned.RELEASE_ID
@@ -115,6 +116,8 @@ def test_tampered_1244_catalog_fails_closed(tmp_path, monkeypatch, mutation):
 
 
 def test_postdeploy_gate_requires_pause_and_verifies_pinned_six(tmp_path, monkeypatch):
+    monkeypatch.setattr(releases, "CATALOG_PATH", CATALOG)
+    releases.load_catalog.cache_clear()
     monkeypatch.setenv("CLIENTFLOW_FRESH_INSTALL_SUSPENDED", "1")
     for flag in ("CLIENTFLOW_1241_PILOT_CLIENT_ID", "CLIENTFLOW_1242_PILOT_CLIENT_ID",
                  "CLIENTFLOW_1243_PILOT_CLIENT_ID"):

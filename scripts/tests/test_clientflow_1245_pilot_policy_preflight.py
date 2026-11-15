@@ -30,11 +30,12 @@ def _fixture(tmp_path):
     return dst
 
 
-def test_read_only_source_stage_passes_without_approval():
+def test_read_only_pilot_policy_with_two_environment_gates():
     result = inspect(ROOT)
     assert result["ready"], result
     assert len(result["checks"]) == 9
-    assert result["approved"] is result["deployed"] is result["stable_promoted"] is False
+    assert result["approved"] is True
+    assert result["deployed"] is result["stable_promoted"] is False
 
 
 def test_preflight_cannot_modify_any_files(tmp_path):
@@ -44,14 +45,14 @@ def test_preflight_cannot_modify_any_files(tmp_path):
     assert before == {path.relative_to(dst): path.read_bytes() for path in dst.rglob("*") if path.is_file()}
 
 
-def test_preflight_fails_on_preapproved_lock(tmp_path):
+def test_preflight_fails_on_withdrawn_approval(tmp_path):
     dst = _fixture(tmp_path)
     p = dst / "backend/service1/clientflow_pilot_1245_approval.json"
     lock = json.loads(p.read_text())
-    lock["approved"] = True
+    lock["approved"] = False
     p.write_text(json.dumps(lock))
     assert not inspect(dst)["ready"]
-    assert not inspect(dst)["checks"]["no_1245_deployment_while_unapproved"]
+    assert not inspect(dst)["checks"]["exact_approval_but_separate_pilot_flags"]
 
 
 def test_preflight_fails_on_wrong_candidate_sha(tmp_path):

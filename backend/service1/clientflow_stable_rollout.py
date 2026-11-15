@@ -81,6 +81,35 @@ def require_stable_rollout(
             raise ClientFlowStableRolloutDenied("Stabil udrulning tillader kun en nyere målversion")
     except ClientFlowCatalogError as exc:
         raise ClientFlowStableRolloutDenied("Klientens rapporterede version er ugyldig") from exc
+    # The first 1245 stable wave must use the *same* exact approved R2 bytes
+    # as the preceding single-device pilot. A new/stale store artifact, SHA,
+    # candidate or approval reference cannot be authorized just by changing
+    # an environment variable. Future releases retain the generic rollout rule.
+    if release_id == "clientflow-1.3.44-seq-1245":
+        from .clientflow_pilot_1245 import (
+            _approved_lock, ClientFlowPilot1245Denied,
+            SOURCE_COMMIT, CANDIDATE_SHA256, PILOT_ARM_REFERENCE,
+        )
+        try:
+            lock = _approved_lock()
+        except ClientFlowPilot1245Denied as exc:
+            raise ClientFlowStableRolloutDenied("1245 R2-godkendelseslåsen er ikke gyldig") from exc
+        if (
+            approved_sha != "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
+            or lock["approved_bundle_sha256"] != approved_sha
+            or lock["approved_bundle_size"] != 223610880
+            or lock["approval_reference"] != PILOT_ARM_REFERENCE
+            or lock["candidate_sha256"] != CANDIDATE_SHA256
+            or lock["source_commit"] != SOURCE_COMMIT
+        ):
+            raise ClientFlowStableRolloutDenied("Stabil 1245 kræver eksakt godkendt R2-bundle")
+        if artifact is not None and (
+            artifact.get("bundle_size") != lock["approved_bundle_size"]
+            or artifact.get("release_approval_reference") != lock["approval_reference"]
+            or artifact.get("release_candidate_sha256") != lock["candidate_sha256"]
+            or artifact.get("source_commit") != lock["source_commit"]
+        ):
+            raise ClientFlowStableRolloutDenied("Stabil 1245 kræver samme R2-proveniens som Viborg1-pilot")
     if artifact is not None:
         if (
             artifact.get("target_release_id") != release_id
