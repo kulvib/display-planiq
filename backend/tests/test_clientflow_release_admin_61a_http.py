@@ -329,12 +329,17 @@ def test_61b_expired_or_corrupted_targets_fail_closed(environment, monkeypatch):
     assert http.get("/api/clientflow/release-administration").status_code == 200
     from datetime import timedelta
     wave = session.get(ClientFlowRolloutWave, wave_id)
-    now = route._utcnow()
-    wave.expires_at = now - timedelta(seconds=1)
-    session.add(wave)
-    session.commit()
-    assert _plan_action(http, wave_id, "review", 1).status_code == 409
-    assert session.get(ClientFlowRolloutWave, wave_id).approved_at is None
+    # Advance the application clock beyond the real expiry without writing an
+    # invalid interval to SQLite/PostgreSQL (expires_at must exceed created_at).
+    after_expiry = wave.expires_at + timedelta(seconds=1)
+    monkeypatch.setattr(route, "_utcnow", lambda: after_expiry)
+    refused = _plan_action(http, wave_id, "review", 1)
+    assert refused.status_code == 409, refused.text
+    wave = session.get(ClientFlowRolloutWave, wave_id)
+    assert wave.state == "draft" and wave.revision == 1 and wave.approved_at is None
+    assert not session.exec(select(AuditLog).where(
+        AuditLog.action == "clientflow_rollout_plan_reviewed"
+    )).all()
 
 
 def test_61b_any_active_client_can_be_a_proposed_pilot_without_hardcoded_id(environment):
