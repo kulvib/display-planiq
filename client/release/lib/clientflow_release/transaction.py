@@ -1432,6 +1432,28 @@ def activate_release(
         # before any further local activation mutation.  In-place updates retain
         # their separate update authorization plane because they start with a
         # durably active previous release.
+        # A fresh installation owns the cross-plane lock from its first
+        # consuming claim until its first health-verified, durable activation.
+        # Existing legacy clients may have no fresh-install coordinator (the
+        # previously published release predates this protocol); do not invent
+        # authorization from an absent lock, but always reject a conflicting or
+        # corrupt journal before any activation mutation.
+        fresh_coordination_root = (install_coordinator.DEFAULT_ROOT if layout.root == Path('/')
+                                   else layout.path('/var/lib/clientflow/install-coordinator'))
+        coordinator_state = install_coordinator.snapshot(root=fresh_coordination_root)
+        fresh_install_id = None
+        if coordinator_state is not None:
+            if coordinator_state.get('owner') != 'fresh_install':
+                raise TransactionError('Aktivering blokeret af en anden aktiv installation')
+            install_path = layout.path('/var/lib/clientflow/release/install-state.json')
+            if install_path.is_symlink() or not install_path.is_file():
+                raise TransactionError('Fresh installationslås mangler original install-state')
+            install_state = load_secure_json(install_path)
+            fresh_install_id = str(install_state.get('install_id') or '')
+            if coordinator_state.get('operation_id') != fresh_install_id:
+                raise TransactionError('Fresh installationslås matcher ikke install-state')
+            if state.get('active_release_id') not in (None, release_id):
+                raise TransactionError('Fresh installationslås er uafsluttet for en anden release')
         if state.get("active_release_id") is None:
             if first_activation_authorizer is None:
                 raise TransactionError(
@@ -1443,7 +1465,20 @@ def activate_release(
                 raise TransactionError(
                     "Fresh first activation kræver et backend-approved client proof før lokal mutation"
                 ) from exc
-        return _activate_release(layout, state, release_id, canonical_reference)
+        result = _activate_release(layout, state, release_id, canonical_reference)
+        if fresh_install_id is not None and result.get('status') in {'active', 'already_active'}:
+            # An activation result is never itself proof: re-read the durable
+            # transaction state + active symlink before releasing ownership.
+            committed = load_state(layout)
+            if (committed.get('active_release_id') != release_id
+                    or committed.get('activation_intent') is not None
+                    or _read_active_release_id(layout) != release_id):
+                raise TransactionError('Fresh installationslås afventer health-verificeret commit')
+            install_coordinator.release(
+                owner='fresh_install', operation_id=fresh_install_id,
+                root=fresh_coordination_root,
+            )
+        return result
 
 
 

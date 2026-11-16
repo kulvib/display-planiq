@@ -29,6 +29,9 @@ BINDING = {
 }
 
 
+PENDING_INSTALL_ID = "00000000-0000-4000-8000-000000000abc"
+
+
 def test_installer_state_schema_persists_complete_non_secret_release_binding():
     assert installer_cli.INSTALL_STATE_SCHEMA == 2
     manifest = {
@@ -208,7 +211,16 @@ def test_first_claim_definite_rejection_restores_clean_client_state(monkeypatch,
     assert exc.value.status_code == 409
     assert staged == []
     assert not (tmp_path / "etc/clientflow").exists()
-    assert not (tmp_path / "var/lib/clientflow").exists()
+    # 61B-2H: only the global coordination directory may remain after a
+    # definite rejection. Deleting it would destroy the shared lock inode.
+    coordinator = tmp_path / "var/lib/clientflow/install-coordinator"
+    assert coordinator.is_dir()
+    assert {p.name for p in (tmp_path / "var/lib/clientflow").iterdir()} == {"install-coordinator"}
+    layout = installer_cli._layout(str(tmp_path))
+    assert installer_cli.install_coordinator.snapshot(
+        root=installer_cli._fresh_coordination_root(layout)
+    ) is None
+    assert installer_cli._fresh_conflicts(layout) == []
     assert not (tmp_path / "opt/clientflow").exists()
 
 
@@ -254,7 +266,7 @@ def _write_pending_install_state(tmp_path: Path) -> None:
             {
                 "schema_version": installer_cli.INSTALL_STATE_SCHEMA,
                 "fresh_install_binding": BINDING,
-                "install_id": "pending-resume-install-id",
+                "install_id": PENDING_INSTALL_ID,
                 "backend_url": "https://display.example.invalid",
                 "kiosk_user": "clientflow-kiosk",
                 "client_name": "Test client",
@@ -266,6 +278,40 @@ def _write_pending_install_state(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     state_path.chmod(0o600)
+    # A resume keeps the exact operation ID and lock from the first claim.
+    layout = installer_cli._layout(str(tmp_path))
+    installer_cli.install_coordinator.claim(
+        owner="fresh_install",
+        operation_id=PENDING_INSTALL_ID,
+        root=installer_cli._fresh_coordination_root(layout),
+    )
+
+
+def test_pending_install_resume_rejects_invalid_id_without_touching_prior_lock(
+    monkeypatch, tmp_path
+):
+    _write_pending_install_state(tmp_path)
+    layout = installer_cli._layout(str(tmp_path))
+    coordinator_root = installer_cli._fresh_coordination_root(layout)
+    before = installer_cli.install_coordinator.snapshot(root=coordinator_root)
+    assert before["operation_id"] == PENDING_INSTALL_ID
+
+    state_path = tmp_path / "var/lib/clientflow/release/install-state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["install_id"] = "not-a-uuid"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _patch_existing_install_bundle(monkeypatch)
+    monkeypatch.setattr(
+        installer_cli,
+        "install_stable_updater_host",
+        lambda *_args, **_kwargs: pytest.fail("invalid ID may not mutate the updater"),
+    )
+
+    with pytest.raises(installer_cli.install_coordinator.InstallCoordinationError,
+                       match="installation_coordination_invalid_binding"):
+        installer_cli.install_fresh(_fresh_install_args(tmp_path))
+
+    assert installer_cli.install_coordinator.snapshot(root=coordinator_root) == before
 
 
 def _patch_existing_install_bundle(monkeypatch) -> None:
