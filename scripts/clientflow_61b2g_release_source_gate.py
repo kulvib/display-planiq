@@ -143,6 +143,17 @@ def inspect(root: Path) -> dict:
                          b'install_coordinator.claim(', b'install_coordinator.release('):
             if required not in cli_source and required not in coordinator:
                 raise ValueError('fresh_install_coordination_contract_missing')
+        # A new candidate must serialize the *preclaim apt upgrade*, which
+        # runs before enrollment authority consumption, against the global
+        # ClientFlow/Ubuntu/firmware coordinator. Source-only check: not a
+        # physical host proof or a deployment authorization.
+        if (b'with install_coordinator.preclaim_host_guard(' not in cli_source
+                or b'existing_install_id=' not in cli_source
+                or b'def preclaim_host_guard(' not in coordinator
+                or b"claim(owner='preclaim_host'" not in coordinator
+                or b"claim(owner='fresh_install'" not in coordinator
+                or b'LOCK_EX | fcntl.LOCK_NB' not in coordinator):
+            raise ValueError('missing_preclaim_shared_install_lock_contract')
         for required in (b"coordinator_state.get('owner') != 'fresh_install'",
                          b"owner='fresh_install', operation_id=fresh_install_id"):
             if required not in rollback:

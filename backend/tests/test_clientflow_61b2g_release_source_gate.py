@@ -150,3 +150,18 @@ def test_approval_workflow_cannot_silently_weaken(tmp_path):
 def test_source_root_must_be_absolute(tmp_path):
     with pytest.raises(ValueError, match='absolute'):
         gate.inspect(Path('relative'))
+
+
+def test_preclaim_host_apt_lock_is_mandatory_even_with_updated_source_hashes(tmp_path):
+    root = _copy_repository(tmp_path)
+    target = root / 'client/release/lib/clientflow_release/cli.py'
+    original = target.read_text(encoding='utf-8')
+    assert 'with install_coordinator.preclaim_host_guard(' in original
+    target.write_text(original.replace('with install_coordinator.preclaim_host_guard(',
+                                       'with install_coordinator.DISABLED_preclaim_host_guard('), encoding='utf-8')
+    _rehash(root, 'client/release/lib/clientflow_release/cli.py')
+    report = gate.inspect(root)
+    assert report['checks']['complete_sha256_manifest']['pass'] is True
+    assert report['checks']['installation_and_maintenance_source_contracts']['pass'] is False
+    assert report['source_verified'] is False
+    assert report['result'] == 'SOURCE_INVALID'
