@@ -203,6 +203,9 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
         ("Remote desktop", "remote_desktop"),
         ("ClientFlow update", "update"),
         ("Ubuntu update", "ubuntu_update"),
+        # 61B-2A adds explicit update-maintenance state without changing the
+        # identity, order, or key names of the deployed legacy fields.
+        ("Vedligeholdelse", "maintenance"),
         ("Livestream", "livestream"),
         ("Oppetid", "uptime"),
     )
