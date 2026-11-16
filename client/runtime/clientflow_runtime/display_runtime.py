@@ -964,6 +964,28 @@ class DisplayRuntime:
         if not active:
             self._stop_maintenance_screen()
             return
+        # Prefer a host-level GTK service that survives clientflow.target
+        # quiesce; retain 61B-2B fallback for a failed/absent host promotion.
+        # Probe at most every ten seconds, only while maintenance is active.
+        if not hasattr(self, "_maintenance_host_next_check"):
+            self._maintenance_host_next_check = 0.0
+            self._maintenance_host_running = False
+        if (Path("/usr/lib/clientflow/maintenance/host-screen").is_file()
+                and time.monotonic() >= self._maintenance_host_next_check):
+            self._maintenance_host_next_check = time.monotonic() + 10.0
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/systemctl", "is-active", "--quiet",
+                     "planiq-display-maintenance.service"],
+                    timeout=2, check=False, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._maintenance_host_running = result.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                self._maintenance_host_running = False
+        if self._maintenance_host_running:
+            self._stop_maintenance_screen()
+            return
         if self.browser is not None and self.browser.poll() is None:
             return  # never cover an active Chrome before the broker stops it
         process = self.maintenance_screen
@@ -1321,7 +1343,7 @@ class DisplayRuntime:
                         self.logger.warning("maintenance_browser_stop_retry")
                 # A native GTK fullscreen notice survives loss of network/Chrome.
                 # The root marker, never this visual process, governs install safety.
-                self._sync_maintenance_screen()
+                self._sync_maintenance_screen()  # fallback if independent host is unavailable
                 if (
                     self.browser_requested
                     and self.configuration.get("kiosk_url")

@@ -25,7 +25,7 @@ from .transaction import Layout, TransactionError, activate_release, recover_fai
 from .updater_config import UpdaterConfig
 from .updater_state import DeploymentSnapshot
 from .updater_transport import UpdaterTransport, UpdaterTransportError
-from . import release_public_status
+from . import release_public_status, install_coordinator
 import sys
 
 MAX_SOURCE_STATE_BYTES = 1024 * 1024
@@ -1094,12 +1094,49 @@ class UpdateController:
             return
         self._publish_advisory_release_status(snapshot, phase)
 
+    def _installation_lock_root(self) -> Path:
+        # Test-root transactions must never touch the live host lock.
+        return (install_coordinator.DEFAULT_ROOT if self.layout.root == Path('/')
+                else self.layout.root / 'var/lib/clientflow/install-coordinator')
+
     def run_once(self) -> dict[str, Any]:
         _require_root(self.layout)
         with ControllerLock(self.controller_state_root):
             self.controller_state.reload()
             previous_phase = self.controller_state.phase
+            previous_state = dict(getattr(self.controller_state, "_state", {}))
             result = self._run_locked()
+            # A crash can occur after backend terminalization but before
+            # releasing the shared lock. On the next idle poll, a previous
+            # durable local outcome must STILL agree with release history.
+            # Never infer success merely because the backend has no target.
+            if result.get("status") == "idle" and previous_phase in {"activation_succeeded", "rolled_back"}:
+                prior = previous_state.get("deployment")
+                if isinstance(prior, dict):
+                    snapshot = DeploymentSnapshot.from_state(prior)
+                    observed = _local_activation_outcome(
+                        self.layout, snapshot, self.status_func(self.layout),
+                        history_anchor=previous_state.get("history_anchor"),
+                    )
+                    if (observed is not None and
+                            observed.state == ("succeeded" if previous_phase == "activation_succeeded" else "rolled_back")):
+                        install_coordinator.release(
+                            owner="update_clientflow", operation_id=snapshot.deployment_id,
+                            root=self._installation_lock_root(),
+                        )
+            # Only a proven local terminal outcome OR a locally untouched
+            # cancelled deployment can relinquish cross-plane ownership.
+            current = getattr(self.controller_state, "_state", {}).get("deployment")
+            if isinstance(current, dict):
+                operation = current.get("deployment_id")
+                phase = self.controller_state.phase
+                terminal = (
+                    (result.get("status") == "succeeded" and phase == "activation_succeeded")
+                    or (result.get("status") == "rolled_back" and phase == "rolled_back")
+                    or (result.get("status") == "cancelled" and phase in {"observed", "staged"})
+                )
+                if terminal and isinstance(operation, str):
+                    install_coordinator.release(owner="update_clientflow", operation_id=operation, root=self._installation_lock_root())
             try:
                 # A backend with no active deployment is not proof that a
                 # previously failed local recovery has been physically healed.
@@ -1135,6 +1172,11 @@ class UpdateController:
                 "deployment_id": snapshot.deployment_id,
                 "release_id": snapshot.target_release_id,
             }
+
+        if state in {"verified", "staged", "activating", "health_check", "rolling_back"}:
+            # Reserve BEFORE staging/activation and keep the binding across
+            # controller restarts, rollback and uncertain recovery.
+            install_coordinator.claim(owner="update_clientflow", operation_id=snapshot.deployment_id, root=self._installation_lock_root())
 
         if state == "verified":
             self._stage_verified(snapshot)

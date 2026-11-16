@@ -12,6 +12,9 @@ import os
 from pathlib import Path
 import stat
 import sys
+import time
+import uuid
+import re
 
 STATE_DIR = Path('/var/lib/clientflow/update-maintenance')
 STATE_PATH = STATE_DIR / 'state.json'
@@ -66,19 +69,81 @@ def _trusted_snapshot() -> dict[str, str] | None:
         return {'action': 'System', 'phase': 'recovery_required'}
 
 
+RELEASE_DIR = Path('/var/lib/clientflow/release-status')
+RELEASE_PATH = RELEASE_DIR / 'state.json'
+RELEASE_ID = re.compile(r'clientflow-[0-9]+\.[0-9]+\.[0-9]+-seq-[0-9]+\Z')
+RELEASE_PHASES = {
+    'activating': ('Aktiverer ClientFlow', 'Kioskmiljøet skiftes sikkert til ny release'),
+    'post_activation_check': ('Kontrollerer ClientFlow', 'Verificerer den nye release efter aktivering'),
+    'rolling_back': ('Gendanner ClientFlow', 'Går sikkert tilbage til tidligere release'),
+    'recovery_required': ('Teknisk kontrol kræves', 'ClientFlow-release kræver teknisk gennemgang'),
+}
+
+
+def _trusted_release_snapshot() -> dict[str, str] | None:
+    """Read-only root-owned advisory marker. Never treat malformed data as success."""
+    try:
+        try:
+            directory = RELEASE_DIR.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or directory.st_mode & 0o022:
+            raise ValueError('untrusted release directory')
+        try:
+            fd = os.open(RELEASE_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except FileNotFoundError:
+            return None
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & 0o022 or info.st_size > 4096):
+                raise ValueError('untrusted release file')
+            content = os.read(fd, 4097)
+        finally:
+            os.close(fd)
+        value = json.loads(content.decode('utf-8'))
+        if (not isinstance(value, dict) or value.get('schema_version') != 1
+                or value.get('action') != 'update_clientflow'
+                or value.get('phase') not in RELEASE_PHASES | {'preparing': (), 'staging': (), 'completed': (), 'rolled_back': (), 'cancelled': ()}
+                or not isinstance(value.get('target_release_id'), str)
+                or not RELEASE_ID.fullmatch(value['target_release_id'])
+                or not isinstance(value.get('updated_at'), (int, float))
+                or not 0 < value['updated_at'] < time.time() + 300):
+            raise ValueError('invalid release state')
+        if str(uuid.UUID(str(value.get('deployment_id') or ''))) != value['deployment_id']:
+            raise ValueError('invalid release operation')
+        phase = value['phase']
+        if phase not in RELEASE_PHASES:
+            return None  # do not cover running Chrome during download/staging
+        if time.time() - value['updated_at'] > 1800:
+            return {'action': 'ClientFlow', 'phase': 'recovery_required'}
+        return {'action': 'ClientFlow', 'phase': phase}
+    except (OSError, ValueError, TypeError, UnicodeError, KeyError):
+        return {'action': 'ClientFlow', 'phase': 'recovery_required'}
+
+
+def _visible_state() -> dict[str, str] | None:
+    system = _trusted_snapshot()
+    release = _trusted_release_snapshot()
+    if system and release:
+        return {'action': 'System', 'phase': 'recovery_required'}
+    return system or release
+
+
 def main() -> int:
     # GTK is deliberately imported only by the actual display process; status
     # parser tests run without GTK or Wayland on GitHub CI.
     import gi
     gi.require_version('Gtk', '4.0')
     from gi.repository import Gdk, Gio, GLib, Gtk
+    supervisor = '--supervisor' in sys.argv[1:]
 
     os.environ.setdefault('GDK_BACKEND', 'wayland')
     app = Gtk.Application(application_id='dk.planiq.DisplayMaintenance', flags=Gio.ApplicationFlags.NON_UNIQUE)
 
     def activate(application: Gtk.Application) -> None:
-        current = _trusted_snapshot()
-        if current is None:
+        current = _visible_state()
+        if current is None and not supervisor:
             application.quit()
             return
         display = Gdk.Display.get_default()
@@ -121,25 +186,32 @@ def main() -> int:
 
         def tick() -> bool:
             nonlocal previous
-            current_state = _trusted_snapshot()
+            current_state = _visible_state()
             if current_state is None:
+                if supervisor:
+                    window.set_visible(False)
+                    previous = None
+                    return GLib.SOURCE_CONTINUE
                 window.close()
                 application.quit()
                 return GLib.SOURCE_REMOVE
             key = (current_state['action'], current_state['phase'])
             if key != previous:
-                heading, detail = MESSAGES[current_state['phase']]
+                heading, detail = (RELEASE_PHASES if current_state['action'] == 'ClientFlow' else MESSAGES)[current_state['phase']]
                 title.set_text(heading)
                 body.set_text(f"{current_state['action']}: {detail}")
                 title.remove_css_class('warning')
                 title.remove_css_class('accent')
                 title.add_css_class('warning' if current_state['phase'] == 'recovery_required' else 'accent')
                 previous = key
+            window.present()
             return GLib.SOURCE_CONTINUE
 
-        tick()
+        if supervisor:
+            # Hold application alive without a window while the kiosk is idle.
+            application.hold()
         window.fullscreen()
-        window.present()
+        tick()
         GLib.timeout_add_seconds(2, tick)
 
     app.connect('activate', activate)
