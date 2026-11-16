@@ -234,6 +234,11 @@ def create_rollout_draft(
         expires_at=now + timedelta(hours=payload.expires_in_hours), revision=1,
     )
     session.add(wave)
+    # The target rows reference this wave through a non-deferrable FK.  Without
+    # an ORM relationship SQLAlchemy may flush targets before their parent,
+    # which SQLite (FK checks off by default) misses but PostgreSQL rejects.
+    # Flush ONLY the parent now; the transaction still commits atomically below.
+    session.flush()
     for client_id in payload.client_ids:
         session.add(ClientFlowRolloutTarget(
             id=str(uuid4()), wave_id=wave.id, client_id=client_id,
