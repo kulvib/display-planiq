@@ -21,6 +21,7 @@ from .net import DomainTransport, backoff_seconds
 from .power_lifecycle import PowerLifecycleError, collect_completed_local_power_event
 from .status import boot_id as status_boot_id, report_status
 from .update_maintenance import public_snapshot as update_maintenance_snapshot
+from .release_public_status import public_snapshot as clientflow_release_snapshot
 
 ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
 SYS_CLASS_NET = Path("/sys/class/net")
@@ -264,7 +265,22 @@ def collect_host_status() -> dict[str, Any]:
     }
     payload.update(_network_status())
     payload.update(_time_status())
-    payload["update_maintenance"] = update_maintenance_snapshot()
+    os_maintenance = update_maintenance_snapshot()
+    release_maintenance = clientflow_release_snapshot()
+    # One existing heartbeat/read-time status projection: no additional DB
+    # columns, polling, or separate ClientFlow agent calls. Never claim success
+    # if two different update authorities appear active on the same host.
+    if (os_maintenance and os_maintenance.get("active")
+            and release_maintenance and release_maintenance.get("active")):
+        payload["update_maintenance"] = {
+            "schema_version": 1, "action": "system", "phase": "recovery_required",
+            "active": True,
+            "message": "Samtidige system- og ClientFlow-opdateringsstatusser kræver kontrol",
+        }
+    elif os_maintenance and os_maintenance.get("active"):
+        payload["update_maintenance"] = os_maintenance
+    else:
+        payload["update_maintenance"] = release_maintenance or os_maintenance
     try:
         local_power_event = collect_completed_local_power_event()
     except PowerLifecycleError as exc:

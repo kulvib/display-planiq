@@ -45,6 +45,8 @@ VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active
 RELEASE_INPUT_PATH = Path(os.getenv("CLIENTFLOW_RELEASE_INPUT_PATH", "/opt/clientflow/active/release/release-input.json"))
 STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
 UPDATE_MAINTENANCE_PATH = Path("/var/lib/clientflow/update-maintenance/state.json")
+RELEASE_STATUS_DIR = Path("/var/lib/clientflow/release-status")
+RELEASE_STATUS_PATH = RELEASE_STATUS_DIR / "state.json"
 GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
 STARTED_PREACTIVATION = GUI_MODE == "preactivation"
 PREACTIVATION_MODE = STARTED_PREACTIVATION
@@ -220,6 +222,45 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _trusted_release_maintenance() -> dict[str, str] | None:
+    """Only paint root-controlled release phases; no installation authority."""
+    phases = {"preparing", "staging", "activating", "post_activation_check",
+              "rolling_back", "recovery_required", "completed", "rolled_back", "cancelled"}
+    try:
+        try:
+            folder = RELEASE_STATUS_DIR.lstat()
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISDIR(folder.st_mode) or folder.st_uid != 0 or folder.st_mode & 0o022:
+            raise ValueError("untrusted folder")
+        try:
+            fd = os.open(RELEASE_STATUS_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except FileNotFoundError:
+            return None
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & 0o022 or info.st_size > 4096):
+                raise ValueError("untrusted status")
+            raw = os.read(fd, 4097)
+        finally:
+            os.close(fd)
+        if len(raw) > 4096:
+            raise ValueError("oversize status")
+        value = json.loads(raw.decode("utf-8"))
+        if (not isinstance(value, dict) or value.get("schema_version") != 1
+                or value.get("action") != "update_clientflow" or value.get("phase") not in phases
+                or not isinstance(value.get("updated_at"), (int, float))
+                or not 0 < value["updated_at"] < time.time() + 300):
+            raise ValueError("invalid status")
+        phase = str(value["phase"])
+        if phase not in {"completed", "cancelled", "rolled_back"} and time.time() - value["updated_at"] > 1800:
+            phase = "recovery_required"
+        return {"action": "update_clientflow", "phase": phase}
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return {"action": "update_clientflow", "phase": "recovery_required"}
 
 
 def _write_gui_status(state: str, *, error: str | None = None) -> None:
@@ -1250,11 +1291,15 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                          })):
                 # A corrupt/unreadable root marker must never be shown as idle.
                 maintenance = {"phase": "recovery_required"}
+            release_maintenance = _trusted_release_maintenance()
+            if ((not maintenance or maintenance.get("phase") == "completed") and release_maintenance):
+                maintenance = release_maintenance
+            elif maintenance.get("phase") not in (None, "", "completed") and release_maintenance and release_maintenance.get("phase") not in {"completed", "cancelled", "rolled_back"}:
+                maintenance = {"action": "system", "phase": "recovery_required"}
             maintenance_phase = str(maintenance.get("phase") or "").strip()
             maintenance_action = str(maintenance.get("action") or "")
-            maintenance_label = {"update_os": "Ubuntu", "update_firmware": "Firmware"}.get(
-                maintenance_action, "System"
-            )
+            maintenance_label = {"update_os": "Ubuntu", "update_firmware": "Firmware",
+                                 "update_clientflow": "ClientFlow"}.get(maintenance_action, "System")
             maintenance_text = {
                 "browser_stopping": "Lukker kiosk browser",
                 "installing": "Installerer opdatering",
@@ -1262,11 +1307,19 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 "post_boot_check": "Kontrollerer efter genstart",
                 "recovery_required": "STOP – manuel kontrol nødvendig",
                 "completed": "Afsluttet – internet/kiosk kontrolleres",
+                "preparing": "Opdatering forberedes",
+                "staging": "Verificeret release klargøres",
+                "activating": "Aktiverer release",
+                "post_activation_check": "Verificerer release efter aktivering",
+                "rolling_back": "Gendanner tidligere release",
+                "rolled_back": "Tidligere release gendannet; kontrollér årsag",
+                "cancelled": "Opdatering annulleret",
             }.get(maintenance_phase, "Ingen opdatering i gang")
             maintenance_busy = maintenance_phase in {
-                "browser_stopping", "installing", "rebooting", "post_boot_check", "recovery_required"
+                "browser_stopping", "installing", "rebooting", "post_boot_check", "recovery_required",
+                "preparing", "staging", "activating", "post_activation_check", "rolling_back",
             }
-            maintenance_color = (COLOR_RED if maintenance_phase == "recovery_required" else
+            maintenance_color = (COLOR_RED if maintenance_phase in {"recovery_required", "rolled_back"} else
                                  COLOR_ORANGE if maintenance_busy else COLOR_GREEN)
             self._set("maintenance", f"{maintenance_label}: {maintenance_text}" if maintenance_phase else maintenance_text,
                       maintenance_color)
