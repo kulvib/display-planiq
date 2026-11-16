@@ -14,9 +14,11 @@ import stat
 import subprocess
 import tempfile
 import time
+import uuid
 from typing import Any, Callable
 
 from .bundle import extract_verified_payload, open_verified_bundle
+from . import install_coordinator
 from .constants import INSTALL_MODE_UPDATE
 from .crypto import sha256_file
 from .filesystem import (
@@ -1635,6 +1637,25 @@ def _validate_manual_rollback_target(
     return target
 
 
+def _manual_rollback_coordination_id(*, permit_id: str | None, active: str,
+                                     target: str, approval: str, reason: str) -> str:
+    """Stable recovery key; never depend on a random process-local identifier.
+
+    A signed permit ID is scoped to the exact audited request. For older
+    releases with no permit trust, include the immutable before/after release,
+    approved reference and reason, so retry after power loss is the same owner.
+    """
+    scope = (f"permit:{permit_id}" if permit_id is not None else
+             f"legacy:{active}|{target}|{approval}|{hashlib.sha256(reason.encode()).hexdigest()}")
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, 'planiq-display:manual-rollback:v1:' + scope))
+
+
+def _manual_rollback_coordination_root(layout: Layout) -> Path:
+    # As for the privileged controller, isolated test roots NEVER reach the host.
+    return (install_coordinator.DEFAULT_ROOT if layout.root == Path('/')
+            else layout.path('/var/lib/clientflow/install-coordinator'))
+
+
 def rollback_release(
     *,
     expected_release_approval_reference: str,
@@ -1708,7 +1729,24 @@ def rollback_release(
                     or request.get("reason") != reason
                     or request.get("permit_id") != permit_id):
                 raise TransactionError("Genoptagelse kræver den oprindelige rollback-begrundelse og tilladelse")
-        elif not resume_uncommitted_request:
+        # 61B-2F: A manually approved emergency rollback must never race apt,
+        # fwupd or a controller-driven release. Claim BEFORE writing the
+        # consumed-permit/audit record or stopping the running kiosk. This
+        # root-owned durable claim survives process death and reboot; an
+        # uncertain rollback is NOT automatically unlocked.
+        coordination_id = _manual_rollback_coordination_id(
+            permit_id=permit_id, active=active, target=target,
+            approval=approval, reason=reason,
+        )
+        coordination_root = _manual_rollback_coordination_root(layout)
+        try:
+            install_coordinator.claim(
+                owner='update_clientflow', operation_id=coordination_id,
+                root=coordination_root,
+            )
+        except install_coordinator.InstallCoordinationError as exc:
+            raise TransactionError('Manuel rollback blokeret af eksisterende eller usikker installation') from exc
+        if intent is None and not resume_uncommitted_request:
             # Audit and durable consumption BEFORE disabling the running system.
             if permit_id is not None:
                 used[permit_id] = target  # Never prune: a permit is one-shot.
@@ -1739,6 +1777,22 @@ def rollback_release(
         result["rollback_reason"] = reason
         if permit_id is not None:
             result["rollback_permit_id"] = permit_id
+        # Only a saved, healthy target and a matching manual rollback history
+        # justify releasing cross-plane ownership. A raised exception leaves
+        # the journal held for audited recovery (never lease expiration).
+        committed = load_state(layout)
+        history = committed.get('history') or []
+        if (committed.get('active_release_id') != target
+                or committed.get('activation_intent') is not None
+                or _read_active_release_id(layout) != target
+                or not history or history[-1].get('event') != 'manual_rollback'
+                or history[-1].get('to_release_id') != target
+                or history[-1].get('from_release_id') != active):
+            raise TransactionError('Manuel rollback kræver efterkontrol af holdbart lokalt resultat')
+        install_coordinator.release(
+            owner='update_clientflow', operation_id=coordination_id,
+            root=coordination_root,
+        )
         return result
 
 
