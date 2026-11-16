@@ -24,6 +24,7 @@ REQUIRED_SOURCES = (
     'client/runtime/clientflow_runtime/install_coordinator.py',
     'client/release/lib/clientflow_release/update_controller.py',
     'client/release/lib/clientflow_release/transaction.py',
+    'client/release/lib/clientflow_release/cli.py',
     'client/release/lib/clientflow_release/release_public_status.py',
     'client/runtime/clientflow_runtime/release_public_status.py',
     'client/runtime/clientflow_runtime/system_broker.py',
@@ -129,6 +130,23 @@ def inspect(root: Path) -> dict:
                 raise ValueError('release_payload_mapping_missing')
         if b'update-maintenance-screen' not in builder:
             raise ValueError('host_screen_not_mapped')
+        # Candidate source must include the durable first-claim to healthy
+        # first-activation bridge; it must never silently fall back to the
+        # older independent first-install transaction.
+        cli_source = _read(root, 'client/release/lib/clientflow_release/cli.py')
+        coordinator = _read(root, 'client/release/lib/clientflow_release/install_coordinator.py')
+        runtime_coordinator = _read(root, 'client/runtime/clientflow_runtime/install_coordinator.py')
+        if coordinator != runtime_coordinator:
+            raise ValueError('global_install_coordinators_diverged')
+        for required in (b"'fresh_install'", b'def _fresh_coordination_root',
+                         b'def _only_idle_coordinator_remains',
+                         b'install_coordinator.claim(', b'install_coordinator.release('):
+            if required not in cli_source and required not in coordinator:
+                raise ValueError('fresh_install_coordination_contract_missing')
+        for required in (b"coordinator_state.get('owner') != 'fresh_install'",
+                         b"owner='fresh_install', operation_id=fresh_install_id"):
+            if required not in rollback:
+                raise ValueError('fresh_first_activation_proof_missing')
         build_entrypoint = _read(root, 'scripts/build_clientflow_release.py')
         if b'str(repo / "client" / "runtime")' not in build_entrypoint:
             raise ValueError('client_runtime_wheel_build_missing')
@@ -139,6 +157,9 @@ def inspect(root: Path) -> dict:
     def approval_contract():
         build = _read(root, '.github/workflows/release-build.yml')
         approval = _read(root, '.github/workflows/release-approve.yml')
+        if (b'run: python scripts/clientflow_61b2g_release_source_gate.py --repo-root ' not in build
+                or b'clientflow_61b2g_release_source_gate.py --repo-root "$GITHUB_WORKSPACE" --source-only' in build):
+            raise ValueError('release_build_must_refuse_old_identity')
         for required in (b'expected_source_sha', b'candidate-runtime:',
                          b'reproducibility:', b'REPRODUCIBILITY.json'):
             if required not in build:

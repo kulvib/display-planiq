@@ -17,7 +17,7 @@ import tempfile
 import uuid
 
 DEFAULT_ROOT = Path('/var/lib/clientflow/install-coordinator')
-OWNER_KINDS = frozenset({'update_os', 'update_firmware', 'update_clientflow'})
+OWNER_KINDS = frozenset({'update_os', 'update_firmware', 'update_clientflow', 'fresh_install'})
 
 
 class InstallCoordinationError(RuntimeError):

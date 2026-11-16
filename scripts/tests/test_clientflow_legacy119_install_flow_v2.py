@@ -157,7 +157,13 @@ def test_approval_waiter_retries_only_canonical_staged_activation_and_does_not_e
     assert "time.sleep(10)" in waiter
     assert "clientflow-first-activation.service" in source
     assert "first_activation_authorizer(layout)" in activate
-    assert activate.index("first_activation_authorizer(layout)") < activate.index("return _activate_release(")
+    # Fresh-install coordination requires the proven activation result to be
+    # durably re-read before the shared installationslås is released. A direct
+    # return would bypass that final verification.
+    assert activate.index("first_activation_authorizer(layout)") < activate.index("result = _activate_release(")
+    assert activate.index("result = _activate_release(") < activate.index("install_coordinator.release(")
+    assert activate.index("install_coordinator.release(") < activate.index("return result")
+    assert "committed.get('active_release_id') != release_id" in activate
     for forbidden in ("remote_desktop", "livestream", "terminal_agent", "client_terminal"):
         assert forbidden not in waiter.lower()
 

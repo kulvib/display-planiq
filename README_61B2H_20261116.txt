@@ -1,0 +1,34 @@
+PlanIQ Display · 61B-2H · 16. november 2026
+
+Branch: feature/display-61b2h-fresh-install-lock-release-gate-20261116
+Baseline: display-planiq-main(20261116-170003).zip · main commit 7eb9eb94d0cc38e688fd675a422005701f853c67
+
+Pakken indeholder KUN ændrede/nye kildefiler samt komplet SHA256SUMS.txt.
+Upload dem ovenpå den samme main i en ny branch og bevar deres relative stier.
+Ingen ændringer i den signerede 1.3.44/1245-release, backendkatalog, Render-env eller pilot-gates.
+
+Indhold:
+* client/release/lib/clientflow_release/install_coordinator.py
+* client/runtime/clientflow_runtime/install_coordinator.py
+* client/release/lib/clientflow_release/cli.py
+* client/release/lib/clientflow_release/transaction.py
+* .github/workflows/release-build.yml
+* scripts/clientflow_61b2g_release_source_gate.py
+* backend/tests/test_clientflow_61b2h_fresh_install_coordinator.py
+* scripts/tests/test_clientflow_legacy119_install_flow_v2.py
+* docs/CLIENTFLOW_61B2H_FRESH_FIRST_CLAIM_SHARED_LOCK_20261116.md
+* README_61B2H_20261116.txt
+* SHA256SUMS.txt
+
+Der er med vilje fortsat SOURCE STOP for 1.3.44/1245. Ny kandidat og signering må
+først ske efter særskilt releaseidentitet og lukning af øvrige STOP-kriterier.
+
+Test i kildearbejdskopien:
+- 816 script-tests PASS; 2 filer udeladt lokalt pga. manglende .git og ikke-låst lokal PyJWT-version.
+- 70 relevante backend-kontroltests PASS.
+- Kildemanifest, Python-syntaks og source-only release gate PASS.
+- Fuld backend-suite kan ikke indsamles lokalt (sqlmodel mangler); GitHub CI er endelig gate.
+
+VIGTIGT: Ingen merge, Render-deploy eller fysisk klientinstallation før fuld grøn CI,
+separat gennemgang og godkendelse. Et eventuelt deployment af server-kode vil
+ikke opdatere den fysiske klient.

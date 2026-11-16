@@ -60,6 +60,7 @@ from .wipe import wipe
 from .updater_client import StableUpdaterClient
 from .updater_config import UpdaterConfig
 from .update_controller import UpdateController
+from . import install_coordinator
 
 FIRST_CLAIM_REJECTED_EXIT = 20
 
@@ -112,6 +113,33 @@ def _install_state_path(layout: Layout) -> Path:
     return layout.path("/var/lib/clientflow/release/install-state.json")
 
 
+def _fresh_coordination_root(layout: Layout) -> Path:
+    # Always use the same durable root as OS, firmware and the release controller.
+    return (install_coordinator.DEFAULT_ROOT if layout.root == Path('/')
+            else layout.path('/var/lib/clientflow/install-coordinator'))
+
+
+def _only_idle_coordinator_remains(layout: Layout) -> bool:
+    """A rejected initial claim may leave ONLY an idle coordination journal.
+
+    Do not broadly ignore /var/lib/clientflow: extra files or a live/corrupt
+    coordinator are conflicts. This also allows a different CF code after a
+    definite backend 4xx, without deleting the global coordination lock.
+    """
+    base = layout.path('/var/lib/clientflow')
+    coordinator = _fresh_coordination_root(layout)
+    try:
+        if base.is_symlink() or not base.is_dir() or coordinator.is_symlink() or not coordinator.is_dir():
+            return False
+        if {x.name for x in base.iterdir()} != {'install-coordinator'}:
+            return False
+        if not {x.name for x in coordinator.iterdir()}.issubset({'coordinate.lock'}):
+            return False
+        return install_coordinator.snapshot(root=coordinator) is None
+    except (OSError, install_coordinator.InstallCoordinationError):
+        return False
+
+
 def _fresh_conflicts(layout: Layout, *, allow_factory_handoff: bool = False) -> list[str]:
     conflicts: list[str] = []
     for absolute in (
@@ -123,6 +151,8 @@ def _fresh_conflicts(layout: Layout, *, allow_factory_handoff: bool = False) -> 
         "/usr/lib/tmpfiles.d/clientflow.conf",
     ):
         if layout.path(absolute).exists() or layout.path(absolute).is_symlink():
+            if absolute == '/var/lib/clientflow' and _only_idle_coordinator_remains(layout):
+                continue
             conflicts.append(absolute)
     unit_root = layout.path("/etc/systemd/system")
     if unit_root.is_dir() and not unit_root.is_symlink():
@@ -226,12 +256,36 @@ def _cleanup_new_install_preclaim_state(layout: Layout, *, install_id: str) -> N
     state = load_secure_json(state_path)
     if str(state.get("install_id") or "") != str(install_id):
         raise RuntimeError("Pre-claim cleanup afviste install-state fra en anden transaction")
-    for absolute in ("/etc/clientflow", "/var/lib/clientflow"):
-        path = layout.path(absolute)
-        if path.is_symlink():
-            raise RuntimeError(f"Pre-claim cleanup afviste symlink: {path}")
-        if path.exists():
-            shutil.rmtree(path)
+    # Never delete the global coordinator inside /var/lib/clientflow. Other
+    # update planes may be waiting for the same persistent lock; deleting it
+    # would split the safety domain. Only the release state and exact new
+    # installation credentials can exist before the first backend claim.
+    root = layout.path('/var/lib/clientflow')
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError('Pre-claim cleanup afviste usikker ClientFlow state-root')
+    if {x.name for x in root.iterdir()} != {'release', 'install-coordinator'}:
+        raise RuntimeError('Pre-claim cleanup afviste uventede state-filer')
+    if install_coordinator.snapshot(root=_fresh_coordination_root(layout)) != {
+        'schema_version': 1, 'owner': 'fresh_install', 'operation_id': install_id,
+    }:
+        raise RuntimeError('Pre-claim cleanup afviste fremmed eller manglende installationslås')
+    release_root = layout.state_root
+    if release_root.is_symlink() or not release_root.is_dir():
+        raise RuntimeError('Pre-claim cleanup afviste usikker release-state')
+    if {x.name for x in release_root.iterdir()} != {'install-state.json'}:
+        raise RuntimeError('Pre-claim cleanup afviste uventede release-filer')
+    etc = layout.path('/etc/clientflow')
+    if etc.is_symlink():
+        raise RuntimeError('Pre-claim cleanup afviste symlink i credentials')
+    if etc.exists():
+        shutil.rmtree(etc)
+    shutil.rmtree(release_root)
+    # The uncommitted local state is fully gone. Only now may the same owner
+    # release the lock; leave the trusted empty coordinator directory intact.
+    install_coordinator.release(
+        owner='fresh_install', operation_id=install_id,
+        root=_fresh_coordination_root(layout),
+    )
 
 
 def _prepare_claim_ca(layout: Layout, ca_file: Path | None, *, new_install: bool) -> str | None:
@@ -801,6 +855,15 @@ def install_fresh(args: argparse.Namespace) -> dict:
         client_name=client_name,
         layout=layout,
     )
+    if not new_install:
+        # Resume must re-claim the SAME install-id before touching host state.
+        # A missing old journal can be reconstituted from the durable exact
+        # install-state; a different update owner or corrupt journal is STOP.
+        assert install_state is not None
+        install_coordinator.claim(
+            owner='fresh_install', operation_id=str(install_state.get('install_id') or ''),
+            root=_fresh_coordination_root(layout),
+        )
 
     # Host prerequisites and network/backend reachability are proven before
     # one-time enrollment authorities are read. The network preflight is
@@ -884,12 +947,20 @@ def install_fresh(args: argparse.Namespace) -> dict:
                 "Fresh install afviste eksisterende ClientFlow-spor: " + ", ".join(conflicts)
                 + ". Brug den separate eksplicitte wipe-procedure."
             )
+        # After the clean-machine conflict check, acquire cross-plane ownership
+        # BEFORE creating the local durable install state. Do not release on
+        # ambiguous exceptions; recovery must re-prove the same operation-id.
+        first_install_id = str(uuid.uuid4())
+        install_coordinator.claim(
+            owner='fresh_install', operation_id=first_install_id,
+            root=_fresh_coordination_root(layout),
+        )
         ensure_real_directory(layout.state_root, mode=0o700)
         seed = secrets.token_bytes(32)
         install_state = {
             "schema_version": INSTALL_STATE_SCHEMA,
             "fresh_install_binding": binding,
-            "install_id": str(uuid.uuid4()),
+            "install_id": first_install_id,
             "credential_seed_b64": base64.urlsafe_b64encode(seed).rstrip(b"=").decode("ascii"),
             "backend_url": backend_url,
             "kiosk_user": kiosk_user,
