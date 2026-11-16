@@ -1934,18 +1934,21 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               client.update_maintenance.phase &&
               client.update_maintenance.phase !== "completed" && (
                 <Alert
-                  severity={client.update_maintenance.phase === "recovery_required" ? "error" : "info"}
+                  severity={["recovery_required", "rolled_back"].includes(client.update_maintenance.phase) ? "error" : "info"}
                   sx={{ mb: 0.5, border: "1px solid rgba(125,211,252,0.22)" }}
                 >
                   <Typography variant="body2" fontWeight={800}>
                     {client.update_maintenance.action === "update_firmware" ? "Firmware" :
-                      client.update_maintenance.action === "update_os" ? "Ubuntu" : "System"}
+                      client.update_maintenance.action === "update_os" ? "Ubuntu" :
+                      client.update_maintenance.action === "update_clientflow" ? "ClientFlow" : "System"}
                     {" · "}{client.update_maintenance.message || "Vedligeholdelsestilstand"}
                   </Typography>
                   <Typography variant="caption" sx={{ display: "block", mt: 0.4 }}>
                     {clientOnline === false
                       ? "Klienten er offline; denne status er senest rapporteret og ikke bekræftet aktuel. "
-                      : "Kioskbrowseren er midlertidigt spærret under installationen. "}
+                      : client.update_maintenance.action === "update_clientflow"
+                        ? "ClientFlows releasekontrol og rollback håndteres af den eksisterende controller. "
+                        : "Kioskbrowseren er midlertidigt spærret under installationen. "}
                     Ingen installationsprocent eller sluttid er anslået.
                   </Typography>
                 </Alert>

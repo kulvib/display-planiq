@@ -25,6 +25,8 @@ from .transaction import Layout, TransactionError, activate_release, recover_fai
 from .updater_config import UpdaterConfig
 from .updater_state import DeploymentSnapshot
 from .updater_transport import UpdaterTransport, UpdaterTransportError
+from . import release_public_status
+import sys
 
 MAX_SOURCE_STATE_BYTES = 1024 * 1024
 COPY_CHUNK_BYTES = 1024 * 1024
@@ -985,6 +987,9 @@ class UpdateController:
                 f"Backend er {backend_state!r}, men lokal privileged activation har intet auditerbart outcome"
             )
         _assert_local_staged(self.layout, snapshot, local_state)
+        # Read-only public status is written ONLY after backend activation-start
+        # and the durable local authorization mark; no change to txn authority.
+        self._publish_advisory_release_status(snapshot, "activating")
         try:
             self.activate_func(
                 snapshot.target_release_id,
@@ -1028,11 +1033,81 @@ class UpdateController:
         self.controller_state.mark_outcome(outcome)
         return self._report_success(snapshot, outcome)
 
+    def _publish_advisory_release_status(self, snapshot: DeploymentSnapshot, phase: str) -> None:
+        """Best-effort display ONLY; never grant permission or affect rollback.
+
+        The root controller's real transaction journal and backend deployment
+        remain the only authorities.  A display or filesystem problem cannot
+        make the privileged activation/recovery transaction succeed or fail.
+        """
+        try:
+            release_public_status.publish(
+                path=self.controller_state_root.parent / "release-status" / "state.json",
+                deployment_id=snapshot.deployment_id,
+                release_id=snapshot.target_release_id,
+                phase=phase,
+            )
+        except Exception as exc:  # a display failure must NEVER alter transaction outcome
+            print(f"clientflow-update-controller: advisory release status unavailable ({type(exc).__name__})", file=sys.stderr)
+
+    def _complete_advisory_release_status(self, result: dict[str, Any]) -> None:
+        state = str(result.get("status") or "")
+        if state == "idle":
+            if self.controller_state.phase == "recovery_failed":
+                return  # do not erase an unresolved recovery warning
+            try:
+                release_public_status.clear(
+                    path=self.controller_state_root.parent / "release-status" / "state.json",
+                )
+            except Exception as exc:
+                print(f"clientflow-update-controller: advisory release status cleanup unavailable ({type(exc).__name__})", file=sys.stderr)
+            return
+        deployment = result.get("deployment_id")
+        release_id = result.get("release_id")
+        if not deployment or not release_id:
+            return
+        try:
+            snapshot = DeploymentSnapshot.from_state(self.controller_state._state["deployment"])
+        except (TypeError, ValueError, KeyError):
+            return
+        if snapshot.deployment_id != deployment or snapshot.target_release_id != release_id:
+            return
+        # Only a committed controller success/rollback may become terminal
+        # visually.  A backend status alone must NOT masquerade as health.
+        if state == "succeeded" and self.controller_state.phase == "activation_succeeded":
+            phase = "completed"
+        elif state == "rolled_back" and self.controller_state.phase == "rolled_back":
+            phase = "rolled_back"
+        elif state == "recovery_failed" or self.controller_state.phase == "recovery_failed":
+            phase = "recovery_required"
+        elif state in {"rolling_back"}:
+            phase = "rolling_back"
+        elif state in {"health_check", "backend_terminal", "succeeded", "rolled_back"}:
+            phase = "post_activation_check"
+        elif state == "failed":
+            phase = "recovery_required"
+        elif state == "cancelled":
+            phase = "recovery_required" if self.controller_state.phase == "activation_authorized" else "cancelled"
+        elif state in {"waiting_for_verified_artifact", "local_staged_backend_inactive", "staged_backend_inactive"}:
+            phase = "preparing" if state == "waiting_for_verified_artifact" else "staging"
+        else:
+            return
+        self._publish_advisory_release_status(snapshot, phase)
+
     def run_once(self) -> dict[str, Any]:
         _require_root(self.layout)
         with ControllerLock(self.controller_state_root):
             self.controller_state.reload()
-            return self._run_locked()
+            previous_phase = self.controller_state.phase
+            result = self._run_locked()
+            try:
+                # A backend with no active deployment is not proof that a
+                # previously failed local recovery has been physically healed.
+                if not (result.get("status") == "idle" and previous_phase == "recovery_failed"):
+                    self._complete_advisory_release_status(result)
+            except Exception as exc:  # never turn a green controller into a failure
+                print(f"clientflow-update-controller: advisory status check unavailable ({type(exc).__name__})", file=sys.stderr)
+            return result
 
     def _access_token_and_active_deployment(self) -> tuple[str, dict[str, Any] | None]:
         bootstrap = getattr(self.transport, "issue_access_token_with_active_deployment", None)
