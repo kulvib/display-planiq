@@ -187,3 +187,40 @@ def test_ubuntu2604_probe_uses_locked_canonical_archive_url_not_mutable_apt_inde
     assert 'str(artifact["archive_url"])' in source
     assert '"download"' not in source
     assert 'package = temp / str(artifact["file"])' in source
+
+
+def test_ubuntu2604_probe_accepts_updated_runner_only_when_real_downgrade_guard_rejects(monkeypatch, tmp_path: Path) -> None:
+    from scripts import verify_clientflow_preclaim_bootstrap_ubuntu2604 as probe
+
+    package = tmp_path / "locked-apt.deb"
+    package.write_bytes(b"test-artifact")
+    artifact = {"package": "apt", "version": "3.2.0", "architecture": "amd64"}
+    monkeypatch.setattr(host_bootstrap, "_installed_package_identity", lambda _name: ("apt", "3.2.1", "amd64"))
+    monkeypatch.setattr(probe.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    monkeypatch.setattr(host_bootstrap, "_verify_deb_metadata", lambda *_args: None)
+    monkeypatch.setattr(host_bootstrap, "_binary_works", lambda *_args: True)
+    monkeypatch.setattr(host_bootstrap, "_run", lambda *_args, **_kwargs: pytest.fail("must not invoke dpkg --install"))
+
+    assert probe._installed_apt_is_newer_than_locked(artifact) is True
+    probe._verify_newer_apt_downgrade_is_blocked(package, artifact)
+
+    # If production ever loses its version guard, the CI probe MUST fail.
+    monkeypatch.setattr(host_bootstrap, "_install_apt_from_file", lambda *_args: None)
+    with pytest.raises(probe.ProbeError, match="unexpectedly allowed downgrade"):
+        probe._verify_newer_apt_downgrade_is_blocked(package, artifact)
+
+
+def test_ubuntu2604_probe_rejects_invalid_runner_identity_and_comparison(monkeypatch) -> None:
+    from scripts import verify_clientflow_preclaim_bootstrap_ubuntu2604 as probe
+
+    artifact = {"version": "3.2.0"}
+    monkeypatch.setattr(host_bootstrap, "_installed_package_identity", lambda _name: None)
+    with pytest.raises(probe.ProbeError, match="trustworthy installed apt identity"):
+        probe._installed_apt_is_newer_than_locked(artifact)
+
+    monkeypatch.setattr(host_bootstrap, "_installed_package_identity", lambda _name: ("apt", "3.2.0", "amd64"))
+    monkeypatch.setattr(probe.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=1))
+    assert probe._installed_apt_is_newer_than_locked(artifact) is False
+    monkeypatch.setattr(probe.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=2))
+    with pytest.raises(probe.ProbeError, match="Cannot compare"):
+        probe._installed_apt_is_newer_than_locked(artifact)

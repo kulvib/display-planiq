@@ -5,6 +5,7 @@ No GTK, Wayland, systemctl, Chrome or real OS/firmware update is launched.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import runpy
 import sys
 from types import SimpleNamespace
@@ -30,8 +31,27 @@ def screen_reader(monkeypatch, tmp_path):
     glob = reader.__globals__
     directory = tmp_path / 'maintenance'
     directory.mkdir(mode=0o755)
-    monkeypatch.setitem(glob, 'STATE_DIR', directory)
+    # CI runs as an unprivileged runner, while the real marker is required to
+    # be root-owned. Simulate only filesystem ownership for the temporary test
+    # files; keep real open(O_NOFOLLOW), mode and content checks in place.
+    # NEVER weaken the production reader's root-ownership requirement.
+    def root_metadata(info):
+        return SimpleNamespace(st_uid=0, st_mode=info.st_mode, st_size=info.st_size)
+
+    class RootOwnedDirectory:
+        def lstat(self):
+            return root_metadata(directory.lstat())
+
+    class RootOwnedFileOperations:
+        def __getattr__(self, key):
+            return getattr(os, key)
+
+        def fstat(self, descriptor):
+            return root_metadata(os.fstat(descriptor))
+
+    monkeypatch.setitem(glob, 'STATE_DIR', RootOwnedDirectory())
     monkeypatch.setitem(glob, 'STATE_PATH', directory / 'state.json')
+    monkeypatch.setitem(glob, 'os', RootOwnedFileOperations())
     return reader, directory
 
 
@@ -48,6 +68,35 @@ def test_fullscreen_reader_only_uses_root_owned_validated_non_secret_fields(scre
     assert reader() == {'action': 'Ubuntu', 'phase': 'installing'}
     path.write_text(json.dumps({'schema_version': 1, 'action': 'update_os', 'phase': 'completed'}))
     assert reader() is None
+
+
+def test_fullscreen_untrusted_non_root_owned_directory_and_marker_fail_closed(screen_reader, monkeypatch):
+    reader, directory = screen_reader
+    marker = directory / 'state.json'
+    marker.write_text('{"schema_version":1,"action":"update_os","phase":"installing"}')
+    assert reader() == {'action': 'Ubuntu', 'phase': 'installing'}
+
+    # On a real kiosk neither the directory nor the file may be user-owned.
+    # The simulated metadata below must be rejected regardless of the runner UID.
+    glob = reader.__globals__
+    root_dir = glob['STATE_DIR']
+    root_os = glob['os']
+    monkeypatch.setitem(glob, 'STATE_DIR', SimpleNamespace(lstat=lambda: SimpleNamespace(
+        st_uid=1234, st_mode=directory.lstat().st_mode,
+    )))
+    assert reader() == {'action': 'System', 'phase': 'recovery_required'}
+    monkeypatch.setitem(glob, 'STATE_DIR', root_dir)
+
+    class UntrustedFileOperations:
+        def __getattr__(self, key):
+            return getattr(root_os, key)
+
+        def fstat(self, fd):
+            original = root_os.fstat(fd)
+            return SimpleNamespace(st_uid=1234, st_mode=original.st_mode, st_size=original.st_size)
+
+    monkeypatch.setitem(glob, 'os', UntrustedFileOperations())
+    assert reader() == {'action': 'System', 'phase': 'recovery_required'}
 
 
 def test_fullscreen_invalid_symlink_or_world_writable_state_shows_recovery(screen_reader, tmp_path):
