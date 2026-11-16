@@ -72,6 +72,12 @@ jobs:
           --workflow ci.yml
           --head-branch "$GITHUB_REF_NAME"
 
+      - name: Refuse reused stable release identity and unverified candidate source
+        # Read-only, exact checked-out-source gate. The already signed
+        # 1.3.44/1245 may never be silently rebuilt under new source bytes.
+        # Never use --source-only here: that is for CI of historical source.
+        run: python scripts/clientflow_61b2g_release_source_gate.py --repo-root "$GITHUB_WORKSPACE"
+
       - name: Fetch exact runtime-input transport
         env:
           RUNTIME_INPUTS_URL: ${{ inputs.runtime_inputs_url }}
