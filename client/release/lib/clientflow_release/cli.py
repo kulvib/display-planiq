@@ -133,8 +133,16 @@ def _only_idle_coordinator_remains(layout: Layout) -> bool:
             return False
         if {x.name for x in base.iterdir()} != {'install-coordinator'}:
             return False
-        if not {x.name for x in coordinator.iterdir()}.issubset({'coordinate.lock'}):
+        if coordinator.stat().st_uid != os.geteuid() or coordinator.stat().st_mode & 0o077:
             return False
+        allowed = {'coordinate.lock', 'preclaim-run.lock'}
+        for item in coordinator.iterdir():
+            if item.name not in allowed or item.is_symlink():
+                return False
+            meta = item.lstat()
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.geteuid()
+                    or meta.st_mode & 0o077 or meta.st_size > 4096):
+                return False
         return install_coordinator.snapshot(root=coordinator) is None
     except (OSError, install_coordinator.InstallCoordinationError):
         return False
@@ -856,10 +864,21 @@ def install_fresh(args: argparse.Namespace) -> dict:
         layout=layout,
     )
     if not new_install:
+        # Reject post-activation resumes BEFORE the preclaim apt upgrade.
+        # A second check below still protects the later updater mutation.
+        # The read-only status does not change another operation's lock.
+        assert install_state is not None
+        early_release_state = status(layout)
+        if (early_release_state.get('active_release_id') is not None
+                or early_release_state.get('active_symlink_release_id') is not None
+                or early_release_state.get('activation_intent') is not None):
+            raise RuntimeError(
+                'Fresh install resume afviste en allerede aktiveret eller igangværende activation; '
+                'brug den canonical activation/update-recovery i stedet'
+            )
         # Resume must re-claim the SAME install-id before touching host state.
         # A missing old journal can be reconstituted from the durable exact
         # install-state; a different update owner or corrupt journal is STOP.
-        assert install_state is not None
         install_coordinator.claim(
             owner='fresh_install', operation_id=str(install_state.get('install_id') or ''),
             root=_fresh_coordination_root(layout),
@@ -873,10 +892,20 @@ def install_fresh(args: argparse.Namespace) -> dict:
     preclaim_boot_id: str | None = None
     if layout.root == Path("/"):
         print("[INSTALL] Preclaim host-readiness...", flush=True)
-        preclaim_host_readiness = ensure_preclaim_host_readiness(
-            args.bundle,
+        # Preclaim may reinstall apt and upgrade Ubuntu BEFORE CF authorities
+        # are consumed. It therefore needs the SAME root-owned cross-plane
+        # coordination as release/OS/firmware updates. A rejected or crashed
+        # apt transaction retains the lock until an exact-bundle retry proves
+        # healthy host readiness; no implicit age-based unlock is possible.
+        with install_coordinator.preclaim_host_guard(
             expected_bundle_sha256=approved_bundle_sha256,
-        )
+            root=_fresh_coordination_root(layout),
+            existing_install_id=(str(install_state['install_id']) if not new_install else None),
+        ):
+            preclaim_host_readiness = ensure_preclaim_host_readiness(
+                args.bundle,
+                expected_bundle_sha256=approved_bundle_sha256,
+            )
         try:
             preclaim_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
         except OSError as exc:
