@@ -20,7 +20,7 @@ from .server import serve_forever
 from .socket_activation import activated_socket
 from .unix_rpc import call
 from .power_lifecycle import clear_system_intent, record_system_intent
-from . import update_maintenance
+from . import update_maintenance, install_coordinator
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FIXED_BINARIES = {
@@ -39,6 +39,13 @@ UPDATE_ACTIONS = frozenset({"update_os", "update_firmware"})
 DISPLAY_RUNTIME_SOCKET = os.getenv("CLIENTFLOW_DISPLAY_RUNTIME_SOCKET", "/run/clientflow/display/runtime.sock")
 POWER_PREPARE_DELAY_SECONDS = 5.0
 POWER_FINAL_DELAY_SECONDS = 5.0
+
+def _installation_lock_root() -> Path:
+    # In the real broker, both privilege planes share the one host path.
+    # Hermetic broker tests redirect STATE_DIR and must not touch the host.
+    return (install_coordinator.DEFAULT_ROOT if STATE_DIR == Path('/var/lib/clientflow/system-broker')
+            else STATE_DIR.parent / 'install-coordinator')
+
 
 ALLOWED_ACTIONS = frozenset({
     "update_os",
@@ -537,6 +544,11 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
                     client_id=client_id, command_id=command_id,
                     action=action, recovered=completed,
                 )
+            if action in UPDATE_ACTIONS:
+                # The boot-ID + service health check above is authoritative.
+                # Replaying the completed command also closes a crash window
+                # between completed maintenance and releasing the shared lock.
+                install_coordinator.release(owner=action, operation_id=command_id, root=_installation_lock_root())
         except Exception:
             # Completed journal evidence survives; keep the host in maintenance
             # if the post-boot health boundary has not been established.
@@ -556,6 +568,9 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         if action in BOOT_BOUNDARY_ACTIONS:
             _display_transition(action)
         if action in UPDATE_ACTIONS:
+            # Reserve durable cross-plane ownership BEFORE any browser stop,
+            # apt/dpkg or fwupd mutation. A different or ambiguous owner STOPs.
+            install_coordinator.claim(owner=action, operation_id=command_id, root=_installation_lock_root())
             _enter_update_maintenance(
                 action=action, client_id=client_id, command_id=command_id,
             )
@@ -614,6 +629,10 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
     _journal_finish(
         lock_fd, client_id=client_id, command_id=command_id, action=action, result=result, error=None
     )
+    if action in UPDATE_ACTIONS:
+        # Release only after durable completion; NEVER on exception, pending
+        # reboot, missing boot proof, or a failed journal commit.
+        install_coordinator.release(owner=action, operation_id=command_id, root=_installation_lock_root())
     return result
 
 

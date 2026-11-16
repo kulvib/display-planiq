@@ -1,0 +1,30 @@
+[Unit]
+Description=PlanIQ Display independent offline maintenance screen
+After=graphical.target systemd-logind.service
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=@CLIENTFLOW_KIOSK_USER@
+Environment=XDG_RUNTIME_DIR=/run/user/@CLIENTFLOW_KIOSK_UID@
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/@CLIENTFLOW_KIOSK_UID@/bus
+Environment=GDK_BACKEND=wayland
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=/usr/bin/python3 -I /usr/lib/clientflow/maintenance/host-screen --supervisor
+Restart=always
+RestartSec=10s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

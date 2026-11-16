@@ -1161,6 +1161,30 @@ def promote_durable_rollback_host(*, layout: Layout = Layout()) -> dict[str, Any
     if layout.root == Path("/"):
         _run(["/usr/bin/systemctl", "daemon-reload"])
         _run(["/usr/bin/systemctl", "enable", "--now", _STABLE_ROLLBACK_UNITS[1]])
+    # 61B-2E: independent kiosk-user screen survives clientflow.target
+    # quiesce and active symlink replacement. This is best-effort display ONLY;
+    # it must not obstruct canonical signed rollback promotion or health gates.
+    try:
+        screen_source = source_root / "client-runtime/libexec/update-maintenance-screen"
+        stable_screen_root = layout.path("/usr/lib/clientflow/maintenance")
+        stable_screen = stable_screen_root / "host-screen"
+        unit_source = source_root / "release/stable-systemd/planiq-display-maintenance.service"
+        if screen_source.is_file() and unit_source.is_file():
+            ensure_real_directory(stable_screen_root, mode=0o755)
+            _atomic_copy(screen_source, stable_screen, mode=0o555)
+            if sha256_file(stable_screen) != sha256_file(screen_source):
+                raise TransactionError("Stable maintenance screen hash matcher ikke signeret payload")
+            raw = unit_source.read_bytes()
+            raw = raw.replace(b"@CLIENTFLOW_KIOSK_USER@", _definition_kiosk_user(layout, None).encode("ascii"))
+            raw = raw.replace(b"@CLIENTFLOW_KIOSK_UID@", str(_definition_kiosk_uid(layout, None)).encode("ascii"))
+            maintenance_unit = "planiq-display-maintenance.service"
+            atomic_write_bytes(layout.unit_root / maintenance_unit, raw, mode=0o644)
+            if layout.root == Path("/"):
+                _run(["/usr/bin/systemctl", "daemon-reload"])
+                _run(["/usr/bin/systemctl", "enable", "--now", maintenance_unit])
+    except Exception as exc:
+        import sys
+        print(f"clientflow-maintenance-screen: independent host promotion unavailable ({type(exc).__name__})", file=sys.stderr)
     # Marker only after the complete handoff; partial failures retry next boot
     # or during activation recovery. Never downgrade to a previous version.
     atomic_write_json(marker, {"schema_version": 1, "release_sequence": seq,
