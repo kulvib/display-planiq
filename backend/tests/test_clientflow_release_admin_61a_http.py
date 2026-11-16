@@ -13,6 +13,7 @@ import pytest
 
 pytest.importorskip("sqlmodel")
 from fastapi import FastAPI
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine, select
 
@@ -201,6 +202,42 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     assert http.get("/api/clientflow/release-administration").json()["waves"][0]["state"] == "draft"
     assert http.post("/api/clientflow/release-administration/drafts/invalid/approve").status_code == 404
     assert session.get(ClientFlowReleaseControl, 1).cutover_enabled is False
+
+
+def test_61b_create_draft_flushes_parent_before_fk_targets(environment):
+    """PostgreSQL FK safety: insert the wave before its target rows.
+
+    SQLite's default foreign_keys=OFF masks the actual production failure,
+    so observe SQL execution order in the HTTP integration test. This
+    regression fails if the explicit wave flush is removed.
+    """
+    http, session = environment
+    inserted = []
+
+    def capture_insert(connection, cursor, statement, parameters, context, executemany):
+        sql = statement.lstrip().upper()
+        if sql.startswith("INSERT INTO CLIENTFLOW_ROLLOUT_WAVE "):
+            inserted.append("wave")
+        elif sql.startswith("INSERT INTO CLIENTFLOW_ROLLOUT_TARGET "):
+            inserted.append("target")
+
+    bind = session.get_bind()
+    event.listen(bind, "before_cursor_execute", capture_insert)
+    try:
+        response = http.post("/api/clientflow/release-administration/drafts", json=_payload())
+    finally:
+        event.remove(bind, "before_cursor_execute", capture_insert)
+
+    assert response.status_code == 201, response.text
+    assert inserted == ["wave", "target"], inserted
+    wave = session.get(ClientFlowRolloutWave, response.json()["id"])
+    target = session.exec(select(ClientFlowRolloutTarget)).one()
+    assert target.wave_id == wave.id and target.state == "draft"
+    assert wave.state == "draft"
+    assert not session.exec(select(ClientFlowPhysicalAcceptance)).all()
+    assert session.get(ClientFlowReleaseControl, 1).cutover_enabled is False
+    assert session.get(ClientFlowReleaseControl, 1).fleet_open is False
+    assert session.get(ClientFlowReleaseControl, 1).fresh_install_open is False
 
 
 def test_pilot_mismatch_and_wrong_password_do_not_create_draft(environment):
