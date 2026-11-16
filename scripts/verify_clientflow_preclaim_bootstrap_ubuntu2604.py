@@ -55,6 +55,37 @@ def _sha256(path: Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
+def _installed_apt_is_newer_than_locked(artifact: dict) -> bool:
+    """Distinguish mutable CI runner drift from immutable recovery authority.
+
+    An Ubuntu runner may already have a security-updated apt. The approved
+    bundle must NOT be silently downgraded just to make a CI probe pass.
+    """
+    installed = host_bootstrap._installed_package_identity("apt")
+    if installed is None or installed[0] != "apt" or installed[2] != "amd64":
+        raise ProbeError("Ubuntu 26.04 runner has no trustworthy installed apt identity")
+    comparison = subprocess.run(
+        [str(host_bootstrap.DPKG), "--compare-versions", installed[1], "gt", str(artifact["version"])],
+        check=False,
+    )
+    if comparison.returncode not in (0, 1):
+        raise ProbeError("Cannot compare CI runner apt version to immutable recovery artifact")
+    return comparison.returncode == 0
+
+
+def _verify_newer_apt_downgrade_is_blocked(package: Path, artifact: dict) -> None:
+    """Exercise the REAL production guard without removing a newer apt-get."""
+    if not host_bootstrap._binary_works(host_bootstrap.APT_GET, "--version"):
+        raise ProbeError("Newer apt is installed but apt-get is not functional")
+    try:
+        host_bootstrap._install_apt_from_file(package, artifact)
+    except host_bootstrap.HostBootstrapError as exc:
+        if "nyere end release-bundlens recovery-artifact" not in str(exc):
+            raise ProbeError("APT recovery guard failed for an unexpected reason") from exc
+    else:
+        raise ProbeError("APT recovery unexpectedly allowed downgrade of newer Ubuntu runner")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=REPO)
@@ -106,12 +137,21 @@ def main() -> int:
         shutil.copy2(apt_get, apt_backup)
         shutil.copy2(curl, curl_backup)
         try:
-            apt_get.unlink()
-            if host_bootstrap._binary_works(apt_get, "--version"):
-                raise ProbeError("apt-get removal probe did not create missing state")
-            host_bootstrap._install_apt_from_file(package, artifact)
-            if not host_bootstrap._binary_works(apt_get, "--version"):
-                raise ProbeError("apt recovery path did not restore apt-get")
+            if _installed_apt_is_newer_than_locked(artifact):
+                # Ubuntu hosted runners change independently of the approved
+                # release. Verify fail-closed NO-DOWNGRADE on these hosts; do
+                # not delete apt-get only to fail the guarded recovery later.
+                _verify_newer_apt_downgrade_is_blocked(package, artifact)
+                print("CLIENTFLOW_PRECLAIM_APT_DOWNGRADE_GUARD_OK")
+            else:
+                # On an equal/older runner, retain the executable real
+                # recovery probe from the exact approved, verified .deb.
+                apt_get.unlink()
+                if host_bootstrap._binary_works(apt_get, "--version"):
+                    raise ProbeError("apt-get removal probe did not create missing state")
+                host_bootstrap._install_apt_from_file(package, artifact)
+                if not host_bootstrap._binary_works(apt_get, "--version"):
+                    raise ProbeError("apt recovery path did not restore apt-get")
 
             curl.unlink()
             if host_bootstrap._binary_works(curl, "--version"):

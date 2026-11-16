@@ -74,6 +74,7 @@ LOCAL_DISPLAY_POWER_PATH = STATE_DIR / "local-display-power.json"
 DISPLAY_RESOLUTION_PATH = STATE_DIR / "display-resolution.json"
 DISPLAY_RESOLUTION_DESIRED_PATH = STATE_DIR / "display-resolution-desired.json"
 LOCAL_GUI_SCRIPT = Path("/opt/clientflow/active/client-runtime/libexec/local-gui")
+MAINTENANCE_SCREEN_SCRIPT = Path("/opt/clientflow/active/client-runtime/libexec/update-maintenance-screen")
 SYSTEM_PYTHON = Path("/usr/bin/python3")
 PREACTIVATION_HANDOFF_PATH = Path(
     os.getenv(
@@ -89,6 +90,8 @@ class DisplayRuntime:
         self.logger = configure_logging("clientflow.display.runtime")
         self.browser: subprocess.Popen[bytes] | None = None
         self.local_gui: subprocess.Popen[bytes] | None = None
+        self.maintenance_screen: subprocess.Popen[bytes] | None = None
+        self.next_maintenance_screen_attempt = 0.0
         self.external_local_gui_pid: int | None = None
         self.configuration: dict[str, Any] = self._load_configuration()
         self.browser_requested = bool(self.configuration.get("kiosk_url"))
@@ -931,6 +934,58 @@ class DisplayRuntime:
             environment["CLIENTFLOW_CLIENT_ID"] = client_id
         return environment
 
+    def _stop_maintenance_screen(self) -> None:
+        """Do not stop or affect the kiosk browser or local technician GUI."""
+        process = self.maintenance_screen
+        self.maintenance_screen = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            return  # GTK exited between poll() and terminate().
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=2)
+
+    def _sync_maintenance_screen(self) -> None:
+        """Best-effort offline GTK display after Chrome has been closed.
+
+        This process is owned by the kiosk user and has no privileged socket.
+        A missing graphical session must not cancel an already safely latched
+        update; failures remain observable in the systemd journal and retry.
+        """
+        active = update_maintenance.is_active()
+        if not active:
+            self._stop_maintenance_screen()
+            return
+        if self.browser is not None and self.browser.poll() is None:
+            return  # never cover an active Chrome before the broker stops it
+        process = self.maintenance_screen
+        if process is not None and process.poll() is None:
+            return
+        self.maintenance_screen = None
+        if time.monotonic() < self.next_maintenance_screen_attempt:
+            return
+        self.next_maintenance_screen_attempt = time.monotonic() + 10.0
+        try:
+            if (not MAINTENANCE_SCREEN_SCRIPT.is_file()
+                    or MAINTENANCE_SCREEN_SCRIPT.is_symlink()):
+                raise RuntimeError("Vedligeholdelsesskærmen mangler i den installerede release")
+            environment = self._local_gui_environment()
+            self.maintenance_screen = subprocess.Popen(
+                [str(SYSTEM_PYTHON), str(MAINTENANCE_SCREEN_SCRIPT)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=None,
+                env=environment, start_new_session=False, close_fds=True,
+            )
+        except (RuntimeError, OSError) as exc:
+            self.logger.warning("maintenance_screen_start_failed", extra={"event": type(exc).__name__})
+
     def start_local_gui(self) -> dict[str, Any]:
         if self.local_gui and self.local_gui.poll() is None:
             return {"started": False, "already_running": True, "pid": self.local_gui.pid}
@@ -1264,6 +1319,9 @@ class DisplayRuntime:
                         self.stop_browser(preserve_request=True, source="update_maintenance")
                     except (RuntimeError, OSError):
                         self.logger.warning("maintenance_browser_stop_retry")
+                # A native GTK fullscreen notice survives loss of network/Chrome.
+                # The root marker, never this visual process, governs install safety.
+                self._sync_maintenance_screen()
                 if (
                     self.browser_requested
                     and self.configuration.get("kiosk_url")
@@ -1289,6 +1347,7 @@ class DisplayRuntime:
         finally:
             fullscreen_executor.shutdown(wait=False, cancel_futures=True)
             internet_executor.shutdown(wait=False, cancel_futures=True)
+            self._stop_maintenance_screen()
             self.stop_local_gui()
             self.stop_browser(preserve_request=True)
             server.close()
