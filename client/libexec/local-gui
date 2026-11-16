@@ -44,6 +44,7 @@ SYNCED_PUBLIC_CLIENT_PATH = Path(os.getenv("CLIENTFLOW_SYNCED_PUBLIC_CLIENT_PATH
 VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active/VERSION"))
 RELEASE_INPUT_PATH = Path(os.getenv("CLIENTFLOW_RELEASE_INPUT_PATH", "/opt/clientflow/active/release/release-input.json"))
 STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
+UPDATE_MAINTENANCE_PATH = Path("/var/lib/clientflow/update-maintenance/state.json")
 GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
 STARTED_PREACTIVATION = GUI_MODE == "preactivation"
 PREACTIVATION_MODE = STARTED_PREACTIVATION
@@ -449,6 +450,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         ("Remote desktop", "remote_desktop"),
         ("ClientFlow update", "update"),
         ("Ubuntu update", "ubuntu_update"),
+        ("Vedligeholdelse", "maintenance"),
         ("Livestream", "livestream"),
         ("Oppetid", "uptime"),
     )
@@ -1204,6 +1206,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     "livestream",
                     "update",
                     "ubuntu_update",
+                    "maintenance",
                 ):
                     self._set(key, "Ikke aktiveret", COLOR_GRAY)
             else:
@@ -1236,6 +1239,37 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     self._set("update", value, color)
                 value, color = self._ready_unit("clientflow-system-broker.socket")
                 self._set("ubuntu_update", value, color)
+            # Read-only, root-owned marker. The local GUI remains visible while
+            # Chrome is intentionally closed; no new local privileged control.
+            maintenance = _read_json(UPDATE_MAINTENANCE_PATH)
+            if ((UPDATE_MAINTENANCE_PATH.exists() or UPDATE_MAINTENANCE_PATH.is_symlink())
+                    and (maintenance.get("schema_version") != 1 or
+                         maintenance.get("phase") not in {
+                             "browser_stopping", "installing", "rebooting",
+                             "post_boot_check", "completed", "recovery_required"
+                         })):
+                # A corrupt/unreadable root marker must never be shown as idle.
+                maintenance = {"phase": "recovery_required"}
+            maintenance_phase = str(maintenance.get("phase") or "").strip()
+            maintenance_action = str(maintenance.get("action") or "")
+            maintenance_label = {"update_os": "Ubuntu", "update_firmware": "Firmware"}.get(
+                maintenance_action, "System"
+            )
+            maintenance_text = {
+                "browser_stopping": "Lukker kiosk browser",
+                "installing": "Installerer opdatering",
+                "rebooting": "Afventer kontrolleret genstart",
+                "post_boot_check": "Kontrollerer efter genstart",
+                "recovery_required": "STOP – manuel kontrol nødvendig",
+                "completed": "Afsluttet – internet/kiosk kontrolleres",
+            }.get(maintenance_phase, "Ingen opdatering i gang")
+            maintenance_busy = maintenance_phase in {
+                "browser_stopping", "installing", "rebooting", "post_boot_check", "recovery_required"
+            }
+            maintenance_color = (COLOR_RED if maintenance_phase == "recovery_required" else
+                                 COLOR_ORANGE if maintenance_busy else COLOR_GREEN)
+            self._set("maintenance", f"{maintenance_label}: {maintenance_text}" if maintenance_phase else maintenance_text,
+                      maintenance_color)
             self._set("uptime", _uptime())
 
             kiosk_url = str(configuration.get("kiosk_url") or "Afventer godkendelse / ingen kiosk-URL endnu")
@@ -1334,6 +1368,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
             state = str(runtime.get("state") or "").lower()
             busy = state in {"countdown", "resetting", "waiting_session", "starting", "stopping"}
             system_locked = str(runtime.get("step") or "").lower() in {"shutdown_chrome", "system_rebooting", "system_shutting_down"}
+            system_locked = system_locked or maintenance_busy
             startup_locked = time.monotonic() < self.startup_disable_until
             power_locked = power_state == "off"
             if PREACTIVATION_MODE:

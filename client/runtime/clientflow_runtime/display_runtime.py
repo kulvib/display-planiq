@@ -27,6 +27,7 @@ from .kiosk_consent import CONSENT_CSS, early_protection_script
 from .atomic import atomic_write_json
 from .display_shared_file import atomic_write_shared_json
 from . import display_resolution
+from . import update_maintenance
 from .logging_utils import configure_logging
 from .unix_rpc import RpcError, encode_message, read_message
 
@@ -247,6 +248,12 @@ class DisplayRuntime:
         )
 
     def _start_browser_with_boot_policy(self) -> dict[str, Any]:
+        if update_maintenance.is_active():
+            # Do not persist a new browser status every second while apt/fwupd
+            # can run for hours; preserve the existing bounded status cadence.
+            self.next_start_attempt = time.monotonic() + 15.0
+            self._status("stopped", step="update_maintenance", event_source="system")
+            return {"started": False, "blocked": True, "reason": "update_maintenance"}
         if not self.internet.online:
             return self._wait_for_internet()
         if self.boot_start_pending:
@@ -671,6 +678,9 @@ class DisplayRuntime:
     def start_browser(self, *, source: str = "runtime") -> dict[str, Any]:
         source = str(source or "runtime").strip().lower()
         self.browser_requested = True
+        if update_maintenance.is_active():
+            self._status("stopped", step="update_maintenance", event_source=source)
+            return {"started": False, "blocked": True, "reason": "update_maintenance"}
         if not self.internet.online:
             return self._wait_for_internet()
         if self.browser and self.browser.poll() is None:
@@ -721,6 +731,8 @@ class DisplayRuntime:
         return {"started": True, "pid": self.browser.pid}
 
     def request_start_browser(self, *, source: str) -> dict[str, Any]:
+        if update_maintenance.is_active():
+            return self.start_browser(source=source)
         source = str(source or "backend").strip().lower()
         if source not in {"backend", "gui", "calendar", "runtime"}:
             raise ValueError("Ukendt browser-startkilde")
@@ -758,12 +770,16 @@ class DisplayRuntime:
         return {"stopped": True, "was_running": True}
 
     def restart_browser(self) -> dict[str, Any]:
+        if update_maintenance.is_active():
+            return self.start_browser(source="runtime")
         self.browser_requested = True
         self.stop_browser(preserve_request=True, source="runtime")
         result = self.start_browser(source="runtime")
         return {"restarted": True, **result}
 
     def reset_browser(self) -> dict[str, Any]:
+        if update_maintenance.is_active():
+            return self.start_browser(source="reset_browser")
         self.browser_requested = True
         self.stop_browser(preserve_request=True, source="reset_browser")
         self._clear_browser_profile(reason="reset_browser")
@@ -1121,6 +1137,8 @@ class DisplayRuntime:
         if action == "stop_browser":
             payload = request.get("payload")
             source = str(payload.get("source") or "runtime") if isinstance(payload, dict) else "runtime"
+            if source == "update_maintenance":
+                return self.stop_browser(preserve_request=True, source=source)
             return self.stop_browser(source=source)
         if action == "reset_browser":
             return self.reset_browser()
@@ -1241,6 +1259,11 @@ class DisplayRuntime:
                     except Exception:
                         self.logger.info("display_resolution_probe_waiting")
                     self.next_resolution_probe = time.monotonic() + 30.0
+                if update_maintenance.is_active() and self.browser is not None:
+                    try:
+                        self.stop_browser(preserve_request=True, source="update_maintenance")
+                    except (RuntimeError, OSError):
+                        self.logger.warning("maintenance_browser_stop_retry")
                 if (
                     self.browser_requested
                     and self.configuration.get("kiosk_url")

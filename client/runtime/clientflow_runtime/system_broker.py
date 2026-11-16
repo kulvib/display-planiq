@@ -20,6 +20,7 @@ from .server import serve_forever
 from .socket_activation import activated_socket
 from .unix_rpc import call
 from .power_lifecycle import clear_system_intent, record_system_intent
+from . import update_maintenance
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _FIXED_BINARIES = {
@@ -378,6 +379,78 @@ def _display_transition(action: str) -> None:
     time.sleep(POWER_FINAL_DELAY_SECONDS)
 
 
+def _enter_update_maintenance(*, action: str, client_id: int, command_id: str) -> None:
+    """Latch Chrome shut BEFORE apt/dpkg or fwupd mutate the system.
+
+    The Display control socket is a separate privilege domain. An unreachable
+    or unverified browser is a STOP, never permission to run the helper.
+    """
+    update_maintenance.begin(
+        action=action, client_id=client_id, command_id=command_id,
+        boot_id=_current_boot_id(),
+    )
+    stopped = call(
+        DISPLAY_RUNTIME_SOCKET,
+        {"action": "stop_browser", "payload": {"source": "update_maintenance"}},
+        timeout=25.0,
+    )
+    if not isinstance(stopped, dict) or stopped.get("stopped") is not True:
+        raise SystemCommandInDoubt("maintenance_browser_stop_unconfirmed")
+    observed = call(DISPLAY_RUNTIME_SOCKET, {"action": "status"}, timeout=10.0)
+    if (not isinstance(observed, dict) or observed.get("pid") is not None
+            or observed.get("state") not in {"stopped", "waiting_internet"}):
+        raise SystemCommandInDoubt("maintenance_browser_state_unconfirmed")
+    update_maintenance.advance(
+        action=action, client_id=client_id, command_id=command_id, phase="installing",
+    )
+
+
+def _complete_update_maintenance_after_boot(*, client_id: int,
+                                             command_id: str, action: str,
+                                             recovered: dict[str, Any]) -> None:
+    """Release maintenance ONLY with matching command and proven boot change.
+
+    An active System agent has contacted this broker after boot, and the
+    Display/Status/Browser-Guard services must also be active. The Display
+    runtime separately guards Chrome on verified internet access.
+    """
+    previous = str(recovered.get("previous_boot_id") or "")
+    observed = str(recovered.get("observed_boot_id") or "")
+    if not previous or not observed or previous == observed or observed != _current_boot_id():
+        raise SystemCommandInDoubt("maintenance_boot_boundary_unverified")
+    current = update_maintenance.read_state()
+    if (current is not None and current.get("phase") == "completed"
+            and current.get("action") == action
+            and current.get("client_id") == client_id
+            and current.get("command_id") == command_id
+            and current.get("observed_boot_id") == observed):
+        # Replaying the same recovered command is explicitly idempotent.
+        return
+    update_maintenance.advance(
+        action=action, client_id=client_id, command_id=command_id,
+        phase="post_boot_check", reboot_required=True, observed_boot_id=observed,
+    )
+    try:
+        services = _run([
+            _fixed_binary("systemctl"), "is-active",
+            "clientflow-display-runtime.service", "clientflow-status-agent.service",
+            "clientflow-system-agent.service", "clientflow-browser-guard.service",
+        ], timeout=20)
+        states = str(services.get("output") or "").splitlines()
+        if len(states) != 4 or any(state.strip() != "active" for state in states):
+            raise SystemCommandInDoubt("maintenance_post_boot_services_unhealthy")
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        update_maintenance.advance(
+            action=action, client_id=client_id, command_id=command_id,
+            phase="recovery_required", reboot_required=True, observed_boot_id=observed,
+        )
+        raise SystemCommandInDoubt("maintenance_post_boot_services_unhealthy") from exc
+    update_maintenance.advance(
+        action=action, client_id=client_id, command_id=command_id,
+        phase="completed", reboot_required=True, observed_boot_id=observed,
+    )
+
+
 def _output_requests_reboot(result: dict[str, Any]) -> bool:
     return "CLIENTFLOW_REBOOT_REQUIRED=1" in str(result.get("output") or "")
 
@@ -458,8 +531,19 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
         raise SystemCommandInDoubt("system_command_recovery_boot_mismatch")
     lock_fd, completed = _journal_begin(client_id, command_id, action, recovery_only=recovery_only)
     if completed is not None:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        os.close(lock_fd)
+        try:
+            if action in UPDATE_ACTIONS and completed.get("recovered_after_boot_change"):
+                _complete_update_maintenance_after_boot(
+                    client_id=client_id, command_id=command_id,
+                    action=action, recovered=completed,
+                )
+        except Exception:
+            # Completed journal evidence survives; keep the host in maintenance
+            # if the post-boot health boundary has not been established.
+            raise
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
         return completed
     if action in BOOT_BOUNDARY_ACTIONS:
         record_system_intent(
@@ -471,6 +555,10 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
     try:
         if action in BOOT_BOUNDARY_ACTIONS:
             _display_transition(action)
+        if action in UPDATE_ACTIONS:
+            _enter_update_maintenance(
+                action=action, client_id=client_id, command_id=command_id,
+            )
         result = _execute(prepared)
         if action in UPDATE_ACTIONS:
             reboot_required = _output_requests_reboot(result)
@@ -491,12 +579,32 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
                     source=action,
                     requested_boot_id=requested_boot_id,
                 )
+                update_maintenance.advance(
+                    action=action, client_id=client_id, command_id=command_id,
+                    phase="rebooting", reboot_required=True,
+                )
                 _display_transition("reboot")
                 # A successful update+reboot is completed only after a later
                 # boot-id change reclaims this exact command from the durable
                 # reboot_requested journal. This call must not return success.
                 _cross_update_reboot_boundary()
+            # The helper has already verified package transaction consistency.
+            # Returning Chrome to its previous desired state is delegated to
+            # Display's existing internet and calendar guard.
+            update_maintenance.advance(
+                action=action, client_id=client_id, command_id=command_id,
+                phase="completed", reboot_required=False,
+            )
     except Exception as exc:
+        if action in UPDATE_ACTIONS:
+            try:
+                if update_maintenance.is_active():
+                    update_maintenance.advance(
+                        action=action, client_id=client_id, command_id=command_id,
+                        phase="recovery_required",
+                    )
+            except update_maintenance.MaintenanceStateError:
+                pass  # An unknown marker remains fail-closed to Display.
         if action in BOOT_BOUNDARY_ACTIONS or action in UPDATE_ACTIONS:
             clear_system_intent()
         _journal_finish(

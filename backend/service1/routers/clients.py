@@ -1002,6 +1002,13 @@ def _apply_network_status_for_read(client: Client) -> None:
 def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> None:
     """Project canonical Status telemetry at read time without duplicate authority."""
     payload = presence.status.status_payload or {}
+    maintenance = payload.get("update_maintenance")
+    if isinstance(maintenance, dict) and maintenance.get("schema_version") == 1:
+        # The Status agent owns this sanitized snapshot. Never persist it in
+        # Client rows or compute an independent runtime status database write.
+        _set_runtime_read_attr(client, "update_maintenance", maintenance)
+    else:
+        _set_runtime_read_attr(client, "update_maintenance", None)
     if presence.status.agent_version:
         _set_runtime_read_attr(client, "client_version", presence.status.agent_version)
         _set_runtime_read_attr(client, "client_version_updated_at", presence.status.reported_at)
@@ -1808,6 +1815,7 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "pending_reboot": client.pending_reboot,
         "pending_shutdown": client.pending_shutdown,
         "pending_os_update": getattr(client, "pending_os_update", False),
+        "update_maintenance": getattr(client, "update_maintenance", None),
         "ubuntu_update_command_id": getattr(client, "ubuntu_update_command_id", None),
         "client_version": client.client_version,
         "client_version_patch": getattr(client, "client_version_patch", None),
