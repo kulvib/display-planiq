@@ -20,6 +20,7 @@ from .logging_utils import configure_logging
 from .net import DomainTransport, backoff_seconds
 from .power_lifecycle import PowerLifecycleError, collect_completed_local_power_event
 from .status import boot_id as status_boot_id, report_status
+from .update_maintenance import public_snapshot as update_maintenance_snapshot
 
 ACTIVE_SYSTEMD_ROOT = Path("/opt/clientflow/active/client-runtime/systemd")
 SYS_CLASS_NET = Path("/sys/class/net")
@@ -263,6 +264,7 @@ def collect_host_status() -> dict[str, Any]:
     }
     payload.update(_network_status())
     payload.update(_time_status())
+    payload["update_maintenance"] = update_maintenance_snapshot()
     try:
         local_power_event = collect_completed_local_power_event()
     except PowerLifecycleError as exc:

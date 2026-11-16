@@ -424,6 +424,8 @@ class ClientControlRoomListRead(ClientBase):
     machine_id: Optional[str] = None
     status: Optional[str] = "pending"
     presence: ClientPresenceRead = Field(default_factory=ClientPresenceRead)
+    # Status-agent owned, read-time-only update maintenance snapshot. Not a DB column.
+    update_maintenance: Optional[dict[str, Any]] = None
     sort_order: Optional[int] = None
     created_at: Optional[datetime] = None
     approval_ready_at: Optional[datetime] = None

@@ -283,6 +283,7 @@ const DETAIL_HOT_FIELDS = [
   "machine_id",
   "kiosk_url",
   "browser_refresh_interval_sec",
+  "update_maintenance",
   "service_clientflow_status",
   "service_calendar_status",
   "service_browser_guard_status",
