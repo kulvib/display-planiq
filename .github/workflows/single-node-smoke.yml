@@ -97,6 +97,57 @@ jobs:
             -c 'SELECT id FROM ci_persistence_marker.proof')"
           test "$marker" = '42'
           echo 'SINGLE_NODE_SMOKE_OK: schema preserved, no external PostgreSQL, persisted data survived restart'
+      - name: 62B logical backup and isolated PostgreSQL 18 restore proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          # CI fixture only. No production connection, live backup upload,
+          # migration, service change or release approval in this step.
+          dump="$RUNNER_TEMP/display-62b-disposable.pgdump"
+          docker exec -u display_app display-single-node-ci \
+            pg_dump --no-password --format=custom --no-owner --no-acl \
+              -h /run/display-postgres -U display_app -d display > "$dump"
+          test -s "$dump"
+          test "$(head -c 5 "$dump")" = PGDMP
+          docker exec -i -u display_app display-single-node-ci \
+            pg_restore --list - < "$dump" >/dev/null
+
+          # Throwaway isolated PostgreSQL, no host port or network access.
+          docker run -d --name display-62b-isolated-restore \
+            --network none -e POSTGRES_PASSWORD=disposable-ci-only-password \
+            postgres:18.4@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636
+          for attempt in $(seq 1 60); do
+            if docker exec -u postgres display-62b-isolated-restore \
+              pg_isready -q -U postgres -d postgres; then
+              break
+            fi
+            if [[ "$attempt" -eq 60 ]]; then
+              docker logs display-62b-isolated-restore
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec -u postgres display-62b-isolated-restore \
+            createdb -U postgres display_restore_62b
+          docker exec -i -u postgres display-62b-isolated-restore \
+            pg_restore --exit-on-error --single-transaction --no-owner --no-acl \
+              -U postgres -d display_restore_62b < "$dump"
+          # Prove durable application data and migrated metadata, not just
+          # pg_restore's zero exit code.
+          marker="$(docker exec -u postgres display-62b-isolated-restore \
+            psql -X -A -t -v ON_ERROR_STOP=1 -U postgres -d display_restore_62b \
+            -c 'SELECT id FROM ci_persistence_marker.proof')"
+          test "$marker" = 42
+          migrations="$(docker exec -u postgres display-62b-isolated-restore \
+            psql -X -A -t -v ON_ERROR_STOP=1 -U postgres -d display_restore_62b \
+            -c 'SELECT count(*) FROM alembic_version')"
+          test "$migrations" = 1
+          echo 'DISPLAY_62B_CI_FIXTURE_RESTORE_PASS: isolated Postgres 18, schema, data, migrations'
+      - name: Delete 62B throwaway restore data (always)
+        if: always()
+        run: |
+          docker rm -f -v display-62b-isolated-restore || true
+          rm -f "$RUNNER_TEMP/display-62b-disposable.pgdump"
       - name: Print diagnostics on failure
         if: failure()
         run: docker logs display-single-node-ci || true
