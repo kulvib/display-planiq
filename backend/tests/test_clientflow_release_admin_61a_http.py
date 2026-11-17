@@ -206,7 +206,10 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     assert policy["available_clients"] == [{
         "id": 3, "name": "Viborg1", "locality": None,
         "organization_id": None, "organization_name": None,
-        "reported_version": None, "version_reported_at": None,
+        # The shared fixture now seeds a valid, credential-bound Status-agent
+        # report. The inventory must expose its canonical version rather than
+        # falling back to the legacy Client.client_version or returning null.
+        "reported_version": "1.3.43", "version_reported_at": "2026-11-17T09:40:00",
     }]
     created = http.post("/api/clientflow/release-administration/drafts", json=_payload())
     assert created.status_code == 201, created.text
