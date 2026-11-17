@@ -49,14 +49,18 @@ def test_61b_existing_runtime_authorities_and_61a_frozen_schema_untouched():
 
 def test_61b_admin_display_never_confuses_plan_review_with_release_approval():
     ui = source("frontend/src/pages/adminpages/ClientFlowReleaseAdministration.jsx")
-    assert 'data.authorization_active !== false' in ui
-    assert 'data.fresh_install_open !== false' in ui
-    assert 'data.fleet_open !== false' in ui
-    assert 'data.cutover_enabled !== false' in ui
-    assert 'planning_review_available !== true' in ui
+    helper = source("frontend/src/pages/adminpages/clientflowReleasePlan.mjs")
+    for guard in ('data.authorization_active !== false', 'data.fresh_install_open !== false',
+                  'data.fleet_open !== false', 'data.cutover_enabled !== false',
+                  'planning_review_available !== true', 'data.physical_pilot_accepted !== false'):
+        assert guard in helper
     assert 'setClientIds("3")' not in ui
     assert 'React.useState("3")' not in ui
-    assert 'Forventet kildeversion' in ui
-    assert 'Udrulning ikke autoriseret' in ui
+    assert 'Ingen manuel versionsindtastning' in ui
+    assert 'ingen udrulning autoriseret' in ui
+    assert 'preparePlan(available, selectedIds, sourceVersion' in ui
+    assert 'Start opdatering til valgte klienter · spærret' in ui
+    assert 'Rollback til valgte klienter · spærret' in ui
     for operation in ("review", "pause", "resume", "cancel"):
-        assert f'decidePlan(wave, "{operation}")' in ui
+        assert f'openPlanDialog(wave, "{operation}")' in ui
+    assert 'clientflow-deployments' not in ui

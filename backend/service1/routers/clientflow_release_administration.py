@@ -26,7 +26,7 @@ from ..clientflow_release_admin_models import (
 )
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog
 from ..db import get_session
-from ..models import Client, User
+from ..models import Client, Organization, User
 from ..rate_limit import assert_key_not_limited, clear_key_rate_limit, record_key_attempt
 
 router = APIRouter(prefix="/clientflow/release-administration", tags=["clientflow-release-administration"])
@@ -188,7 +188,38 @@ def read_release_administration(
     ids: dict[str, list[int]] = {}
     for target in targets:
         ids.setdefault(target.wave_id, []).append(target.client_id)
+    # One lightweight, scoped inventory query on an explicit admin refresh.
+    # Report the LAST OBSERVED version, never claim it is live or installable.
+    # This endpoint is strictly superadmin-only; no secrets or machine IDs.
+    inventory_rows = session.exec(
+        select(
+            Client.id, Client.name, Client.locality, Client.organization_id,
+            Client.client_version, Client.client_version_updated_at,
+            Organization.name.label("organization_name"),
+        )
+        .join(Organization, Client.organization_id == Organization.id, isouter=True)
+        .where(Client.status == "approved", Client.deleted_at.is_(None))
+        .order_by(Organization.name, Client.name, Client.id)
+        .limit(1001)
+    ).all()
+    available_clients = [
+        {
+            "id": row[0], "name": row[1], "locality": row[2],
+            "organization_id": row[3], "organization_name": row[6],
+            "reported_version": row[4] if row[4] and re.fullmatch(r"\d+\.\d+\.\d+", row[4]) else None,
+            "version_reported_at": row[5],
+        }
+        for row in inventory_rows[:1000]
+    ]
     return {
+        "available_clients": available_clients,
+        "client_inventory_complete": len(inventory_rows) <= 1000,
+        "available_releases": [{
+            "release_id": control.stable_release_id,
+            "version": "1.3.44", "status": "stable",
+            "bundle_sha256": control.stable_bundle_sha256,
+            "deployment_authorized": False,
+        }],
         "phase": "additive_draft_only",  # 61A compatibility: all targets remain drafts.
         "planning_review_available": True,
         "authorization_active": False,

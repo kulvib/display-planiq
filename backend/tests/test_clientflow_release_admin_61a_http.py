@@ -23,7 +23,7 @@ from service1.clientflow_release_admin_models import (
 )
 from service1.db import get_session
 from service1.auth import get_current_superadmin_user
-from service1.models import User, Client, AuditLog
+from service1.models import User, Client, Organization, AuditLog
 from service1.routers import clientflow_release_administration as route
 
 SHA = "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
@@ -140,7 +140,7 @@ class _ASGITestClient:
 def environment(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[
-        User.__table__, Client.__table__, AuditLog.__table__,
+        User.__table__, Client.__table__, Organization.__table__, AuditLog.__table__,
         ClientFlowReleaseControl.__table__, ClientFlowRolloutWave.__table__, ClientFlowRolloutTarget.__table__,
         ClientFlowPhysicalAcceptance.__table__,
     ])
@@ -192,6 +192,18 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     assert policy["fresh_install_open"] is False
     assert policy["physical_pilot_accepted"] is False
     assert policy["stable_release_id"] == RELEASE_ID
+    # 61B UX: the same guarded response provides a non-secret, read-only
+    # inventory and only the already approved stable catalog release.
+    assert policy["client_inventory_complete"] is True
+    assert policy["available_releases"] == [{
+        "release_id": RELEASE_ID, "version": "1.3.44", "status": "stable",
+        "bundle_sha256": SHA, "deployment_authorized": False,
+    }]
+    assert policy["available_clients"] == [{
+        "id": 3, "name": "Viborg1", "locality": None,
+        "organization_id": None, "organization_name": None,
+        "reported_version": None, "version_reported_at": None,
+    }]
     created = http.post("/api/clientflow/release-administration/drafts", json=_payload())
     assert created.status_code == 201, created.text
     row = created.json()
@@ -456,3 +468,29 @@ def test_61b_impersonation_and_real_actor_mismatch_rejected(environment):
     with pytest.raises(HTTPException) as denied:
         route._require_actor(request, user)
     assert denied.value.status_code == 409
+
+
+def test_read_only_client_inventory_is_superadmin_scoped_and_does_not_leak_credentials(environment):
+    http, session = environment
+    session.add(Organization(id=7, name="Kulturskolen"))
+    session.add(Client(id=8, name="Testkiosk", locality="Vest", status="approved", organization_id=7,
+                       client_version="1.3.43"))
+    session.add(Client(id=9, name="Afventer", status="pending", client_version="1.3.43"))
+    session.add(Client(id=10, name="Slettet", status="approved", client_version="1.3.43",
+                       deleted_at=datetime(2026, 11, 16, 12, 0)))
+    session.add(Client(id=11, name="Forkert version", status="approved", client_version="not-a-version"))
+    session.commit()
+    response = http.get("/api/clientflow/release-administration")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    clients = {row["id"]: row for row in body["available_clients"]}
+    assert sorted(clients) == [3, 8, 11]
+    assert clients[8]["organization_name"] == "Kulturskolen"
+    assert clients[8]["reported_version"] == "1.3.43"
+    assert clients[11]["reported_version"] is None
+    assert "machine_id" not in response.text
+    assert "hashed_password" not in response.text
+    assert "client_secret" not in response.text
+    assert body["authorization_active"] is False
+    assert body["available_releases"][0]["deployment_authorized"] is False
+    assert session.exec(select(ClientFlowRolloutTarget)).all() == []
