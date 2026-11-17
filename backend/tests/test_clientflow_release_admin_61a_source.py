@@ -119,5 +119,5 @@ def test_rollout_admin_is_inert_and_legacy_gates_remain_untouched():
     assert '"physical_pilot_accepted": false' in _source("backend/service1/clientflow_1245_fleet_acceptance.json")
     assert "clientflow_release_administration.router" in _source("backend/service1/main.py")
     ui = _source("frontend/src/pages/adminpages/ClientFlowReleaseAdministration.jsx")
-    assert "Gem kladde" in ui and "starter ingen installation" in ui
+    assert "Gennemgå og gem inaktiv plan" in ui and "Ingen installation" in ui
     assert "ClientFlowReleaseAdministration" in _source("frontend/src/pages/adminpages/AdminPage.jsx")

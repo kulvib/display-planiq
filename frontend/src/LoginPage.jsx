@@ -185,6 +185,10 @@ export default function LoginPage() {
           setError("Forkert brugernavn eller adgangskode.");
         } else if (status === 429) {
           setError(formatRateLimitMessage(err, "For mange login-forsøg. Prøv igen senere."));
+        } else if (status >= 500) {
+          // A Render gateway error is NOT an incorrect password. Do not retry
+          // credentials automatically, which can trigger authentication limits.
+          setError("PlanIQ-serveren er midlertidigt utilgængelig. Login blev ikke gennemført. Prøv igen, når forbindelsen er genetableret.");
         } else {
           setError(formatApiError(err, "Kunne ikke logge ind."));
         }

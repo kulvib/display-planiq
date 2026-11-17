@@ -1,5 +1,4 @@
 import client from "../api/client";
-import { apiUrl } from "../api";
 import { createApiError, normalizeApiError } from "../api/apiError";
 
 async function readJson(res, fallback) {
@@ -15,11 +14,12 @@ async function readJson(res, fallback) {
 
 export async function getMaintenanceStatus(signal) {
   try {
-    const res = await fetch(`${apiUrl}/api/maintenance/status`, {
+    const res = await fetch("/api/maintenance/status", {
       method: "GET",
       credentials: "include",
       cache: "no-store",
-      // Den offentlige status er allerede no-store på serveren. Ingen ekstra
+      // Same-origin avoids browser CORS masking Render edge 502 responses.
+      // Public status is already no-store on the server. No extra
       // Cache-Control request-header: den udløser unødvendig CORS-preflight.
       signal,
     });

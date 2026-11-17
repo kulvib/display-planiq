@@ -57,6 +57,7 @@ export default function MaintenanceGate({ children }) {
   const [state, setState] = React.useState(null);
   const [checking, setChecking] = React.useState(true);
   const [statusError, setStatusError] = React.useState("");
+  const [failureCount, setFailureCount] = React.useState(0);
   const [stopping, setStopping] = React.useState(false);
   const [stopError, setStopError] = React.useState("");
   const seqRef = React.useRef(0);
@@ -75,9 +76,13 @@ export default function MaintenanceGate({ children }) {
       stateRef.current = next;
       setState(next);
       setStatusError("");
+      setFailureCount(0);
     } catch (error) {
       if (controller.signal.aborted || error?.name === "AbortError") return;
-      if (seqRef.current === seq) setStatusError(error?.message || "Vedligeholdelsesstatus kunne ikke hentes");
+      if (seqRef.current === seq) {
+        setStatusError(error?.message || "Vedligeholdelsesstatus kunne ikke hentes");
+        setFailureCount((previous) => Math.min(previous + 1, 5));
+      }
     } finally {
       if (!controller.signal.aborted && seqRef.current === seq) setChecking(false);
     }
@@ -89,10 +94,19 @@ export default function MaintenanceGate({ children }) {
   }, [refresh]);
 
   React.useEffect(() => {
-    if (!state?.enabled) return undefined;
+    if (!state?.enabled || statusError) return undefined;
     const timer = window.setInterval(() => void refresh(), POLL_MS);
     return () => window.clearInterval(timer);
-  }, [refresh, state?.enabled]);
+  }, [refresh, state?.enabled, statusError]);
+
+  // On gateway outages, retry with bounded backoff instead of hammering the
+  // backend on the login page. No stale "open" status may grant access.
+  React.useEffect(() => {
+    if (!statusError) return undefined;
+    const delayMs = Math.min(60_000, 5_000 * (2 ** Math.max(0, failureCount - 1)));
+    const timer = window.setTimeout(() => void refresh(), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [refresh, statusError, failureCount]);
 
   React.useEffect(() => {
     const onFocus = () => void refresh();
@@ -123,7 +137,9 @@ export default function MaintenanceGate({ children }) {
   if (checking && !state) {
     return <Box sx={{ minHeight: "calc(100dvh - 40px)", display: "grid", placeItems: "center" }}><CircularProgress aria-label="Kontrollerer driftsstatus" /></Box>;
   }
-  if (!state && statusError) return <StatusError retry={() => void refresh()} checking={checking} />;
+  // Fail closed even when an earlier successful result said "open".
+  // A stale maintenance result is not authority during a network outage.
+  if (statusError) return <StatusError retry={() => void refresh()} checking={checking} />;
 
   const actorIsSuperadmin = user?.impersonation_active === true && user?.actor_role === "superadmin";
   const superadmin = !loading && (hasSuperadminRole(user) || actorIsSuperadmin);
