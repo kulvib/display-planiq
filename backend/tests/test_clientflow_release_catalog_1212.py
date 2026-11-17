@@ -75,15 +75,16 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
 
     # Only exactly approved and published 1.3.38/1239 is selectable.
     # The previous 1.3.37/1238 selector is removed; history is preserved as evidence.
-    assert source_version == "1.3.44"
-    assert release_input["release_sequence"] == 1245
+    assert source_version == "1.3.45"  # candidate not yet approved
+    assert release_input["release_sequence"] == 1246
     assert release_input["runtime_python"] == "3.13.14"
     assert data["catalog_sequence"] == 1243
     assert data["catalog_sequence"] == 1243  # immutable pre-reset history
     current = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
     # The active 1245 pilot catalog now has the same sequence as its source;
     # the immutable pre-reset 1243 fixture above remains unchanged.
-    assert current["catalog_sequence"] == release_input["release_sequence"] == 1245
+    assert current["catalog_sequence"] == 1245
+    assert release_input["release_sequence"] == 1246
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert release["release_id"] == "clientflow-1.3.38-seq-1239"

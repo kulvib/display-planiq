@@ -36,9 +36,11 @@ def inspect(repo: Path) -> dict:
     releases = cat.get("releases") or []
     lock = load("backend/service1/clientflow_pilot_1245_approval.json")
     source = load("client/release/release-input.json")
+    # The 1245 approval is immutable; a separate unsigned 1246 source may
+    # coexist without becoming the selected catalog or inheriting approval.
     checks["pinned_source_identity"] = (
-        read("client/VERSION").strip() == "1.3.44"
-        and source.get("release_sequence") == 1245
+        (read("client/VERSION").strip(), source.get("release_sequence"))
+        in (("1.3.44", 1245), ("1.3.45", 1246))
     )
     checks["one_stable_1245_catalog"] = (
         cat.get("catalog_sequence") == 1245

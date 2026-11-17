@@ -16,16 +16,16 @@ def test_exact_1241_source_is_promoted_only_for_single_client_pilot():
     source = json.loads(_read("client/release/release-input.json"))
     catalog = json.loads(_read("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json"))
 
-    assert version == "1.3.44"
+    assert version == "1.3.45"
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1245,
+        "release_sequence": 1246,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
     assert catalog["catalog_sequence"] == 1243  # immutable historical catalog
-    assert source["release_sequence"] == 1245  # current staged source
+    assert source["release_sequence"] == 1246  # current staged source
     assert catalog["catalog_sequence"] == 1243
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {
