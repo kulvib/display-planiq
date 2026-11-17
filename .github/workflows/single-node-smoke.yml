@@ -110,7 +110,7 @@ jobs:
           test -s "$dump"
           test "$(head -c 5 "$dump")" = PGDMP
           docker exec -i -u display_app display-single-node-ci \
-            pg_restore --list - < "$dump" >/dev/null
+            pg_restore --list < "$dump" >/dev/null
 
           # Throwaway isolated PostgreSQL, no host port or network access.
           docker run -d --name display-62b-isolated-restore \
