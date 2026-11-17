@@ -142,6 +142,11 @@ def test_reject_forged_success_and_extra_metadata(tmp_path,monkeypatch):
 def test_ci_contract_proves_real_isolated_database_restore_not_just_listing():
     workflow=(ROOT/'.github/workflows/single-node-smoke.yml').read_text()
     assert 'pg_dump --no-password --format=custom' in workflow
+    # pg_restore uses stdin when the optional archive filename is omitted.
+    # A literal '-' is interpreted as a filename and fails in PostgreSQL 18.
+    assert 'docker exec -i -u display_app display-single-node-ci \\' in workflow
+    assert 'pg_restore --list < "$dump" >/dev/null' in workflow
+    assert 'pg_restore --list - <' not in workflow
     assert 'pg_restore --exit-on-error --single-transaction' in workflow
     assert 'display-62b-isolated-restore' in workflow
     assert '--network none' in workflow
