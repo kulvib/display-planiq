@@ -286,6 +286,18 @@ jobs:
           cp -a "$RUNNER_TEMP/build-a/." "$RUNNER_TEMP/handoff/"
           install -m 0444 "$RUNNER_TEMP/REPRODUCIBILITY.json" "$RUNNER_TEMP/handoff/REPRODUCIBILITY.json"
 
+      - name: Verify complete unapproved candidate handoff before upload
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          RUNTIME_INPUTS_SHA256: ${{ inputs.runtime_inputs_sha256 }}
+        run: >-
+          python scripts/verify_clientflow_candidate_handoff.py
+          --repo "$GITHUB_WORKSPACE"
+          --handoff "$RUNNER_TEMP/handoff"
+          --expected-source-sha "$EXPECTED_SOURCE_SHA"
+          --expected-runtime-transport-sha256 "$RUNTIME_INPUTS_SHA256"
+
       - name: Attest reproducible candidate provenance
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
