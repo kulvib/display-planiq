@@ -22,6 +22,7 @@ from service1.clientflow_release_admin_models import (
     ClientFlowPhysicalAcceptance,
 )
 from service1.db import get_session
+from service1.client_domain_models import ClientDomainCredential, ClientDomainStatus
 from service1.auth import get_current_superadmin_user
 from service1.models import User, Client, Organization, AuditLog
 from service1.routers import clientflow_release_administration as route
@@ -143,6 +144,7 @@ def environment(monkeypatch):
         User.__table__, Client.__table__, Organization.__table__, AuditLog.__table__,
         ClientFlowReleaseControl.__table__, ClientFlowRolloutWave.__table__, ClientFlowRolloutTarget.__table__,
         ClientFlowPhysicalAcceptance.__table__,
+        ClientDomainCredential.__table__, ClientDomainStatus.__table__,
     ])
     with Session(engine) as session:
         admin = User(id=1, username="admin-test", email="admin@example.com", hashed_password="stored", role="superadmin", is_active=True)
@@ -470,23 +472,55 @@ def test_61b_impersonation_and_real_actor_mismatch_rejected(environment):
     assert denied.value.status_code == 409
 
 
+def _record_status_version(session, *, client_id: int, version: str, revoked: bool = False) -> None:
+    """Exercise canonical Status authority, not legacy Client.client_version."""
+    cred_id = f"test-status-credential-{client_id}"
+    session.add(ClientDomainCredential(
+        id=cred_id, client_id=client_id, domain="status",
+        secret_hash="fixture-not-a-credential", token_version=0,
+        created_at=datetime(2026, 11, 17, 9, 30),
+        revoked_at=datetime(2026, 11, 17, 9, 45) if revoked else None,
+    ))
+    # Ensure the credential exists before its status row under enforced FKs.
+    session.flush()
+    session.add(ClientDomainStatus(
+        id=f"test-status-row-{client_id}", client_id=client_id,
+        domain="status", schema_version=1, observed_state="online",
+        status_payload={}, agent_version=version, credential_id=cred_id,
+        reported_at=datetime(2026, 11, 17, 9, 40),
+    ))
+
+
 def test_read_only_client_inventory_is_superadmin_scoped_and_does_not_leak_credentials(environment):
     http, session = environment
     session.add(Organization(id=7, name="PlanIQ Testorganisation"))
     session.add(Client(id=8, name="Testkiosk", locality="Vest", status="approved", organization_id=7,
-                       client_version="1.3.43"))
+                       client_version="1.3.40"))
     session.add(Client(id=9, name="Afventer", status="pending", client_version="1.3.43"))
     session.add(Client(id=10, name="Slettet", status="approved", client_version="1.3.43",
                        deleted_at=datetime(2026, 11, 16, 12, 0)))
     session.add(Client(id=11, name="Forkert version", status="approved", client_version="not-a-version"))
+    session.add(Client(id=12, name="Tilbagekaldt status", status="approved", client_version="1.3.40"))
+    session.flush()
+    _record_status_version(session, client_id=8, version="1.3.43")
+    _record_status_version(session, client_id=12, version="1.3.42", revoked=True)
     session.commit()
     response = http.get("/api/clientflow/release-administration")
     assert response.status_code == 200, response.text
     body = response.json()
     clients = {row["id"]: row for row in body["available_clients"]}
-    assert sorted(clients) == [3, 8, 11]
+    assert sorted(clients) == [3, 8, 11, 12]
     assert clients[8]["organization_name"] == "PlanIQ Testorganisation"
     assert clients[8]["reported_version"] == "1.3.43"
+    assert session.get(Client, 8).client_version == "1.3.40"  # read-only projection
+    assert route._canonical_status_version(" v1.3.43 ", "valid-credential") == "1.3.43"
+    assert route._canonical_status_version("1.3.43", None) is None
+    assert route._canonical_status_version("untrusted", "valid-credential") is None
+    assert clients[8]["version_reported_at"].startswith("2026-11-17T09:40:00")
+    # Stale/revoked Status evidence must not fall back to legacy Client columns.
+    assert clients[3]["reported_version"] is None
+    assert clients[12]["reported_version"] is None
+    assert clients[12]["version_reported_at"] is None
     assert clients[11]["reported_version"] is None
     assert "machine_id" not in response.text
     assert "hashed_password" not in response.text

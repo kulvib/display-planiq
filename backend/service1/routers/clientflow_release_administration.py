@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import and_
 from sqlmodel import Session, select
 
 from ..audit import add_audit_log, commit_audit_log
@@ -26,6 +27,7 @@ from ..clientflow_release_admin_models import (
 )
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog
 from ..db import get_session
+from ..client_domain_models import ClientDomainCredential, ClientDomainStatus
 from ..models import Client, Organization, User
 from ..rate_limit import assert_key_not_limited, clear_key_rate_limit, record_key_attempt
 
@@ -37,6 +39,18 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _canonical_status_version(raw_version: str | None, active_credential_id: str | None) -> str | None:
+    """Accept only versions reported by an active, matching Status credential.
+
+    Keep this aligned with the deploy controller's benign v/V normalization;
+    never synthesize a version from the legacy Client table.
+    """
+    if active_credential_id is None or not isinstance(raw_version, str):
+        return None
+    version = raw_version.strip().lstrip("vV")
+    return version if re.fullmatch(r"\d+\.\d+\.\d+", version) else None
 
 
 def _no_store(response: Response) -> None:
@@ -188,16 +202,34 @@ def read_release_administration(
     ids: dict[str, list[int]] = {}
     for target in targets:
         ids.setdefault(target.wave_id, []).append(target.client_id)
-    # One lightweight, scoped inventory query on an explicit admin refresh.
-    # Report the LAST OBSERVED version, never claim it is live or installable.
-    # This endpoint is strictly superadmin-only; no secrets or machine IDs.
+    # One bounded, read-only inventory query on explicit superadmin refresh.
+    # Client.client_version is a legacy column. The Status agent writes the
+    # canonical version to client_domain_status; other Client pages project it
+    # only in-memory. Never persist that projection or infer it from a wave.
+    # Also verify that the status row belongs to an active, matching credential
+    # so revoked or cross-client telemetry cannot appear as a selectable version.
     inventory_rows = session.exec(
         select(
             Client.id, Client.name, Client.locality, Client.organization_id,
-            Client.client_version, Client.client_version_updated_at,
+            ClientDomainStatus.agent_version, ClientDomainStatus.reported_at,
             Organization.name.label("organization_name"),
+            ClientDomainCredential.id.label("active_status_credential_id"),
         )
         .join(Organization, Client.organization_id == Organization.id, isouter=True)
+        .join(
+            ClientDomainStatus,
+            and_(ClientDomainStatus.client_id == Client.id,
+                 ClientDomainStatus.domain == "status"),
+            isouter=True,
+        )
+        .join(
+            ClientDomainCredential,
+            and_(ClientDomainCredential.id == ClientDomainStatus.credential_id,
+                 ClientDomainCredential.client_id == Client.id,
+                 ClientDomainCredential.domain == "status",
+                 ClientDomainCredential.revoked_at.is_(None)),
+            isouter=True,
+        )
         .where(Client.status == "approved", Client.deleted_at.is_(None))
         .order_by(Organization.name, Client.name, Client.id)
         .limit(1001)
@@ -206,8 +238,8 @@ def read_release_administration(
         {
             "id": row[0], "name": row[1], "locality": row[2],
             "organization_id": row[3], "organization_name": row[6],
-            "reported_version": row[4] if row[4] and re.fullmatch(r"\d+\.\d+\.\d+", row[4]) else None,
-            "version_reported_at": row[5],
+            "reported_version": _canonical_status_version(row[4], row[7]),
+            "version_reported_at": row[5] if row[7] is not None else None,
         }
         for row in inventory_rows[:1000]
     ]
