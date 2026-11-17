@@ -78,3 +78,19 @@ export function preparePlan(clients, selectedIds, sourceVersion, stableVersion, 
     reason: `Inaktiv ${kind === "pilot" ? "pilotplan" : "bølgeplan"} for ${selectedIds.length} klient(er) fra ${sourceVersion} til ${stableVersion}. Ingen installation autoriseret.`,
   };
 }
+
+
+/** Fail closed on malformed or unauthorized server-side planning previews. */
+export function validatePlanningPreview(body, selectedIds, sourceVersion, targetReleaseId, revision) {
+  const ids = [...selectedIds].sort((a, b) => a - b);
+  if (!body || body.planning_eligible !== true || body.deployment_authorized !== false
+    || body.release_approved_for_deployment !== false
+    || body.target_release_id !== targetReleaseId || body.source_version !== sourceVersion
+    || body.policy_revision !== revision || !Array.isArray(body.client_ids)
+    || body.client_ids.length !== ids.length
+    || body.client_ids.some((id, i) => id !== ids[i])
+    || body.kind !== (ids.length === 1 ? "pilot" : "controlled")) {
+    throw new Error("Planens serverkontrol var ufuldstændig eller ændret. Opdater siden.");
+  }
+  return body;
+}

@@ -8,7 +8,7 @@ import client from "../../api/client";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
-  validateReleasePlanningResponse,
+  validateReleasePlanningResponse, validatePlanningPreview,
 } from "./clientflowReleasePlan.mjs";
 
 const RELEASE_PATH = "/api/clientflow/release-administration";
@@ -127,15 +127,27 @@ export default function ClientFlowReleaseAdministration() {
     }
   };
 
-  const openCreateDialog = () => {
+  const openCreateDialog = async () => {
     if (!status || submitting) return;
+    setSubmitting(true);
     try {
-      preparePlan(available, selectedIds, sourceVersion, status.stable_version, expiry);
+      const plan = preparePlan(available, selectedIds, sourceVersion, status.stable_version, expiry);
+      const { data } = await client.post(`${RELEASE_PATH}/preview`, {
+        client_ids: plan.client_ids,
+        source_version: plan.source_version,
+        target_release_id: status.stable_release_id,
+        expected_revision: status.revision,
+      });
+      validatePlanningPreview(data, plan.client_ids, sourceVersion, status.stable_release_id, status.revision);
       setError("");
       setDialogError("");
       setPassword("");
       setIntent({ action: "create" });
-    } catch (err) { setError(err.message); }
+    } catch (err) {
+      setError(err?.message || "Serveren kunne ikke kontrollere de valgte klienter. Opdater listen.");
+    } finally {
+      setSubmitting(false);
+    }
   };
   const openPlanDialog = (wave, action) => {
     if (!status || submitting || !ACTIONS[action]) return;
@@ -183,15 +195,17 @@ export default function ClientFlowReleaseAdministration() {
   return (
     <Stack spacing={2.2}>
       <Paper elevation={0} sx={panelSx}>
-        <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} justifyContent="space-between" spacing={2}>
-          <Box>
+        <Box sx={{ display: "flex", width: "100%", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+          <Box sx={{ flex: "1 1 320px", minWidth: 0 }}>
             <Typography variant="h5" fontWeight={900}>ClientFlow · Releases</Typography>
             <Typography color="text.secondary" sx={{ mt: 0.5 }}>
               Overblik over godkendte releases og klienter. Planlæg i grupper uden at starte installationer.
             </Typography>
           </Box>
-          <AdminRefreshButton onClick={() => void refresh()} loading={loading} disabled={submitting} ariaLabel="Opdater ClientFlow releaseadministration" />
-        </Stack>
+          <Box sx={{ ml: "auto", flexShrink: 0 }}>
+            <AdminRefreshButton onClick={() => void refresh()} loading={loading} disabled={submitting} ariaLabel="Opdater ClientFlow releaseadministration" />
+          </Box>
+        </Box>
       </Paper>
       {error && <Alert severity="error">{error}</Alert>}
       {message && <Alert severity="success">{message}</Alert>}
@@ -276,7 +290,7 @@ export default function ClientFlowReleaseAdministration() {
                   </Box>
                   <Typography variant="body2" color="text.secondary">
                     {selectedIds.length === 1 ? "1 klient → pilotplan" : selectedIds.length > 1 ? `${selectedIds.length} klienter → kontrolleret bølgeplan` : "Vælg klienter for at planlægge."}
-                    {" "}Type vælges automatisk. Begrundelse registreres automatisk i auditloggen.
+                    {" "}Type vælges automatisk. Serveren kontrollerer hver klients Status-version, før planen kan gemmes. Begrundelse registreres automatisk i auditloggen.
                   </Typography>
                   <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={2}>
                     <TextField select label="Planens gyldighed" value={expiry} onChange={(event) => setExpiry(event.target.value)} sx={{ minWidth: 185 }}>
