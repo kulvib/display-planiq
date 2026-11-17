@@ -14,6 +14,11 @@ from service1 import auth
 from service1.models import RefreshToken
 
 
+# These tests call the route function directly, without FastAPI dependency
+# injection. Explicit body=None reproduces an HTTP request with no JSON body;
+# otherwise Python passes FastAPI's Body(...) declaration object as body.
+
+
 class _RowResult:
     def __init__(self, row):
         self.row = row
@@ -68,7 +73,7 @@ def test_stale_tab_cannot_revoke_or_clear_new_session_cookie():
     session = _Session(_row("b" * 32))
     response = Response()
     with pytest.raises(HTTPException) as error:
-        auth.logout(response, _request("a" * 32), session=session)
+        auth.logout(response, _request("a" * 32), body=None, session=session)
     assert error.value.status_code == 409
     assert session.row.revoked_at is None
     assert not session.committed
@@ -78,7 +83,7 @@ def test_stale_tab_cannot_revoke_or_clear_new_session_cookie():
 def test_matching_signed_session_revokes_then_clears_cookie():
     session = _Session(_row("a" * 32))
     response = Response()
-    assert auth.logout(response, _request("a" * 32), session=session) == {"ok": True}
+    assert auth.logout(response, _request("a" * 32), body=None, session=session) == {"ok": True}
     assert session.committed
     assert session.row.revoked_at is not None
     assert any(key.lower() == b"set-cookie" and b"refresh_token=" in value for key, value in response.raw_headers)
@@ -89,7 +94,7 @@ def test_revocation_failure_is_503_without_cookie_clearing():
     session = _Session(_row("a" * 32), fail_commit=True)
     response = Response()
     with pytest.raises(HTTPException) as error:
-        auth.logout(response, _request("a" * 32), session=session)
+        auth.logout(response, _request("a" * 32), body=None, session=session)
     assert error.value.status_code == 503
     assert session.rolled_back
     assert "set-cookie" not in response.headers
@@ -101,7 +106,7 @@ def test_invalid_bearer_is_rejected_without_mutation():
     request = _request("a" * 32)
     request.headers["authorization"] = "Bearer invalid"
     with pytest.raises(HTTPException) as error:
-        auth.logout(response, request, session=session)
+        auth.logout(response, request, body=None, session=session)
     assert error.value.status_code == 401
     assert not session.committed
     assert "set-cookie" not in response.headers
@@ -110,5 +115,5 @@ def test_invalid_bearer_is_rejected_without_mutation():
 def test_cookie_only_legacy_logout_remains_compatible():
     session = _Session(_row("a" * 32))
     response = Response()
-    assert auth.logout(response, _request("a" * 32, bearer=False), session=session) == {"ok": True}
+    assert auth.logout(response, _request("a" * 32, bearer=False), body=None, session=session) == {"ok": True}
     assert session.committed
