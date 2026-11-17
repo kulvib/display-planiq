@@ -48,9 +48,11 @@ def inspect(repo: Path) -> dict:
     stable = future[0] if len(future) == 1 else {}
     notes = " ".join(stable.get("notes") or []) if isinstance(stable, dict) else ""
 
+    # Stable approval and selectable catalog remain exactly 1245, while a
+    # newer unsigned candidate has a distinct version AND sequence.
     checks["unchanged_approved_client_source"] = (
-        read("client/VERSION").strip() == "1.3.44"
-        and runtime.get("release_sequence") == 1245
+        (read("client/VERSION").strip(), runtime.get("release_sequence"))
+        in (("1.3.44", 1245), ("1.3.45", 1246))
     )
     checks["active_one_stable_1245"] = (
         active.get("catalog_sequence") == 1245

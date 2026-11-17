@@ -48,7 +48,8 @@ def test_exact_new_identity_staged_without_any_deployment_authority():
 def test_staged_identity_is_now_exact_live_pilot_catalog():
     release = json.loads((ROOT / "client/release/release-input.json").read_text())
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert release["release_sequence"] == catalog["catalog_sequence"] == 1245
+    assert release["release_sequence"] == 1246  # unsigned candidate
+    assert catalog["catalog_sequence"] == 1245  # immutable approved stable
     assert len(catalog["releases"]) == 1
     assert catalog["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.44"
@@ -66,7 +67,7 @@ def test_mutations_to_version_catalog_security_and_rollback_fail_closed(tmp_path
     repo = fixture(tmp_path)
     scenarios = {
         "client/VERSION": lambda _: "1.3.43\n",
-        "client/release/release-input.json": lambda s: s.replace('"release_sequence": 1245', '"release_sequence": 1244'),
+        "client/release/release-input.json": lambda s: s.replace('"release_sequence": 1246', '"release_sequence": 1244'),
         "backend/service1/clientflow_release_catalog.json": lambda s: s.replace('"update_allowed": true', '"update_allowed": false'),
         "backend/service1/clientflow_release_security_policy.json": lambda s: s.replace('"minimum_safe_release_sequence": 1239', '"minimum_safe_release_sequence": 1200'),
         "client/release/rollback-trust.json": lambda s: s.replace('"enabled": false', '"enabled": true'),

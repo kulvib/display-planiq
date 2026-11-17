@@ -110,9 +110,12 @@ def inspect(repo: Path) -> dict:
         and {key: value for key, value in active_releases[0].items() if key != "notes"}
         == {key: value for key, value in stable_rows[0].items() if key != "notes"}
     )
+    # Frozen approval is about the ORIGINAL 1245 artifact; source can now
+    # advance to a separate *unsigned* exact 1246 candidate, never the catalog.
     checks["original_client_source_untouched"] = (
-        (repo / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.44"
-        and load("client/release/release-input.json").get("release_sequence") == 1245
+        ((repo / "client/VERSION").read_text(encoding="utf-8").strip(),
+         load("client/release/release-input.json").get("release_sequence"))
+        in (("1.3.44", 1245), ("1.3.45", 1246))
     ) if (repo / "client/VERSION").is_file() else False
     checks["rollback_authority_disabled"] = (
         load("client/release/rollback-trust.json") == {

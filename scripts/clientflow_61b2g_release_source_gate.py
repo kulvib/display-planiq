@@ -15,6 +15,8 @@ import re
 
 BASELINE_VERSION = (1, 3, 44)
 BASELINE_SEQUENCE = 1245
+EXPECTED_CANDIDATE_VERSION = (1, 3, 45)
+EXPECTED_CANDIDATE_SEQUENCE = 1246
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 VERSION_RE = re.compile(r'\d+\.\d+\.\d+\Z')
 REQUIRED_SOURCES = (
@@ -33,6 +35,9 @@ REQUIRED_SOURCES = (
     'client/stable-systemd/planiq-display-maintenance.service',
     'scripts/clientflow_61b2f_pilot_preflight_readonly.py',
     'client/release/lib/clientflow_release/builder.py',
+    'backend/service1/clientflow_release_catalog.json',
+    'backend/service1/clientflow_pilot_1245_approval.json',
+    'backend/service1/clientflow_1245_fleet_acceptance.json',
 )
 
 
@@ -182,12 +187,52 @@ def inspect(root: Path) -> dict:
         return 'separate_reproducible_build_and_explicit_approval_required'
 
     check('release_provenance_and_manual_approval_contracts', approval_contract)
+
+    def stable_1245_still_immutable():
+        # Candidate source is not a new catalog entry. This check intentionally
+        # uses the original APPROVED artifact and rollout evidence; a new
+        # version can only be published after separate, explicit acceptance.
+        catalog = json.loads(_read(root, 'backend/service1/clientflow_release_catalog.json'))
+        approval = json.loads(_read(root, 'backend/service1/clientflow_pilot_1245_approval.json'))
+        fleet = json.loads(_read(root, 'backend/service1/clientflow_1245_fleet_acceptance.json'))
+        rows = catalog.get('releases')
+        if not (catalog.get('catalog_sequence') == BASELINE_SEQUENCE
+                and catalog.get('latest_stable') == catalog.get('default_install_version') == '1.3.44'
+                and isinstance(rows, list) and len(rows) == 1
+                and isinstance(rows[0], dict)
+                and rows[0].get('release_id') == 'clientflow-1.3.44-seq-1245'
+                and rows[0].get('release_sequence') == BASELINE_SEQUENCE
+                and rows[0].get('status') == 'stable'
+                and rows[0].get('install_modes') == ['fresh_install', 'in_place_update']
+                and rows[0].get('rollback_allowed') is False
+                and approval.get('approved') is True
+                and approval.get('release_id') == 'clientflow-1.3.44-seq-1245'
+                and rows[0].get('version') == rows[0].get('client_version') == '1.3.44'
+                and approval.get('approved_bundle_sha256') ==
+                    '28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5'
+                and approval.get('approved_bundle_size') == 223610880
+                and approval.get('source_commit') == '06857104952ebb40bf1394c423c01332d28f8d5e'
+                and approval.get('candidate_sha256') ==
+                    'ffe58332c8e3b263e00f299e363dc95ecb9ac7e0176fd51888be98fecad9bd97'
+                and approval.get('installer_sha256') ==
+                    'fc843b6b37772996ecbfa67ff08a0e6f372443bf7d6104ca28d616855bc5737a'
+                and approval.get('approval_reference') ==
+                    'CF-1.3.44-1245-20261114-0685710-ffe58332-R2'
+                and fleet.get('release_id') == 'clientflow-1.3.44-seq-1245'
+                and fleet.get('approved_bundle_sha256') == approval.get('approved_bundle_sha256')
+                and fleet.get('physical_pilot_accepted') is False):
+            raise ValueError('candidate_must_not_modify_approved_stable_or_approval')
+        return '1245_remains_sole_selected_stable_1246_unpublished'
+
+    check('unchanged_approved_stable_catalog_and_disarmed_pilot', stable_1245_still_immutable)
     identity = check('release_source_identity', lambda: _identity(root))
     version = identity[0] if identity is not None else None
     sequence = identity[1] if identity is not None else None
+    # Only the explicitly staged NEXT candidate is eligible for build; do not
+    # infer approval for arbitrary future versions from mere monotonicity.
     candidate_identity = bool(identity is not None and
-        tuple(int(x) for x in version.split('.')) > BASELINE_VERSION and
-        sequence > BASELINE_SEQUENCE)
+        tuple(int(x) for x in version.split('.')) == EXPECTED_CANDIDATE_VERSION and
+        sequence == EXPECTED_CANDIDATE_SEQUENCE)
     source_ok = all(row['pass'] for row in checks.values())
     return {
         'schema_version': 1,

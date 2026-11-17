@@ -14,11 +14,11 @@ def _json(path: str):
 
 
 def test_1240_history_survives_1241_successor_without_reauthorizing_1240():
-    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.44"
+    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.45"
     source = _json("client/release/release-input.json")
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1245,
+        "release_sequence": 1246,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",
@@ -26,7 +26,7 @@ def test_1240_history_survives_1241_successor_without_reauthorizing_1240():
     catalog = _json("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
     assert catalog["catalog_sequence"] == 1243
     assert catalog["catalog_sequence"] == 1243  # immutable historical catalog
-    assert source["release_sequence"] == 1245  # current staged source
+    assert source["release_sequence"] == 1246  # current staged source
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert len(catalog["releases"]) == 4
