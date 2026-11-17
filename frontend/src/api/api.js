@@ -1,5 +1,6 @@
 import { API_ORIGIN, AUTH_API_URL, WS_API_ORIGIN, buildApiUrl } from "../config/apiConfig";
 import { buildBrowserWsProtocols, buildBrowserWsUrl } from "./browserWebSocket";
+import { decodedAccessTokenExpiryMs, needsProactiveRefresh } from "./tokenTiming.mjs";
 import { createApiError, formatApiError, normalizeApiError } from "./apiError";
 
 /*
@@ -33,6 +34,9 @@ let accessTokenInMemory = null;
 let authSessionController = new AbortController();
 let authSessionGeneration = 0;
 let sessionExpiresAtInMemory = null;
+let sessionIdInMemory = null;
+let accessTokenExpiresAtMs = null;
+let loginRedirectIssued = false;
 let refreshPromise = null;
 let bootRefreshPromise = null;
 let refreshBlockedUntil = 0;
@@ -96,6 +100,8 @@ export function setAuthToken(token) {
   }
   if (authSessionController.signal.aborted) authSessionController = new AbortController();
   accessTokenInMemory = token;
+  loginRedirectIssued = false;
+  accessTokenExpiresAtMs = decodedAccessTokenExpiryMs(token);
 }
 
 export function clearAuthToken() {
@@ -103,6 +109,8 @@ export function clearAuthToken() {
   authSessionController.abort();
   accessTokenInMemory = null;
   sessionExpiresAtInMemory = null;
+  sessionIdInMemory = null;
+  accessTokenExpiresAtMs = null;
   adminTerminalStepUpInMemory = null;
 }
 
@@ -139,6 +147,15 @@ export function setSessionExpiresAt(value) {
 
 export function getSessionExpiresAt() {
   return sessionExpiresAtInMemory;
+}
+
+export function setAuthSessionId(value) {
+  const normalized = String(value || "").trim();
+  sessionIdInMemory = /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
+}
+
+export function getAuthSessionId() {
+  return sessionIdInMemory;
 }
 
 export function authHeaders(extra = {}) {
@@ -195,6 +212,7 @@ async function refreshAccessToken() {
       }
       setAuthToken(data?.access_token || "");
       setSessionExpiresAt(data?.session_expires_at || null);
+      setAuthSessionId(data?.session_id);
       return data;
     })
     .catch((err) => {
@@ -214,7 +232,12 @@ export async function performBootRefresh() {
 
   bootRefreshPromise = refreshAccessToken()
     .then((data) => data || true)
-    .catch(() => false)
+    .catch((error) => {
+      // A lost cookie/invalid session is terminal. A Render 502/503,
+      // timeout or network outage must never masquerade as logout.
+      if (isTerminalSessionRefreshError(error)) return false;
+      throw error;
+    })
     .finally(() => {
       bootRefreshPromise = null;
     });
@@ -228,12 +251,39 @@ export function refreshSession() {
   return refreshAccessToken();
 }
 
+// Avoid an expected 401/refresh/retry cycle when the short-lived access
+// token is about to expire. No timer, polling or longer session lifetime.
+// Both API transports share the existing single-flight refresh operation.
+export async function ensureFreshAuthToken(signal) {
+  signal?.throwIfAborted?.();
+  assertActiveAuthSession(signal);
+  if (needsProactiveRefresh(accessTokenExpiresAtMs)) {
+    try {
+      await refreshAccessToken();
+    } catch (error) {
+      if (isTerminalSessionRefreshError(error)) handle401();
+      throw error;
+    }
+    signal?.throwIfAborted?.();
+    assertActiveAuthSession(signal);
+  }
+}
+
 async function apiFetch(input, init = {}) {
   const url = typeof input === "string" ? input : input?.url || "";
   const { _retried, ...fetchInit } = init;
   const requiresSession = !isPublicOrSessionEndpoint(url);
   const signal = requiresSession ? boundAuthSessionSignal(fetchInit.signal) : fetchInit.signal;
-  if (requiresSession) assertActiveAuthSession(signal);
+  if (requiresSession) {
+    try {
+      await ensureFreshAuthToken(signal);
+    } catch (error) {
+      if (isTerminalSessionRefreshError(error)) {
+        handle401();
+      }
+      throw error;
+    }
+  }
   const headers = authHeaders(fetchInit.headers || {});
   const first = await fetchWithFriendlyErrors(input, {
     ...fetchInit,
@@ -252,9 +302,12 @@ async function apiFetch(input, init = {}) {
     await refreshAccessToken();
   } catch (error) {
     if (isTerminalSessionRefreshError(error)) {
-      clearAuthToken();
-      localStorage.removeItem("user");
-      window.location.href = "/login";
+      if (!loginRedirectIssued) {
+        loginRedirectIssued = true;
+        clearAuthToken();
+        localStorage.removeItem("user");
+        window.location.href = "/login";
+      }
       return first;
     }
     throw error;
@@ -275,6 +328,8 @@ export function authenticatedFetch(input, init = {}) {
 }
 
 function handle401() {
+  if (loginRedirectIssued) return;
+  loginRedirectIssued = true;
   clearAuthToken();
   localStorage.removeItem("user");
   window.location.href = "/login";
@@ -531,11 +586,13 @@ export async function login(username, password) {
   const data = await readJsonResponse(res, "Uventet svar fra login-endpoint");
   setAuthToken(data?.access_token || "");
   setSessionExpiresAt(data?.session_expires_at || null);
+  setAuthSessionId(data?.session_id);
   return data;
 }
 
 export async function logout() {
   try {
+    if (!getAuthToken()) return;
     await apiFetch(`${authApiBase}/logout`, {
       method: "POST",
       headers: authHeaders(),

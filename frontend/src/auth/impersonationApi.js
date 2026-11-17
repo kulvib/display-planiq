@@ -1,5 +1,5 @@
 import client, { setAccessTokenInMemory } from "../api/client";
-import { clearAdminTerminalStepUp, setSessionExpiresAt } from "../api";
+import { clearAdminTerminalStepUp, setAuthSessionId, setSessionExpiresAt } from "../api";
 
 export async function listImpersonationCandidates(signal) {
   const { data } = await client.get("/api/auth/impersonation/candidates", { signal });
@@ -13,6 +13,7 @@ function applySessionResponse(data) {
   }
   setAccessTokenInMemory(accessToken);
   setSessionExpiresAt(data?.session_expires_at || null);
+  setAuthSessionId(data?.session_id);
   clearAdminTerminalStepUp();
   return data;
 }

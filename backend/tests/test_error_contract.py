@@ -104,6 +104,17 @@ class ErrorContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(headers.get("x-request-id"), "ci-health-123")
         self.assertEqual(json.loads(body), {"status": "ok"})
 
+    async def test_head_health_legacy_client_no_database_or_body(self) -> None:
+        # Existing installed ClientFlow clients use HEAD /health as an HTTPS
+        # connectivity check; a 405 obscures monitoring and increases noise.
+        with patch("service1.main.engine", None):
+            status, headers, body = await _asgi_request(
+                "/health", method="HEAD", request_id="legacy-head-62c"
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"")
+        self.assertEqual(headers.get("x-request-id"), "legacy-head-62c")
+
     async def test_invalid_external_request_id_is_replaced(self) -> None:
         invalid_id = "x" * 80
         status, headers, _ = await _asgi_request("/health", request_id=invalid_id)
