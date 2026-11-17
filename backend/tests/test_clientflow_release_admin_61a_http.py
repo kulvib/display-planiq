@@ -155,6 +155,8 @@ def environment(monkeypatch):
         session.add(admin)
         session.add(client)
         session.add(control)
+        session.flush()
+        _record_status_version(session, client_id=3, version="1.3.43")
         session.commit()
         session.refresh(admin)
 
@@ -396,6 +398,8 @@ def test_61b_expired_or_corrupted_targets_fail_closed(environment, monkeypatch):
 def test_61b_any_active_client_can_be_a_proposed_pilot_without_hardcoded_id(environment):
     http, session = environment
     session.add(Client(id=4, name="Ny testklient", status="approved", ubuntu_version="26.04"))
+    session.flush()
+    _record_status_version(session, client_id=4, version="1.3.42")
     session.commit()
     proposed = http.post("/api/clientflow/release-administration/drafts", json=_payload(
         client_ids=[4], source_version="1.3.42",
@@ -518,7 +522,7 @@ def test_read_only_client_inventory_is_superadmin_scoped_and_does_not_leak_crede
     assert route._canonical_status_version("untrusted", "valid-credential") is None
     assert clients[8]["version_reported_at"].startswith("2026-11-17T09:40:00")
     # Stale/revoked Status evidence must not fall back to legacy Client columns.
-    assert clients[3]["reported_version"] is None
+    assert clients[3]["reported_version"] == "1.3.43"
     assert clients[12]["reported_version"] is None
     assert clients[12]["version_reported_at"] is None
     assert clients[11]["reported_version"] is None
@@ -528,3 +532,69 @@ def test_read_only_client_inventory_is_superadmin_scoped_and_does_not_leak_crede
     assert body["authorization_active"] is False
     assert body["available_releases"][0]["deployment_authorized"] is False
     assert session.exec(select(ClientFlowRolloutTarget)).all() == []
+
+
+def test_62a_preview_is_read_only_and_matches_draft_policy(environment):
+    http, session = environment
+    before = session.exec(select(ClientFlowRolloutWave)).all()
+    body = {"client_ids": [3], "source_version": "1.3.43",
+            "target_release_id": RELEASE_ID, "expected_revision": 1}
+    preview = http.post("/api/clientflow/release-administration/preview", json=body)
+    assert preview.status_code == 200, preview.text
+    assert preview.json() == {
+        "planning_eligible": True, "deployment_authorized": False,
+        "release_approved_for_deployment": False, "client_ids": [3],
+        "source_version": "1.3.43", "target_release_id": RELEASE_ID,
+        "policy_revision": 1, "kind": "pilot",
+    }
+    assert session.exec(select(ClientFlowRolloutWave)).all() == before
+    assert session.exec(select(ClientFlowRolloutTarget)).all() == []
+    assert session.get(ClientFlowReleaseControl, 1).revision == 1
+    for changes in (
+        {"source_version": "1.3.42"},
+        {"source_version": "1.3.45"},
+        {"client_ids": [3, 3]},
+        {"client_ids": [3, 999]},
+        {"target_release_id": "clientflow-1.3.45-seq-1246"},
+        {"expected_revision": 2},
+    ):
+        response = http.post("/api/clientflow/release-administration/preview", json={**body, **changes})
+        assert response.status_code in (409, 422), (changes, response.text)
+    # A direct POST must not bypass preview validation by forging a version.
+    assert http.post("/api/clientflow/release-administration/drafts", json=_payload(
+        source_version="1.3.42",
+    )).status_code == 409
+    assert session.exec(select(ClientFlowRolloutWave)).all() == []
+
+
+def test_62a_revoked_or_missing_status_is_never_valid_for_plan(environment):
+    http, session = environment
+    credential = session.get(ClientDomainCredential, "test-status-credential-3")
+    credential.revoked_at = datetime(2026, 11, 17, 12, 0)
+    session.add(credential)
+    session.commit()
+    request = {"client_ids": [3], "source_version": "1.3.43",
+               "target_release_id": RELEASE_ID, "expected_revision": 1}
+    assert http.post("/api/clientflow/release-administration/preview", json=request).status_code == 409
+    assert http.post("/api/clientflow/release-administration/drafts", json=_payload()).status_code == 409
+    assert session.exec(select(ClientFlowRolloutWave)).all() == []
+
+
+def test_62a_two_client_preview_groups_by_valid_reported_version(environment):
+    http, session = environment
+    session.add(Client(id=4, name="Anden", status="approved", ubuntu_version="26.04"))
+    session.flush()
+    _record_status_version(session, client_id=4, version="v1.3.43")
+    session.commit()
+    request = {"client_ids": [4, 3], "source_version": "1.3.43",
+               "target_release_id": RELEASE_ID, "expected_revision": 1}
+    result = http.post("/api/clientflow/release-administration/preview", json=request)
+    assert result.status_code == 200, result.text
+    assert result.json()["kind"] == "controlled"
+    assert result.json()["client_ids"] == [3, 4]
+    # A mixed-version group must fail at the server, not just in the picker.
+    status = session.exec(select(ClientDomainStatus).where(ClientDomainStatus.client_id == 4)).one()
+    status.agent_version = "1.3.42"
+    session.add(status)
+    session.commit()
+    assert http.post("/api/clientflow/release-administration/preview", json=request).status_code == 409

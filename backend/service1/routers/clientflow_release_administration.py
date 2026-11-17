@@ -25,7 +25,7 @@ from ..clientflow_release_admin_models import (
     ClientFlowRolloutWave,
     ClientFlowPhysicalAcceptance,
 )
-from ..clientflow_releases import ClientFlowCatalogError, load_catalog
+from ..clientflow_releases import ClientFlowCatalogError, load_catalog, compare_versions
 from ..db import get_session
 from ..client_domain_models import ClientDomainCredential, ClientDomainStatus
 from ..models import Client, Organization, User
@@ -162,6 +162,86 @@ class PlanDecision(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+
+class RolloutPreviewRequest(BaseModel):
+    """Read-only plan validation. Never an installation or a release approval."""
+
+    client_ids: list[int] = Field(min_length=1, max_length=25)
+    source_version: str = Field(min_length=5, max_length=40, pattern=r"^\d+\.\d+\.\d+$")
+    target_release_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=1)
+
+    @field_validator("client_ids")
+    @classmethod
+    def unique_clients(cls, values: list[int]) -> list[int]:
+        if any(type(v) is not int or v <= 0 for v in values) or len(values) != len(set(values)):
+            raise ValueError("Klient-ID'er skal være positive, entydige heltal")
+        return values
+
+
+def _verify_live_planning_sources(session: Session, client_ids: list[int], source_version: str) -> None:
+    """One bounded Status-domain query. No legacy version fallback or client writes.
+
+    The proof is valid ONLY for creating an inert plan. A future installation
+    must perform a separate, fresh client/credential/version attestation.
+    """
+    if compare_versions(source_version, "1.3.44") >= 0:
+        raise HTTPException(status_code=409, detail="Kildeversionen skal være ældre end den stabile release")
+    rows = session.exec(
+        select(
+            Client.id, Client.status, Client.deleted_at,
+            ClientDomainStatus.agent_version, ClientDomainCredential.id,
+        )
+        .join(
+            ClientDomainStatus,
+            and_(ClientDomainStatus.client_id == Client.id,
+                 ClientDomainStatus.domain == "status"),
+            isouter=True,
+        )
+        .join(
+            ClientDomainCredential,
+            and_(ClientDomainCredential.id == ClientDomainStatus.credential_id,
+                 ClientDomainCredential.client_id == Client.id,
+                 ClientDomainCredential.domain == "status",
+                 ClientDomainCredential.revoked_at.is_(None)),
+            isouter=True,
+        )
+        .where(Client.id.in_(client_ids))
+    ).all()
+    if len(rows) != len(client_ids):
+        raise HTTPException(status_code=409, detail="En eller flere valgte klienter findes ikke længere")
+    for client_id, state, deleted_at, version, credential_id in rows:
+        if state != "approved" or deleted_at is not None:
+            raise HTTPException(status_code=409, detail="En valgt klient er ikke længere aktiv og godkendt")
+        if _canonical_status_version(version, credential_id) != source_version:
+            raise HTTPException(status_code=409, detail="Klientens senest rapporterede version har ændret sig; opdater listen")
+
+
+@router.post("/preview")
+def preview_rollout_plan(
+    payload: RolloutPreviewRequest, request: Request, response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_superadmin_user),
+):
+    """Bounded server-side preview; cannot create an approval, plan or command."""
+    _require_actor(request, user)
+    _no_store(response)
+    control = _bound_control(session)
+    if control.revision != payload.expected_revision or control.stable_release_id != payload.target_release_id:
+        raise HTTPException(status_code=409, detail="Releasepolitikken har ændret sig; hent den igen")
+    _verify_live_planning_sources(session, payload.client_ids, payload.source_version)
+    return {
+        "planning_eligible": True,
+        "deployment_authorized": False,
+        "release_approved_for_deployment": False,
+        "client_ids": sorted(payload.client_ids),
+        "source_version": payload.source_version,
+        "target_release_id": control.stable_release_id,
+        "policy_revision": control.revision,
+        "kind": "pilot" if len(payload.client_ids) == 1 else "controlled",
+    }
+
+
 def _wave_json(row: ClientFlowRolloutWave, client_ids: list[int]) -> dict:
     return {
         "id": row.id, "kind": row.kind, "state": row.state,
@@ -284,10 +364,11 @@ def create_rollout_draft(
     # must verify the actual physical device at the separate pilot gate.
     if payload.kind == "pilot" and len(payload.client_ids) != 1:
         raise HTTPException(status_code=409, detail="En pilotplan må kun have én klient")
-    for client_id in payload.client_ids:
-        client = session.get(Client, client_id)
-        if client is None or client.status != "approved" or client.deleted_at is not None:
-            raise HTTPException(status_code=409, detail="En klient er ikke aktiv og godkendt")
+    if payload.kind == "controlled" and len(payload.client_ids) < 2:
+        raise HTTPException(status_code=409, detail="En kontrolleret bølge kræver mindst to klienter")
+    # Identical authoritative verification is repeated under the locked policy,
+    # even if the UI preview passed earlier. A preview is never authorization.
+    _verify_live_planning_sources(session, payload.client_ids, payload.source_version)
     now = _utcnow()
     wave = ClientFlowRolloutWave(
         id=str(uuid4()), kind=payload.kind, state="draft",
