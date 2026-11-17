@@ -12,6 +12,7 @@ import {
 } from "./clientflowReleasePlan.mjs";
 
 const RELEASE_PATH = "/api/clientflow/release-administration";
+const EMPTY_CLIENTS = Object.freeze([]);
 const panelSx = {
   p: { xs: 2, md: 2.5 }, borderRadius: 2,
   bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)",
@@ -82,7 +83,7 @@ export default function ClientFlowReleaseAdministration() {
     return () => controllerRef.current?.abort();
   }, [refresh]);
 
-  const available = status?.available_clients || [];
+  const available = status?.available_clients ?? EMPTY_CLIENTS;
   const groups = React.useMemo(() => planVersionGroups(available, status?.stable_version), [available, status?.stable_version]);
   const candidates = React.useMemo(() => available.filter((value) => value.reported_version === sourceVersion), [available, sourceVersion]);
   const organizations = React.useMemo(() => [...new Set(candidates.map(
@@ -249,7 +250,7 @@ export default function ClientFlowReleaseAdministration() {
                   <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ sm: "center" }} gap={1}>
                     <Typography fontWeight={750}>{selectedIds.length} af højst {MAX_PLAN_CLIENTS} valgt · {filtered.length} matcher søgningen</Typography>
                     <Stack direction="row" gap={1}>
-                      <Button variant="outlined" size="small" disabled={!filtered.length} onClick={toggleVisible}>{allVisibleSelected ? "Fravælg viste" : "Vælg viste (maks. 25)"}</Button>
+                      <Button variant="outlined" size="small" disabled={!filtered.length || (!allVisibleSelected && selectedIds.length >= MAX_PLAN_CLIENTS)} onClick={toggleVisible}>{allVisibleSelected ? "Fravælg viste" : "Vælg op til 25 fra søgningen"}</Button>
                       <Button size="small" onClick={() => setSelectedIds([])} disabled={!selectedIds.length}>Ryd valg</Button>
                     </Stack>
                   </Stack>

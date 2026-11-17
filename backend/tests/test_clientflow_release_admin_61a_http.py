@@ -472,7 +472,7 @@ def test_61b_impersonation_and_real_actor_mismatch_rejected(environment):
 
 def test_read_only_client_inventory_is_superadmin_scoped_and_does_not_leak_credentials(environment):
     http, session = environment
-    session.add(Organization(id=7, name="Kulturskolen"))
+    session.add(Organization(id=7, name="PlanIQ Testorganisation"))
     session.add(Client(id=8, name="Testkiosk", locality="Vest", status="approved", organization_id=7,
                        client_version="1.3.43"))
     session.add(Client(id=9, name="Afventer", status="pending", client_version="1.3.43"))
@@ -485,7 +485,7 @@ def test_read_only_client_inventory_is_superadmin_scoped_and_does_not_leak_crede
     body = response.json()
     clients = {row["id"]: row for row in body["available_clients"]}
     assert sorted(clients) == [3, 8, 11]
-    assert clients[8]["organization_name"] == "Kulturskolen"
+    assert clients[8]["organization_name"] == "PlanIQ Testorganisation"
     assert clients[8]["reported_version"] == "1.3.43"
     assert clients[11]["reported_version"] is None
     assert "machine_id" not in response.text
