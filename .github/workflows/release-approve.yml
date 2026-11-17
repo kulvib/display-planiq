@@ -123,6 +123,20 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.release_run.outputs.run_id }}
 
+      - name: Reverify exact unapproved candidate handoff before approval
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          EXPECTED_CANDIDATE_SHA256: ${{ inputs.expected_candidate_sha256 }}
+          EXPECTED_INSTALLER_SHA256: ${{ inputs.expected_installer_sha256 }}
+        run: >-
+          /usr/bin/python3 scripts/verify_clientflow_candidate_handoff.py
+          --repo "$GITHUB_WORKSPACE"
+          --handoff "$RUNNER_TEMP/handoff"
+          --expected-source-sha "$EXPECTED_SOURCE_SHA"
+          --expected-candidate-sha256 "$EXPECTED_CANDIDATE_SHA256"
+          --expected-installer-sha256 "$EXPECTED_INSTALLER_SHA256"
+
       - name: Verify handoff provenance and exact candidate bytes
         id: handoff
         shell: bash
