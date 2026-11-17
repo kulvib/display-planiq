@@ -166,7 +166,7 @@ export default function LoginPage() {
       const data = await apiLogin(credentials.username.trim(), credentials.password);
       const user = data?.user;
       if (!user) throw new Error("Uventet svar fra serveren.");
-      loginUser(user, data?.session_expires_at || null);
+      loginUser(user, data?.session_expires_at || null, data?.session_id || null);
 
       setStatusMsg("");
 

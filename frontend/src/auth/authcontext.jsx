@@ -4,13 +4,16 @@
 // 25+5 minutters idle-advarsel, servervalideret fortsættelse,
 // cross-tab logout/aktivitet og absolut sessiongrænse.
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { Alert, Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import {
   apiUrl,
   authHeaders,
   clearAuthToken,
   getSessionExpiresAt,
+  getAuthSessionId,
   logout as apiLogout,
+  isTerminalSessionRefreshError,
   performBootRefresh,
   refreshSession,
 } from "../api";
@@ -51,6 +54,9 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sessionExpiresAt, setSessionExpiresAtState] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
+  const [bootUnavailable, setBootUnavailable] = useState(false);
+  const [bootAttempt, setBootAttempt] = useState(0);
   const navigate = useNavigate();
   const [bootPathname] = useState(() => window.location.pathname);
 
@@ -63,6 +69,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setLoading(false);
     setSessionExpiresAtState(null);
+    setSessionId(null);
     localStorage.removeItem("user");
     clearAuthToken();
     navigate("/login", { replace: true });
@@ -70,11 +77,12 @@ export function AuthProvider({ children }) {
     await serverLogout;
   }, [navigate]);
 
-  const applySessionUser = useCallback((userData, nextSessionExpiresAt = null) => {
+  const applySessionUser = useCallback((userData, nextSessionExpiresAt = null, nextSessionId = null) => {
     const normalized = normalizeUserData(userData);
     setUser(normalized);
     setLoading(false);
     setSessionExpiresAtState(nextSessionExpiresAt || getSessionExpiresAt() || null);
+    setSessionId(nextSessionId || getAuthSessionId() || null);
     localStorage.setItem("user", JSON.stringify(normalized));
     return normalized;
   }, []);
@@ -83,20 +91,22 @@ export function AuthProvider({ children }) {
     const refreshed = await refreshSession();
     const nextExpiry = refreshed?.session_expires_at || getSessionExpiresAt() || null;
     setSessionExpiresAtState(nextExpiry);
-    if (refreshed?.user) applySessionUser(refreshed.user, nextExpiry);
+    setSessionId(refreshed?.session_id || getAuthSessionId() || null);
+    if (refreshed?.user) applySessionUser(refreshed.user, nextExpiry, refreshed?.session_id);
     return refreshed;
   }, [applySessionUser]);
 
   const sessionPolicy = useSessionPolicy({
     active: Boolean(user),
     sessionExpiresAt,
+    sessionId,
     validateSession: validateCurrentSession,
     onSessionEnd: endLocalSession,
     onSessionContextChanged: validateCurrentSession,
   });
 
-  const loginUser = useCallback((userData, nextSessionExpiresAt = null) => {
-    applySessionUser(userData, nextSessionExpiresAt);
+  const loginUser = useCallback((userData, nextSessionExpiresAt = null, nextSessionId = null) => {
+    applySessionUser(userData, nextSessionExpiresAt, nextSessionId);
   }, [applySessionUser]);
 
   useEffect(() => {
@@ -109,8 +119,10 @@ export function AuthProvider({ children }) {
       // refresh-cookie ikke skabe et forventet 401-kald i baggrunden.
       if (isPublicAuthPath(bootPathname)) {
         if (!cancelled) {
+          setBootUnavailable(false);
           setUser(null);
           setSessionExpiresAtState(null);
+          setSessionId(null);
           localStorage.removeItem("user");
           clearAuthToken();
           setLoading(false);
@@ -124,6 +136,8 @@ export function AuthProvider({ children }) {
           if (!cancelled) {
             setUser(null);
             setSessionExpiresAtState(null);
+            setSessionId(null);
+            setBootUnavailable(false);
             localStorage.removeItem("user");
           }
           return;
@@ -133,19 +147,35 @@ export function AuthProvider({ children }) {
           headers: authHeaders(),
           credentials: "include",
         });
-        if (!res.ok) throw new Error("Sessionen er ikke længere gyldig");
+        if (!res.ok) {
+          const failure = new Error(res.status === 401 || res.status === 403
+            ? "Sessionen er ikke længere gyldig" : "Backend er midlertidigt utilgængelig");
+          failure.status = res.status;
+          throw failure;
+        }
         const data = normalizeUserData(await res.json());
         if (!cancelled) {
           setUser(data);
+          setBootUnavailable(false);
           setSessionExpiresAtState(refreshed?.session_expires_at || getSessionExpiresAt() || null);
+          setSessionId(refreshed?.session_id || getAuthSessionId() || null);
           localStorage.setItem("user", JSON.stringify(data));
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setUser(null);
-          setSessionExpiresAtState(null);
-          localStorage.removeItem("user");
-          clearAuthToken();
+          if (isTerminalSessionRefreshError(error)) {
+            setSessionExpiresAtState(null);
+            setSessionId(null);
+            setBootUnavailable(false);
+            localStorage.removeItem("user");
+            clearAuthToken();
+          } else {
+            // Render edge failure is NOT proof of an invalid session.
+            // Keep the HttpOnly refresh-cookie and in-memory auth state;
+            // show a fail-closed retry view instead of redirecting to login.
+            setBootUnavailable(true);
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -154,7 +184,7 @@ export function AuthProvider({ children }) {
 
     boot();
     return () => { cancelled = true; };
-  }, [bootPathname]);
+  }, [bootPathname, bootAttempt]);
 
   const listImpersonationCandidates = useCallback((signal) => {
     return loadImpersonationCandidates(signal);
@@ -162,14 +192,14 @@ export function AuthProvider({ children }) {
 
   const startImpersonation = useCallback(async (targetUserId) => {
     const result = await startImpersonationSession(targetUserId);
-    const normalized = applySessionUser(result.user, result.session_expires_at);
+    const normalized = applySessionUser(result.user, result.session_expires_at, result.session_id);
     broadcastSessionContextChanged();
     return normalized;
   }, [applySessionUser]);
 
   const stopImpersonation = useCallback(async () => {
     const result = await stopImpersonationSession();
-    const normalized = applySessionUser(result.user, result.session_expires_at);
+    const normalized = applySessionUser(result.user, result.session_expires_at, result.session_id);
     broadcastSessionContextChanged();
     return normalized;
   }, [applySessionUser]);
@@ -202,8 +232,18 @@ export function AuthProvider({ children }) {
       startImpersonation,
       stopImpersonation,
     }}>
-      {children}
-      <SessionTimeoutDialog
+      {bootUnavailable ? (
+        <Box sx={{ minHeight: "100dvh", display: "grid", placeItems: "center", p: 3 }}>
+          <Stack spacing={2} sx={{ maxWidth: 480, width: "100%" }}>
+            <Typography variant="h5" component="h1">Forbindelsen til PlanIQ Display er afbrudt</Typography>
+            <Alert severity="warning">Vi kunne ikke bekræfte sessionen hos serveren. Ingen beskyttede sider vises, før forbindelsen fungerer igen.</Alert>
+            <Button variant="contained" disabled={loading} onClick={() => setBootAttempt((previous) => previous + 1)}>
+              {loading ? <CircularProgress size={18} /> : "Prøv igen"}
+            </Button>
+          </Stack>
+        </Box>
+      ) : children}
+      {!bootUnavailable && <SessionTimeoutDialog
         type={sessionPolicy.dialogType}
         secondsRemaining={sessionPolicy.secondsRemaining}
         continuePending={sessionPolicy.continuePending}
@@ -212,7 +252,7 @@ export function AuthProvider({ children }) {
         onLogout={sessionPolicy.logoutNow}
         onLoginAgain={sessionPolicy.loginAgain}
         onDismissAbsolute={sessionPolicy.dismissAbsoluteWarning}
-      />
+      />}
     </AuthContext.Provider>
   );
 }

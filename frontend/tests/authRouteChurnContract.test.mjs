@@ -16,7 +16,8 @@ test("AuthProvider boots once and is not coupled to internal route changes", () 
 
   assert.match(source, /const \[bootPathname\] = useState\(\(\) => window\.location\.pathname\);/);
   assert.match(source, /if \(isPublicAuthPath\(bootPathname\)\)/);
-  assert.match(source, /\}, \[bootPathname\]\);/);
+  assert.match(source, /\}, \[bootPathname, bootAttempt\]\);/);
+  assert.match(source, /onClick=\{\(\) => setBootAttempt\(\(previous\) => previous \+ 1\)\}/);
   assert.doesNotMatch(source, /useLocation/);
   assert.doesNotMatch(source, /\}, \[location\.pathname\]\);/);
 });

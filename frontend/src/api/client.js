@@ -1,4 +1,4 @@
-import { apiUrl, authHeaders, assertActiveAuthSession, boundAuthSessionSignal, clearAuthToken, isTerminalSessionRefreshError, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
+import { apiUrl, authHeaders, assertActiveAuthSession, boundAuthSessionSignal, clearAuthToken, ensureFreshAuthToken, isTerminalSessionRefreshError, performBootRefresh as apiPerformBootRefresh, refreshSession as apiRefreshSession, setAuthToken } from "./api";
 import { createApiError, normalizeApiError } from "./apiError";
 
 const NETWORK_ERROR_MESSAGE = "Netværksfejl – tjek din internetforbindelse og prøv igen.";
@@ -128,7 +128,7 @@ async function request(method, path, body, config = {}) {
   const built = buildUrl(path, config?.params, { sameOrigin: config?.sameOrigin === true });
 
   const signal = boundAuthSessionSignal(config?.signal);
-  assertActiveAuthSession(signal);
+  await ensureFreshAuthToken(signal);
   const isFormData = body instanceof FormData;
   const headers = authHeaders({ ...(config?.headers || {}) });
   let mappedBody = body;

@@ -914,6 +914,7 @@ def login_for_access_token(
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "session_expires_at": _session_expiry_iso(session_expires_at),
+        "session_id": str(refresh_row.session_id),
         "user": _user_response(user),
     }
 
@@ -1049,8 +1050,41 @@ def refresh_access_token(
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "session_expires_at": _session_expiry_iso(absolute_expiry),
+        "session_id": str(new_refresh_row.session_id),
         "user": _user_response(effective_user, actor=actor),
     }
+
+
+def _logout_bearer_session_id(request: Request) -> Optional[tuple[str, int]]:
+    """Verify the signed browser access token even if its short expiry elapsed.
+
+    Only used to *limit* revocation of the shared refresh cookie; an expired
+    signed access token cannot authorize any other action through this path.
+    """
+    header = str(request.headers.get("authorization") or "").strip()
+    if not header:
+        return None  # Existing cookie-only logout callers remain compatible.
+    scheme, _, raw = header.partition(" ")
+    if scheme.lower() != "bearer" or not raw.strip():
+        raise HTTPException(status_code=401, detail="Ugyldig logout-session")
+    try:
+        payload = jwt.decode(
+            raw.strip(), SECRET_KEY, algorithms=[ALGORITHM],
+            issuer=JWT_ISSUER, audience=JWT_AUDIENCE,
+            options={"verify_exp": False, "verify_nbf": False,
+                     "require": list(JWT_REQUIRED_CLAIMS)},
+        )
+    except InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail="Ugyldig logout-session") from exc
+    sid = str(payload.get("sid") or "").strip()
+    owner = payload.get("actor_uid") or payload.get("uid")
+    try:
+        owner_id = int(owner)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=401, detail="Ugyldig logout-session") from exc
+    if not sid or len(sid) > 64 or owner_id <= 0 or payload.get("principal") == "client":
+        raise HTTPException(status_code=401, detail="Ugyldig logout-session")
+    return sid, owner_id
 
 
 @router.post("/logout")
@@ -1060,7 +1094,35 @@ def logout(
     body: Optional[LogoutRequest] = Body(default=None),
     session: Session = Depends(get_session),
 ):
+    # Browser tabs share the HttpOnly refresh-cookie. A stale tab's access token
+    # must NEVER revoke or clear a newer login which took over that cookie.
+    binding = _logout_bearer_session_id(request)
     refresh_token = body.refresh_token if body and body.refresh_token else request.cookies.get(REFRESH_COOKIE_NAME)
+    token_row = None
+    if refresh_token:
+        token_row = session.exec(
+            select(RefreshToken).where(RefreshToken.token_hash == _hash_refresh_token(refresh_token))
+        ).first()
+    if binding is not None and token_row is not None:
+        sid, owner_id = binding
+        if str(token_row.session_id or "") != sid or int(token_row.user_id) != owner_id:
+            # No Set-Cookie deletion: it could erase the newer session.
+            raise HTTPException(status_code=409, detail="Logout tilhører en tidligere session")
+    elif binding is not None and not refresh_token:
+        # Access token from a tab with no refresh-cookie must not clear a
+        # cookie created concurrently by a newer login.
+        raise HTTPException(status_code=409, detail="Logout-sessionen er ændret")
+
+    if token_row and token_row.revoked_at is None:
+        token_row.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(token_row)
+        try:
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            log_safe_exception(logger, exc, event="logout_revoke_failed", location="auth.logout")
+            raise HTTPException(status_code=503, detail="Logout kunne ikke bekræftes") from None
+
     response.delete_cookie(
         key="access_token",
         httponly=True,
@@ -1069,17 +1131,7 @@ def logout(
         path="/",
     )
     _clear_refresh_cookie(response)
-
-    if refresh_token:
-        token_row = session.exec(select(RefreshToken).where(RefreshToken.token_hash == _hash_refresh_token(refresh_token))).first()
-        if token_row and token_row.revoked_at is None:
-            token_row.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            session.add(token_row)
-            try:
-                session.commit()
-            except Exception:
-                session.rollback()
-
+    response.headers["Cache-Control"] = "no-store, max-age=0"
     return {"ok": True}
 
 
@@ -1540,6 +1592,7 @@ def start_impersonation(
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "session_expires_at": _session_expiry_iso(absolute_expiry),
+        "session_id": str(new_row.session_id),
         "user": _user_response(target, actor=actor),
     }
 
@@ -1605,6 +1658,7 @@ def stop_impersonation(
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "session_expires_at": _session_expiry_iso(absolute_expiry),
+        "session_id": str(new_row.session_id),
         "user": _user_response(actor),
     }
 

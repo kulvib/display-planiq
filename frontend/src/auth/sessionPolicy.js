@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SESSION_SYNC_STORAGE_KEY, isCurrentSessionEvent, isSessionId } from "./sessionSync";
 
 export const SESSION_IDLE_WARNING_AFTER_MS = 25 * 60_000;
 export const SESSION_IDLE_LOGOUT_AFTER_MS = 30 * 60_000;
@@ -6,7 +7,6 @@ export const SESSION_ABSOLUTE_WARNING_BEFORE_MS = 5 * 60_000;
 
 const ACTIVITY_THROTTLE_MS = 5_000;
 const ACTIVITY_BROADCAST_THROTTLE_MS = 15_000;
-const SESSION_SYNC_STORAGE_KEY = "planiq.session.sync.v1";
 const SESSION_END_REASON_KEY = "planiq.session.end-reason.v1";
 
 const TAB_ID = (() => {
@@ -73,6 +73,7 @@ export function formatSessionCountdown(totalSeconds) {
 export function useSessionPolicy({
   active,
   sessionExpiresAt,
+  sessionId,
   validateSession,
   onSessionEnd,
   onSessionContextChanged,
@@ -83,6 +84,7 @@ export function useSessionPolicy({
   const [continueError, setContinueError] = useState("");
 
   const activeRef = useRef(Boolean(active));
+  const sessionIdRef = useRef(sessionId);
   const dialogTypeRef = useRef(null);
   const lastActivityAtRef = useRef(Date.now());
   const lastHandledActivityAtRef = useRef(0);
@@ -96,7 +98,8 @@ export function useSessionPolicy({
 
   useEffect(() => {
     activeRef.current = Boolean(active);
-  }, [active]);
+    sessionIdRef.current = sessionId;
+  }, [active, sessionId]);
 
   useEffect(() => {
     validateSessionRef.current = validateSession;
@@ -126,7 +129,9 @@ export function useSessionPolicy({
     setSecondsRemaining(0);
 
     if (reason !== "explicit") storeSessionEndReason(reason);
-    if (broadcast) writeSessionSyncEvent({ type: "logout", reason });
+    if (broadcast && isSessionId(sessionIdRef.current)) {
+      writeSessionSyncEvent({ type: "logout", reason, sessionId: sessionIdRef.current });
+    }
 
     try {
       await onSessionEndRef.current?.(reason);
@@ -203,7 +208,9 @@ export function useSessionPolicy({
 
     if (broadcast && safeTimestamp - lastBroadcastAtRef.current >= ACTIVITY_BROADCAST_THROTTLE_MS) {
       lastBroadcastAtRef.current = safeTimestamp;
-      writeSessionSyncEvent({ type: "activity", at: safeTimestamp });
+      if (isSessionId(sessionIdRef.current)) {
+        writeSessionSyncEvent({ type: "activity", at: safeTimestamp, sessionId: sessionIdRef.current });
+      }
     }
 
     evaluateRef.current();
@@ -249,6 +256,8 @@ export function useSessionPolicy({
   }, [sessionExpiresAt]);
 
   useEffect(() => {
+    // Idle and absolute timeouts MUST run even if a legacy backend response
+    // did not include the optional cross-tab session identifier.
     if (!active) {
       endingRef.current = false;
       setDialogType(null);
@@ -269,7 +278,7 @@ export function useSessionPolicy({
       if (event.key !== SESSION_SYNC_STORAGE_KEY || !event.newValue) return;
       try {
         const message = JSON.parse(event.newValue);
-        if (!message || message.source === TAB_ID) return;
+        if (!isCurrentSessionEvent(message, sessionId) || message.source === TAB_ID) return;
         if (message.type === "activity") {
           applyActivity(message.at, { force: true, broadcast: false });
         } else if (message.type === "logout") {
@@ -290,7 +299,7 @@ export function useSessionPolicy({
     document.addEventListener("visibilitychange", handleVisibilityOrFocus);
     window.addEventListener("storage", handleStorage);
 
-    writeSessionSyncEvent({ type: "activity", at: startedAt });
+    writeSessionSyncEvent({ type: "activity", at: startedAt, sessionId });
     evaluateRef.current();
     const intervalId = window.setInterval(() => evaluateRef.current(), 1000);
 
@@ -303,7 +312,7 @@ export function useSessionPolicy({
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [active, applyActivity, endSession, setDialogType]);
+  }, [active, sessionId, applyActivity, endSession, setDialogType]);
 
   return {
     dialogType,

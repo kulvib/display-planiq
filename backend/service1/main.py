@@ -690,6 +690,13 @@ app.include_router(terminal_router,        prefix="/api")
 app.include_router(terminal_agent_router,  prefix="/api")
 
 
+@app.head("/health", include_in_schema=False)
+def head_health():
+    # Installed ClientFlow clients use HEAD as an HTTPS connectivity probe.
+    # HEAD must not emit a JSON body or touch the database.
+    return Response(status_code=200)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
