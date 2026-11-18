@@ -2,6 +2,24 @@
 export const MAX_PLAN_CLIENTS = 25;
 const VERSION = /^\d+\.\d+\.\d+$/;
 
+export function validateReleaseReadiness(value, releaseId, revision) {
+  const required = ["stable_catalog_binding", "physical_pilot", "database_cutover",
+    "fleet", "fresh_install", "reproducible_candidate", "physical_recovery"];
+  if (!value || value.schema_version !== 1 || value.release_id !== releaseId ||
+      value.policy_revision !== revision ||
+      value.deployment_authorized !== false ||
+      value.automatic_rollout_authorized !== false ||
+      value.ready_for_fleet !== false || value.ready_for_fresh_install !== false ||
+      !Array.isArray(value.checks) || value.checks.length !== required.length ||
+      value.checks.some((item, index) => item?.id !== required[index] ||
+        (index === 0
+          ? (item.ready !== true || item.reason !== null)
+          : (item.ready !== false || typeof item.reason !== "string" || !item.reason.trim())))) {
+    throw new Error("Release-readiness kan ikke verificeres – alle installationshandlinger er spærret");
+  }
+  return value;
+}
+
 export function validateReleasePlanningResponse(data) {
   if (!data || data.phase !== "additive_draft_only" ||
       data.authorization_active !== false || data.planning_review_available !== true ||
@@ -23,6 +41,7 @@ export function validateReleasePlanningResponse(data) {
       data.available_releases[0]?.deployment_authorized !== false) {
     throw new Error("Ukendt eller usikker releaseadministrationskontrakt – planlægning er spærret");
   }
+  validateReleaseReadiness(data.release_readiness, data.stable_release_id, data.revision);
   const ids = new Set();
   for (const client of data.available_clients) {
     if (!Number.isSafeInteger(client.id) || client.id < 1 || ids.has(client.id) ||

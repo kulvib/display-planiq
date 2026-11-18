@@ -239,6 +239,21 @@ export default function ClientFlowReleaseAdministration() {
             </Stack>
           </Paper>
           <Paper elevation={0} sx={panelSx}>
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={850}>Release readiness – obligatoriske gates</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Status er skrivebeskyttet og giver aldrig installationsadgang. Manglende fysisk pilot,
+                signeret kandidat eller recoverybevis betyder STOP – også ved grøn CI.
+              </Typography>
+              {(status.release_readiness?.checks ?? []).map((gate) => (
+                <Box key={gate.id} sx={{ display: "flex", gap: 1, alignItems: "flex-start" }}>
+                  <Chip label={gate.ready ? "OK" : "STOP"} size="small" color={gate.ready ? "success" : "warning"} variant="outlined" />
+                  <Typography variant="body2">{gate.ready ? "Godkendt stabil katalog- og SHA-binding" : gate.reason}</Typography>
+                </Box>
+              ))}
+            </Stack>
+          </Paper>
+          <Paper elevation={0} sx={panelSx}>
             <Stack spacing={2}>
               <Box>
                 <Typography variant="h6" fontWeight={850}>2. Vælg release og klienter</Typography>

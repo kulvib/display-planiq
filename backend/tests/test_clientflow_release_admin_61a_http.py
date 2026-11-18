@@ -164,7 +164,8 @@ def environment(monkeypatch):
         monkeypatch.setattr(route, "_approved_lock", lambda: {"approved_bundle_sha256": SHA})
         monkeypatch.setattr(route, "load_catalog", lambda: {
             "latest_stable": "1.3.44", "default_install_version": "1.3.44",
-            "releases": [{"release_id": RELEASE_ID, "status": "stable", "install_modes": ["fresh_install", "in_place_update"],
+            "releases": [{"release_id": RELEASE_ID, "version": "1.3.44", "release_sequence": 1245,
+                           "status": "stable", "install_modes": ["fresh_install", "in_place_update"],
                            "rollback_allowed": False}],
         })
 
@@ -196,6 +197,16 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     assert policy["fresh_install_open"] is False
     assert policy["physical_pilot_accepted"] is False
     assert policy["stable_release_id"] == RELEASE_ID
+    readiness = policy["release_readiness"]
+    assert readiness["schema_version"] == 1
+    assert readiness["release_id"] == RELEASE_ID
+    assert readiness["policy_revision"] == 1
+    assert readiness["deployment_authorized"] is False
+    assert readiness["automatic_rollout_authorized"] is False
+    assert readiness["ready_for_fleet"] is False
+    assert readiness["ready_for_fresh_install"] is False
+    assert readiness["checks"][0] == {"id": "stable_catalog_binding", "ready": True, "reason": None}
+    assert all(row["ready"] is False for row in readiness["checks"][1:])
     # 61B UX: the same guarded response provides a non-secret, read-only
     # inventory and only the already approved stable catalog release.
     assert policy["client_inventory_complete"] is True
