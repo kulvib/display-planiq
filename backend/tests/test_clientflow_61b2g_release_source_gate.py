@@ -16,7 +16,15 @@ SCRIPT = REPO / 'scripts/clientflow_61b2g_release_source_gate.py'
 spec = importlib.util.spec_from_file_location('release_source_gate_61b2g', SCRIPT)
 gate = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
-spec.loader.exec_module(gate)
+# Loading a script via spec_from_file_location does not add its directory to
+# sys.path, unlike `python scripts/clientflow_61b2g_release_source_gate.py`.
+# Make the sibling 63D-6 catalog contract importable for this isolated test.
+script_dir = str(SCRIPT.parent)
+sys.path.insert(0, script_dir)
+try:
+    spec.loader.exec_module(gate)
+finally:
+    sys.path.remove(script_dir)
 
 
 def _copy_repository(tmp_path: Path) -> Path:
