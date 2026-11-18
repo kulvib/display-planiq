@@ -28,6 +28,9 @@ def test_native_frame_geometry_avoids_database_reads():
     assert "_configured_resolution(client_id)" in handler
     assert handler.count("_configured_resolution(client_id)") == 1
     assert "if 0 < live_width <= 7680 and 0 < live_height <= 4320" in handler
+    assert 'payload["screen_width"] = browser.screen_width' in handler
+    assert 'payload["screen_height"] = browser.screen_height' in handler
+    assert 'payload.setdefault("screen_width"' not in handler
 
 
 def test_browser_does_not_put_jpeg_in_react_state_or_add_database_polling():

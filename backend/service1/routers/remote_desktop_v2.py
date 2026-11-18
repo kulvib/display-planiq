@@ -801,8 +801,11 @@ async def _handle_control_agent_message(client_id: int, credential_id: str, mess
                     browser.screen_width = width
                     browser.screen_height = height
         if message_type == "frame":
-            payload.setdefault("screen_width", browser.screen_width)
-            payload.setdefault("screen_height", browser.screen_height)
+            # Always send the validated, session-authoritative geometry.
+            # setdefault() would retain a malformed agent value (including
+            # "invalid") even after the bounded fallback had succeeded.
+            payload["screen_width"] = browser.screen_width
+            payload["screen_height"] = browser.screen_height
         await _send_browser(session_id, client_id, payload)
 
 

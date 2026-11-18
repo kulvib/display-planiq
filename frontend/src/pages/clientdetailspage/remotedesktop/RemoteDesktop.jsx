@@ -705,7 +705,9 @@ export default function RemoteDesktop() {
     };
   }, [
     clientId,
+    framePainter,
     markRemoteActivity,
+    paintLatestFrame,
     send,
     startStream,
     showActionMessage,

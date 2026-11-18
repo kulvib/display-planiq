@@ -68,6 +68,35 @@ def test_missing_geometry_has_single_bounded_fallback(monkeypatch):
     asyncio.run(scenario())
 
 
+
+def test_invalid_frame_geometry_after_native_update_reuses_valid_session_values(monkeypatch):
+    async def scenario():
+        session = browser()
+        monkeypatch.setitem(remote.BROWSERS, session.session_id, session)
+        def unexpected_resolution(_client_id):
+            raise AssertionError("Known native geometry must never require a DB lookup")
+        monkeypatch.setattr(remote, "_configured_resolution", unexpected_resolution)
+        sent = []
+        async def capture(_session_id, _client_id, payload):
+            sent.append(payload)
+        monkeypatch.setattr(remote, "_send_browser", capture)
+        try:
+            await remote._handle_control_agent_message(3, "credential", {
+                "type": "frame", "session_id": session.session_id,
+                "screen_width": "1600", "screen_height": "900", "data": "first",
+            })
+            await remote._handle_control_agent_message(3, "credential", {
+                "type": "frame", "session_id": session.session_id,
+                "screen_width": "invalid", "screen_height": "invalid", "data": "second",
+            })
+            assert [(frame["screen_width"], frame["screen_height"]) for frame in sent] == [
+                (1600, 900), (1600, 900),
+            ]
+        finally:
+            remote.BROWSERS.pop(session.session_id, None)
+    asyncio.run(scenario())
+
+
 def test_stalled_browser_keeps_only_newest_waiting_jpeg_and_all_control_events(monkeypatch):
     async def scenario():
         session = browser()

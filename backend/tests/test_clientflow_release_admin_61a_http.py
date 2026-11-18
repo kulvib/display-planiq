@@ -26,6 +26,7 @@ from service1.db import get_session
 from service1.clientflow_releases import load_catalog as load_canonical_catalog
 from service1 import clientflow_release_pilot_stage_1246 as pilot_stage_1246
 from service1.client_domain_models import ClientDomainCredential, ClientDomainStatus
+from service1.clientflow_update_models import ClientFlowDeployment
 from service1.auth import get_current_superadmin_user
 from service1.models import User, Client, Organization, AuditLog
 from service1.routers import clientflow_release_administration as route
@@ -147,6 +148,9 @@ def environment(monkeypatch):
         User.__table__, Client.__table__, Organization.__table__, AuditLog.__table__,
         ClientFlowReleaseControl.__table__, ClientFlowRolloutWave.__table__, ClientFlowRolloutTarget.__table__,
         ClientFlowPhysicalAcceptance.__table__,
+        # 63D-8's bounded read-only deployment history uses this existing
+        # production table. This isolated SQLite fixture must model it too.
+        ClientFlowDeployment.__table__,
         ClientDomainCredential.__table__, ClientDomainStatus.__table__,
     ])
     with Session(engine) as session:
@@ -197,6 +201,7 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     before = http.get("/api/clientflow/release-administration")
     assert before.status_code == 200, before.text
     policy = before.json()
+    assert policy["recent_deployments"] == []
     assert policy["phase"] == "additive_draft_only"
     assert policy["authorization_active"] is False
     assert policy["fleet_open"] is False
