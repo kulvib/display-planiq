@@ -48,6 +48,12 @@ if (evaluation.accepted.length) {
     console.warn(`  Kun ${name}@${entry.lockedVersion} / ${entry.advisories.join(", ")} (udløber ${entry.expires})`);
   }
 }
+if (evaluation.dormantExceptions.length) {
+  for (const name of evaluation.dormantExceptions) {
+    const entry = allowlist.exceptions.find((item) => item.package === name);
+    console.warn(`Kendt, endnu ikke rettet GHSA for ${name}@${entry.lockedVersion} rapporteres ikke af npm audit; dev-only undtagelsen overvåges indtil ${entry.expires}.`);
+  }
+}
 if (evaluation.unexpected.length) {
   console.error("Uventede eller udløbne frontend-advisories:");
   for (const item of evaluation.unexpected) {
@@ -55,4 +61,4 @@ if (evaluation.unexpected.length) {
   }
   process.exit(1);
 }
-console.log(`Frontend dependency-audit bestået (${evaluation.total} rapporterede, ${evaluation.exceptionsUsed.length} tidsbegrænset dev-only-undtagelse).`);
+console.log(`Frontend dependency-audit bestået (${evaluation.total} rapporterede advisories, ${evaluation.exceptionsUsed.length} anvendte og ${evaluation.dormantExceptions.length} overvågede dev-only-undtagelser).`);

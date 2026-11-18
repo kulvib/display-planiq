@@ -1,6 +1,8 @@
 /**
  * Fail-closed interpretation of npm audit's direct advisories and inherited metadvisories.
  * Only the exact, short-lived picomatch dev-tool exception in the lockfile can be accepted.
+ * The advisory can be temporarily omitted by the npm registry while the locked
+ * vulnerable dev-only package remains unchanged; absence is not a security fix.
  * An inherited meta-advisory is accepted only if every upstream cause is accepted and every
  * dependency edge and all involved dev-only package records are present in the audited lock.
  */
@@ -92,6 +94,7 @@ export function evaluateDependencyAudit(report, allowlist, lock, today) {
 
   const accepted = new Set();
   const exceptionsUsed = new Set();
+  const dormantExceptions = new Set();
   // Direct findings require one exact audited dev-only, version-pinned exception.
   for (const record of records.values()) {
     const exception = acceptedExceptions.get(record.name);
@@ -131,12 +134,28 @@ export function evaluateDependencyAudit(report, allowlist, lock, today) {
       unidentified: record.unknownDirect,
     }));
 
-  // Stale exceptions must not silently remain after upstream has removed the issue.
-  for (const name of acceptedExceptions.keys()) {
-    if (!exceptionsUsed.has(name) && !records.has(name)) unexpected.push({
-      packageName: name, severity: "policy", advisoryIds: [], inheritedFrom: [],
-      unidentified: false, reason: "Undtagelse er overflødig eller lock-versionen er ændret",
-    });
+  // npm's advisory feed can temporarily omit a still-unpatched GHSA. Keep ONLY
+  // this explicitly reviewed, time-limited dev-tool waiver while its exact
+  // vulnerable version remains in the lockfile. Never assume that a missing
+  // npm audit finding means the dependency has been patched. A new dependency
+  // version, runtime use, different advisory/waiver or expiry remains fail-closed.
+  for (const [name, exception] of acceptedExceptions) {
+    if (exceptionsUsed.has(name) || records.has(name)) continue;
+    const pinnedUnreportedPicomatch = name === "picomatch"
+      && exception.lockedVersion === "4.0.5"
+      && exception.expires === "2026-11-25"
+      && exception.advisories.length === 1
+      && exception.advisories[0].toUpperCase() === "GHSA-FC5Q-39XC-VJPF"
+      && devOnly(lock, name)
+      && packageRecords(lock, name).every(([, info]) => info.version === exception.lockedVersion);
+    if (pinnedUnreportedPicomatch) {
+      dormantExceptions.add(name);
+    } else {
+      unexpected.push({
+        packageName: name, severity: "policy", advisoryIds: [], inheritedFrom: [],
+        unidentified: false, reason: "Undtagelse er overflødig eller lock-version/scope er ændret",
+      });
+    }
   }
   const totals = report?.metadata?.vulnerabilities;
   if (typeof totals?.total === "number" && totals.total > 0 && records.size === 0) {
@@ -146,6 +165,7 @@ export function evaluateDependencyAudit(report, allowlist, lock, today) {
   return {
     accepted: [...accepted].sort(),
     exceptionsUsed: [...exceptionsUsed],
+    dormantExceptions: [...dormantExceptions],
     unexpected,
     total: totals?.total ?? records.size,
   };
