@@ -203,6 +203,7 @@ const PENDING_ACTION_LABELS = {
   shutdown: "Slukker klient…",
   pending_shutdown: "Slukker klient…",
   reset_browser: "Nulstiller kiosk browser…",
+  restart_browser: "Genstarter kiosk browser…",
   os_update: "Ubuntu-opdatering afventer klient",
 };
 
@@ -870,19 +871,48 @@ export default function ClientDetailsActionsSection({
           background: toneBg,
         }}
       >
-        <Typography
-          variant="caption"
-          sx={{
-            display: "block",
-            mb: 1.2,
-            color: tone === "danger" ? "#fecaca" : "rgba(203,213,225,0.78)",
-            fontWeight: 950,
-            letterSpacing: 0.55,
-            textTransform: "uppercase",
-          }}
-        >
-          {title}
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 0.8, mb: 1.2 }}>
+          <Typography
+            variant="caption"
+            sx={{
+              color: tone === "danger" ? "#fecaca" : "rgba(203,213,225,0.78)",
+              fontWeight: 950,
+              letterSpacing: 0.55,
+              textTransform: "uppercase",
+            }}
+          >
+            {title}
+          </Typography>
+          {title === "Kiosk browser" && canControlClient && (
+            <Tooltip title={getDisabledTooltip("restart_browser", "Luk og genåbn kiosk-browseren uden at rydde cookies eller browserprofil")} arrow>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  aria-label="Genstart kiosk browser"
+                  startIcon={<RestartAltIcon sx={{ fontSize: 15 }} />}
+                  onClick={() => doAction("restart_browser")}
+                  disabled={isDisabledByState("restart_browser") || !!actionLoading.restart_browser}
+                  sx={{
+                    px: 1.1, py: 0.15, minHeight: "27px !important",
+                    borderRadius: 7, fontSize: "0.69rem", fontWeight: 850,
+                    textTransform: "none", whiteSpace: "nowrap",
+                    color: "rgba(226,232,240,0.92)",
+                    borderColor: "rgba(148,163,184,0.37)",
+                    "&.Mui-disabled": {
+                      opacity: 0.38, color: "rgba(148,163,184,0.72)",
+                      borderColor: "rgba(100,116,139,0.30)",
+                      cursor: "not-allowed",
+                    },
+                  }}
+                >
+                  {actionLoading.restart_browser ? "Genstarter…" : "Genstart"}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+        </Box>
         <Grid container spacing={isTouchHandset ? 0.75 : 1}>
           {buttons.map((btn) => (
             <Grid key={btn.key} size={isTouchHandset ? 6 : 12}>

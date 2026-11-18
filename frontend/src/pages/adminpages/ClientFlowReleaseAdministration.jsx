@@ -259,7 +259,10 @@ export default function ClientFlowReleaseAdministration() {
                 <Typography variant="h6" fontWeight={850}>Godkendt GitHub-arkiv · 1.3.45/1246</Typography>
                 <Alert severity="warning">
                   Kun kilde- og artifact-godkendelse. Releasen er <strong>ikke verificeret som</strong> publiceret til
-                  Render-release-lageret, aktiv i releasekataloget eller tilladt til installation.
+                  Render-release-lageret eller tilladt til installation.
+                  {status.staged_pilot_candidate.active_catalog_promoted
+                    ? " Update-only pilotkatalog er aktivt, men giver ingen klientautorisation."
+                    : " Pilotkataloget er endnu ikke aktivt."}
                   Fysisk Viborg1-pilot og recovery er ikke accepteret.
                 </Alert>
                 <Typography variant="body2" color="text.secondary">Kandidat: {status.staged_pilot_candidate.release_id} · kilde: {status.staged_pilot_candidate.source_commit}</Typography>

@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { controlRoomRoleAllows, controlRoomActionDecision } from "../src/pages/clientdetailspage/controlRoomActionMatrix.mjs";
 
-const ACTIONS = ["start", "stop", "sleep", "wakeup", "reboot", "shutdown", "terminal", "remote"];
+const ACTIONS = ["start", "stop", "restart_browser", "sleep", "wakeup", "reboot", "shutdown", "terminal", "remote"];
 const ROLES = ["viewer", "bruger", "admin", "superadmin"];
 const baseline = { role: "superadmin", online: true, clientStatus: "approved", sleeping: false,
   systemLocked: false, clientflowBusy: false, ubuntuBusy: false, wakeInProgress: false,
@@ -16,6 +16,7 @@ test("roles exactly match backend client, power and support action grants", () =
   const rolesByAction = {
     start: ["bruger", "admin", "superadmin"],
     stop: ["bruger", "admin", "superadmin"],
+    restart_browser: ["bruger", "admin", "superadmin"],
     sleep: ["bruger", "admin", "superadmin"],
     wakeup: ["bruger", "admin", "superadmin"],
     reboot: ["admin", "superadmin"],
@@ -43,6 +44,7 @@ test("offline, unapproved and busy clients fail closed; support tools remain acc
   }
   assert.ok(disabled("start", { clientStatus: "pending" }));
   assert.ok(disabled("stop", { clientStatus: "" }));
+  assert.ok(disabled("restart_browser", { clientStatus: "pending" }));
 });
 
 test("screen on/off and wake are mutually exclusive across pending transitions", () => {
@@ -54,6 +56,7 @@ test("screen on/off and wake are mutually exclusive across pending transitions",
   assert.ok(disabled("wakeup", { sleeping: true, pendingAction: "wakeup", busy: true }));
   assert.ok(disabled("start", { sleeping: true }));
   assert.ok(disabled("stop", { sleeping: true }));
+  assert.ok(disabled("restart_browser", { sleeping: true }));
   assert.ok(disabled("reboot", { sleeping: true }));
   assert.ok(disabled("shutdown", { sleeping: true }));
   assert.ok(disabled("sleep", { pendingAction: "sleep", busy: true }));
@@ -61,6 +64,9 @@ test("screen on/off and wake are mutually exclusive across pending transitions",
 
 test("start/stop uses canonical browser process and desired state", () => {
   assert.ok(disabled("start", { chromeRunning: true }));
+  assert.ok(enabled("restart_browser", { chromeRunning: true }));
+  assert.ok(disabled("restart_browser", { chromeRunning: false }));
+  assert.ok(disabled("restart_browser", { chromeRunning: null }));
   assert.ok(enabled("start", { chromeRunning: false, browserRequested: true }));
   assert.ok(enabled("stop", { chromeRunning: false, browserRequested: true }));
   assert.ok(enabled("stop", { chromeRunning: false, browserRequested: null }));
@@ -86,7 +92,7 @@ test("button clicks recheck matrix and synchronously lock before awaiting the AP
 test("Control Room matrix maps to backend-authorized canonical commands", () => {
   const backend = readFileSync(new URL("../../backend/service1/routers/clients.py", import.meta.url), "utf8");
   const local = readFileSync(new URL("../../client/runtime/clientflow_runtime/display_local_control.py", import.meta.url), "utf8");
-  assert.match(backend, /USER_CHROME_COMMANDS = \{"start", "stop", "reset_browser", "sleep", "wakeup"\}/);
+  assert.match(backend, /USER_CHROME_COMMANDS = \{"start", "stop", "reset_browser", "restart_browser", "sleep", "wakeup"\}/);
   assert.match(backend, /ADMIN_CHROME_COMMANDS = USER_CHROME_COMMANDS \| \{"reboot"\}/);
   assert.match(backend, /_require_system_action_access\(user, client, action\)/);
   assert.match(backend, /_require_client_operator_access\(user, client, action\)/);
@@ -96,4 +102,17 @@ test("Control Room matrix maps to backend-authorized canonical commands", () => 
   assert.match(backend, /command_type, payload = "set_display_power", \{"state": "on"\}/);
   assert.match(local, /if state == "off":\s*# Product contract:[\s\S]*?"action": "stop_browser"[\s\S]*?"action": "display_sleep_countdown"/);
   assert.match(local, /call\(POWER_SOCKET, \{"action": "set_display_power", "state": state\}\)/);
+});
+
+
+test("small kiosk heading restart chip is role-gated and never invokes machine reboot or cookie reset", () => {
+  const src = readFileSync(new URL("../src/pages/clientdetailspage/ClientDetailsActionsSection.jsx", import.meta.url), "utf8");
+  const api = readFileSync(new URL("../src/api/api.js", import.meta.url), "utf8");
+  assert.match(src, /title === "Kiosk browser" && canControlClient/);
+  assert.match(src, /aria-label="Genstart kiosk browser"/);
+  assert.match(src, /doAction\("restart_browser"\)/);
+  assert.match(src, /disabled=\{isDisabledByState\("restart_browser"\)/);
+  assert.match(api, /restart_browser: "restart_browser"/);
+  assert.match(api, /action === "restart" \|\| action === "reboot"/);
+  assert.ok(!/doAction\("reset_browser"\)/.test(src));
 });

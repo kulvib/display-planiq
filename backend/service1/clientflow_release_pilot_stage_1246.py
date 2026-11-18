@@ -76,26 +76,35 @@ def load_staged_catalog() -> dict[str, Any]:
     return stage
 
 
+
+def validated_catalog_mode(*, active_catalog: dict[str, Any]) -> str:
+    """Recognize ONLY pinned stable-1245 or the entire exact 1246 pilot stage.
+
+    Exact full-record comparison (including notes, policy and compatibility)
+    prevents an accidental two-entry catalog from silently widening pilot
+    eligibility. This is a read-only classifier, NEVER a deployment grant.
+    """
+    pilot.approval_lock()
+    staged = load_staged_catalog()
+    if not isinstance(active_catalog, dict):
+        raise PilotStageDenied('Aktivt releasekatalog er ugyldigt')
+    # The published 1245 baseline must match the locked staged copy byte-for-
+    # byte at the structured-data level, independently of catalog sequence.
+    stable = staged['releases'][0]
+    base = {**staged,
+            'catalog_sequence': 1245,
+            'releases': [stable]}
+    if active_catalog == base:
+        return 'stable_1245_only'
+    if active_catalog == staged:
+        return 'update_only_1246_pilot_catalog'
+    raise PilotStageDenied('Releasekataloget er ikke eksakt stabil 1245 eller godkendt 1246 pilotkatalog')
+
+
 def staged_pilot_summary(*, active_catalog: dict[str, Any]) -> dict[str, Any]:
     """Operator-facing, strict / no publication inference, no installation permission."""
-    pilot.approval_lock()
-    load_staged_catalog()
-    try:
-        releases = active_catalog['releases']
-        active = (active_catalog['catalog_sequence'] == 1245
-            and active_catalog['latest_stable'] == '1.3.44'
-            and active_catalog['default_install_version'] == '1.3.44'
-            and type(releases) is list and len(releases) == 1
-            and releases[0]['release_id'] == 'clientflow-1.3.44-seq-1245'
-            and releases[0]['status'] == 'stable')
-    except (KeyError, TypeError, IndexError):
-        active = False
-    if not active:
-        raise PilotStageDenied('1246-staging kræver fortsat uændret aktivt 1245-katalog')
-    # Never accept a candidate stage that silently alters the old, currently
-    # selected stable/fresh-install entry or its historical audit notes.
-    if load_staged_catalog()['releases'][0] != releases[0]:
-        raise PilotStageDenied('1246 staging må ikke ændre eksisterende 1245 stable entry')
+    mode = validated_catalog_mode(active_catalog=active_catalog)
+    pilot_catalog_active = mode == 'update_only_1246_pilot_catalog'
     return {
         'schema_version': 1,
         'phase': 'approved_github_archive_source_staged_only',
@@ -110,7 +119,7 @@ def staged_pilot_summary(*, active_catalog: dict[str, Any]) -> dict[str, Any]:
         'pilot_client_id': pilot.PILOT_CLIENT_ID,
         'github_artifact_approval_pinned': True,
         'render_store_publication_verified': False,
-        'active_catalog_promoted': False,
+        'active_catalog_promoted': pilot_catalog_active,
         'physical_pilot_accepted': False,
         'deployment_authorized': False,
         'fleet_authorized': False,

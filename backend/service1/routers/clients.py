@@ -97,12 +97,12 @@ LEGACY_CLIENTFLOW_UPDATE_FIELDS = {
 }
 VALID_PENDING_CHROME_ACTION_SOURCES = {"actionbutton", "calendar", "viewer_heartbeat_timeout", "viewer_inactivity_timeout", "viewer_left_control_room", "control_room_back", "livestream_watchdog", "system", "api", "client", "self_update"}
 
-BLOCKING_ACTIONS = {"start", "stop", "sleep", "wakeup", "restart", "shutdown", "reset_browser"}
+BLOCKING_ACTIONS = {"start", "stop", "sleep", "wakeup", "restart", "shutdown", "reset_browser", "restart_browser"}
 
 # Backend-side guardrails for UI actions. Frontend also disables buttons,
 # but backend must be authoritative so direct API calls cannot start the
 # kiosk browser while the client is in display sleep.
-KIOSK_BROWSER_ACTIONS = {"start", "stop", "reset_browser"}
+KIOSK_BROWSER_ACTIONS = {"start", "stop", "reset_browser", "restart_browser"}
 DISPLAY_ONLY_ACTIONS = {"wakeup"}
 DISPLAY_SLEEP_ACTIONS = {"sleep"}
 ACTIONS_ALLOWED_WHILE_SLEEPING = {"wakeup", "none"}
@@ -761,7 +761,7 @@ def _client_is_deleted(client: Client) -> bool:
 
 VIEWER_ROLE = "viewer"
 OPERATOR_USER_ROLES = {"bruger"}
-USER_CHROME_COMMANDS = {"start", "stop", "reset_browser", "sleep", "wakeup"}
+USER_CHROME_COMMANDS = {"start", "stop", "reset_browser", "restart_browser", "sleep", "wakeup"}
 ADMIN_CHROME_COMMANDS = USER_CHROME_COMMANDS | {"reboot"}
 ADMIN_UPDATE_FIELDS = {
     "locality", "kiosk_url", "browser_refresh_interval_sec",
@@ -2078,7 +2078,7 @@ def set_chrome_command(
         )
 
     desired = get_display_desired_configuration(session, id)
-    if action in {"start", "reset_browser"} and (desired is None or not desired.kiosk_url):
+    if action in {"start", "reset_browser", "restart_browser"} and (desired is None or not desired.kiosk_url):
         raise HTTPException(status_code=409, detail="Kiosk URL mangler i canonical Display-konfiguration")
 
     normalized_source = None
@@ -2108,6 +2108,32 @@ def set_chrome_command(
             detail=f"Display-handling '{active_action}' er allerede i gang",
         )
 
+    if action == "restart_browser":
+        # UI disabled state is advisory. Enforce the same safety boundary for
+        # direct API calls and stale client-detail pages, after client lock.
+        if (client.status != "approved" or client.deleted_at is not None
+                or _client_state_value(client) in SYSTEM_OWNED_STATES
+                or _client_state_value(client).startswith("sleep")
+                or client.pending_os_update):
+            raise HTTPException(status_code=409, detail="Klientens tilstand tillader ikke browsergenstart")
+        if active_system_command(session, id) is not None:
+            raise HTTPException(status_code=409, detail="En System-handling er allerede i gang")
+        browser_runtime = (status.status_payload or {}).get("runtime") if isinstance(status.status_payload, dict) else None
+        if (not isinstance(browser_runtime, dict)
+                or browser_runtime.get("state") != "running"
+                or type(browser_runtime.get("browser_pid")) is not int
+                or browser_runtime["browser_pid"] <= 0):
+            raise HTTPException(status_code=409, detail="Kiosk browser kører ikke – brug Start")
+        # Do not act on an old Display report even if the separate Status
+        # heartbeat happens to be fresh. The agent must confirm live browser.
+        reported = getattr(status, "reported_at", None)
+        if isinstance(reported, datetime):
+            age = (datetime.now(timezone.utc) - (
+                reported.replace(tzinfo=timezone.utc) if reported.tzinfo is None else reported
+            )).total_seconds()
+            if age < -15 or age > 90:
+                raise HTTPException(status_code=409, detail="Display-status er for gammel til browsergenstart")
+
     command_type: str
     payload: dict[str, Any]
     if action == "start":
@@ -2116,6 +2142,14 @@ def set_chrome_command(
         command_type, payload = "stop_browser", {}
     elif action == "reset_browser":
         command_type, payload = "reset_browser", {}
+    elif action == "restart_browser":
+        # The deployed 1246 agent already supports stop_browser/start_browser.
+        # Only the authenticated completion of THIS stop may queue the second
+        # step. No reset_browser call: cookies and profile must be preserved.
+        command_type, payload = "stop_browser", {
+            "restart_browser_after_stop": True,
+            "desired_revision": desired.revision,
+        }
     elif action == "sleep":
         command_type, payload = "set_display_power", {"state": "off"}
     else:

@@ -34,7 +34,8 @@ export function validateStagedPilotCandidate(candidate, activeReleaseId) {
       typeof candidate.approval_reference !== "string" ||
       !/^CF-1\.3\.45-1246-/.test(candidate.approval_reference) ||
       candidate.github_artifact_approval_pinned !== true ||
-      ["render_store_publication_verified", "active_catalog_promoted", "physical_pilot_accepted",
+      (candidate.active_catalog_promoted !== false && candidate.active_catalog_promoted !== true) ||
+      ["render_store_publication_verified", "physical_pilot_accepted",
        "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
        "database_cutover_authorized"].some((field) => candidate[field] !== false)) {
     throw new Error("1246-arkivstatus er ugyldig eller angiver uautoriseret installation");
