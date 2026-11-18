@@ -74,7 +74,7 @@ def test_63_missing_frontend_or_latency_reports_no_unearned_proof():
     old.pop("frontend")
     new.pop("frontend")
     old["sample_seconds"] = 90
-    assert compare.compare(old, new)["warnings"] == ["insufficient_observation_duration"]
+    assert compare.compare(old, new)["warnings"] == ["insufficient_db_hotpath_summary_coverage", "insufficient_observation_duration"]
     assert compare.compare(old, new)["compared_metrics"] == 0
 
 

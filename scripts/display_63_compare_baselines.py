@@ -11,7 +11,9 @@ import json
 from pathlib import Path
 import sys
 
-from display_63_cost_performance_baseline import SCHEMA, PerformanceStop, MAX_INPUT_BYTES, CLIENT_CATEGORIES
+from display_63_cost_performance_baseline import (
+    SCHEMA, PerformanceStop, MAX_INPUT_BYTES, CLIENT_CATEGORIES, ALLOWED_DB_CATEGORIES,
+)
 
 MIN_SAMPLE_SECONDS = 1800
 MIN_TIMED_REQUESTS = 20
@@ -20,6 +22,12 @@ P95_RELATIVE_LIMIT = 0.15
 P95_ABSOLUTE_LIMIT_MS = 10
 TRAFFIC_PER_CLIENT_RELATIVE_LIMIT = 0.20
 FRONTEND_GZIP_RELATIVE_LIMIT = 0.05
+DB_STATEMENTS_PER_OPERATION_RELATIVE_LIMIT = 0.20
+DB_STATEMENTS_PER_OPERATION_ABSOLUTE_LIMIT = 0.5
+DB_CHECKOUTS_PER_OPERATION_RELATIVE_LIMIT = 0.25
+DB_CHECKOUTS_PER_OPERATION_ABSOLUTE_LIMIT = 0.25
+MIN_DB_OPERATIONS = 20
+MIN_DB_SUMMARIES = 2
 
 
 def read_report(path: Path) -> dict:
@@ -88,6 +96,50 @@ def compare(before: dict, after: dict) -> dict:
             if new_rate > old_rate * (1 + TRAFFIC_PER_CLIENT_RELATIVE_LIMIT):
                 indicators.append({"category": category, "metric": "requests_per_client_hour",
                                    "before": round(old_rate, 2), "after": round(new_rate, 2)})
+    # DB counters are emitted only when a hotpath triggers the completed 15m
+    # window. Missing/short samples are not evidence of zero DB traffic.
+    da = before.get("db_hotpath_categories", {})
+    db = after.get("db_hotpath_categories", {})
+    wa = before.get("db_hotpath_windows_observed", 0)
+    wb = after.get("db_hotpath_windows_observed", 0)
+    if not isinstance(da, dict) or not isinstance(db, dict):
+        raise PerformanceStop("malformed_db_observation")
+    enough_db = eligible and type(wa) is int and type(wb) is int and wa >= MIN_DB_SUMMARIES and wb >= MIN_DB_SUMMARIES
+    if not enough_db:
+        warnings.append("insufficient_db_hotpath_summary_coverage")
+    else:
+        for category in sorted(set(da) & set(db) & ALLOWED_DB_CATEGORIES):
+            old, new = da[category], db[category]
+            if not isinstance(old, dict) or not isinstance(new, dict):
+                continue
+            def operation_count(counts):
+                requests = counts.get("requests", 0)
+                rechecks = counts.get("websocket_rechecks", 0)
+                if type(requests) is not int or type(rechecks) is not int or requests < 0 or rechecks < 0:
+                    return 0
+                return requests + rechecks
+
+            a_ops, b_ops = operation_count(old), operation_count(new)
+            if min(a_ops, b_ops) < MIN_DB_OPERATIONS:
+                continue
+            for metric, relative, absolute in (
+                ("statements", DB_STATEMENTS_PER_OPERATION_RELATIVE_LIMIT,
+                 DB_STATEMENTS_PER_OPERATION_ABSOLUTE_LIMIT),
+                ("checkouts", DB_CHECKOUTS_PER_OPERATION_RELATIVE_LIMIT,
+                 DB_CHECKOUTS_PER_OPERATION_ABSOLUTE_LIMIT),
+            ):
+                a_count, b_count = old.get(metric), new.get(metric)
+                if (type(a_count) is not int or type(b_count) is not int
+                        or not (0 <= a_count <= 10_000_000 and 0 <= b_count <= 10_000_000)):
+                    continue
+                a_rate = a_count / a_ops
+                b_rate = b_count / b_ops
+                measured += 1
+                if b_rate > a_rate * (1 + relative) and b_rate > a_rate + absolute:
+                    indicators.append({
+                        "category": category, "metric": metric + "_per_operation",
+                        "before": round(a_rate, 3), "after": round(b_rate, 3),
+                    })
     fa = before.get("frontend", {}).get("groups", {}) if isinstance(before.get("frontend"), dict) else {}
     fb = after.get("frontend", {}).get("groups", {}) if isinstance(after.get("frontend"), dict) else {}
     for category in ("javascript", "stylesheet"):
