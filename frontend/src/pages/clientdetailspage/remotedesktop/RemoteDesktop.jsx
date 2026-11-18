@@ -31,6 +31,7 @@ import {
   closeRemoteDesktopBrowserHttpRelay,
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
+import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import AppSnackbar from "../../../components/AppSnackbar";
 import {
@@ -195,7 +196,16 @@ export default function RemoteDesktop() {
   const [status, setStatus] = useState("Ikke forbundet");
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
-  const [frameSrc, setFrameSrc] = useState("");
+  const [hasRemoteFrame, setHasRemoteFrame] = useState(false);
+  const firstFrameRef = useRef(false);
+  const framePainter = useMemo(() => createLatestRemoteFramePainter({
+    requestFrame: (callback) => window.requestAnimationFrame(callback),
+    cancelFrame: (id) => window.cancelAnimationFrame(id),
+    getImage: () => imgRef.current,
+  }), []);
+  const lastFrameStateChangeRef = useRef(0);
+  const lastFrameGeometryRef = useRef(null);
+  const [transportMode, setTransportMode] = useState(null);
   const [screenSize, setScreenSize] = useState({ width: null, height: null });
   const [lastFrameTs, setLastFrameTs] = useState(null);
   const [frameAgeTick, setFrameAgeTick] = useState(0);
@@ -297,6 +307,13 @@ export default function RemoteDesktop() {
     setActionMessage(String(message || ""));
   }, []);
 
+  // Newest-only, bounded presentation; the actual JPEG never enters React state.
+  const paintLatestFrame = useCallback(() => framePainter.flush(), [framePainter]);
+  useEffect(() => {
+    if (hasRemoteFrame) paintLatestFrame();
+  }, [hasRemoteFrame, paintLatestFrame]);
+  useEffect(() => () => framePainter.clear(), [framePainter]);
+
   const startStream = useCallback((mode = "active", force = false) => {
     const fps = mode === "deep_idle" ? RD_DEEP_IDLE_FPS : mode === "idle" ? RD_IDLE_FPS : RD_ACTIVE_FPS;
     if (!force && streamModeRef.current === mode) return true;
@@ -345,7 +362,12 @@ export default function RemoteDesktop() {
     setConnected(false);
     setAgentConnected(false);
     setKeyboardEnabled(false);
-    setFrameSrc("");
+    setHasRemoteFrame(false);
+    lastFrameStateChangeRef.current = 0;
+    lastFrameGeometryRef.current = null;
+    firstFrameRef.current = false;
+    framePainter.clear();
+    setTransportMode(null);
     setLastFrameTs(null);
     setScreenSize({ width: null, height: null });
     setFileBrowserEntries([]);
@@ -410,12 +432,14 @@ export default function RemoteDesktop() {
       reconnectAttemptRef.current = 0;
       setError("");
       setConnected(true);
+      setTransportMode(ws.transport);
       setStatus(ws.transport === "https_long_poll" ? "Browser forbundet via HTTPS-fallback" : "Browser forbundet");
     };
 
     ws.onclose = (event) => {
       if (attemptId !== connectAttemptRef.current) return;
       setConnected(false);
+      setTransportMode(null);
       setAgentConnected(false);
       setKeyboardEnabled(false);
       scheduleReconnect(`Forbindelse lukket${event.reason ? `: ${event.reason}` : ""}`);
@@ -427,6 +451,7 @@ export default function RemoteDesktop() {
     };
 
     ws.onmessage = (event) => {
+      if (attemptId !== connectAttemptRef.current) return;
       let msg;
       try {
         msg = JSON.parse(event.data);
@@ -485,13 +510,27 @@ export default function RemoteDesktop() {
       }
 
       if (msg.type === "frame") {
-        setFrameSrc(`data:image/jpeg;base64,${msg.data}`);
+        if (typeof msg.data !== "string" || !msg.data) return;
+        framePainter.push(msg.data);
+        if (!firstFrameRef.current) {
+          firstFrameRef.current = true;
+          setHasRemoteFrame(true);
+          setStatus("Stream aktiv · modtager skærmbilleder");
+        }
+        paintLatestFrame();
         const geometry = getRemoteScreenGeometryFromMessage(msg, false);
-        if (geometry) {
+        if (geometry && (lastFrameGeometryRef.current?.width !== geometry.width ||
+                         lastFrameGeometryRef.current?.height !== geometry.height)) {
+          lastFrameGeometryRef.current = geometry;
           setScreenSize(geometry);
           setStatus(`Stream aktiv ${geometry.width}x${geometry.height}@${msg.fps || "?"}fps · visning ${geometry.width}×${geometry.height}`);
         }
-        setLastFrameTs(Date.now());
+        // Frame age is UI-only and needs at most one React update per second.
+        const now = Date.now();
+        if (now - lastFrameStateChangeRef.current >= 1000) {
+          lastFrameStateChangeRef.current = now;
+          setLastFrameTs(now);
+        }
         return;
       }
 
@@ -666,7 +705,9 @@ export default function RemoteDesktop() {
     };
   }, [
     clientId,
+    framePainter,
     markRemoteActivity,
+    paintLatestFrame,
     send,
     startStream,
     showActionMessage,
@@ -890,7 +931,6 @@ export default function RemoteDesktop() {
     });
   }, [canControl, markRemoteActivity, send]);
 
-  const hasRemoteFrame = Boolean(frameSrc);
   useEffect(() => {
     const image = imgRef.current;
     if (!image) return undefined;
@@ -1305,7 +1345,7 @@ export default function RemoteDesktop() {
           outlineColor: keyboardEnabled ? "primary.main" : "transparent",
         }}
       >
-        {!frameSrc ? (
+        {!hasRemoteFrame ? (
           <Box
             sx={{
               width: "100%",
@@ -1345,7 +1385,6 @@ export default function RemoteDesktop() {
                 <Box
                   component="img"
                   ref={imgRef}
-                  src={frameSrc}
                   alt="Remote desktop"
                   onMouseDown={handleMouseDown}
                   onMouseUp={handleMouseUp}
@@ -1383,6 +1422,16 @@ export default function RemoteDesktop() {
           {` · ${effectiveRemoteResolutionText}`}
           {frameAgeText ? ` · ${frameAgeText}` : ""}
         </Typography>
+        {transportMode && <Chip size="small" color={transportMode === "https_long_poll" ? "warning" : "success"}
+          variant="outlined" label={transportMode === "https_long_poll" ? "HTTPS-fallback" : "WebSocket"} />}
+        {transportMode === "https_long_poll" && (() => {
+          const stats = wsRef.current?.getDiagnostics?.();
+          return stats ? <Typography variant="caption" color="text.secondary">
+            HTTPS-inputkø: {stats.pending}{stats.sending ? " + 1 aktiv" : ""}
+            {stats.lastSendDurationMs !== null ? ` · sidste send ${stats.lastSendDurationMs} ms` : ""}
+            {` · musebevægelser samlet ${stats.replacedMoves}`}
+          </Typography> : null;
+        })()}
         <Button onClick={startStream} disabled={!connected || !agentConnected} variant="outlined">
           Start stream
         </Button>

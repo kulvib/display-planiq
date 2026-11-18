@@ -11,6 +11,11 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
   // in FIFO order. The in-flight HTTPS request cannot be cancelled safely.
   const pendingSends = [];
   let sending = false;
+  // In-memory, content-free diagnostics; no additional network or DB calls.
+  let sentCount = 0;
+  let replacedMoves = 0;
+  let lastSendDurationMs = null;
+  let maxPending = 0;
   const isMove = (value) => value?.type === "mouse" && value.action === "move";
 
   async function drainSends() {
@@ -20,7 +25,10 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
       while (!stopped && pendingSends.length) {
         const payload = pendingSends.shift();
         try {
+          const started = Date.now();
           await sendPayload(payload);
+          lastSendDurationMs = Math.max(0, Date.now() - started);
+          sentCount += 1;
         } catch (error) {
           socket.onerror?.(error);
           void stop(1011, error?.message || "HTTPS relay sendefejl");
@@ -53,13 +61,19 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
       const last = pendingSends[pendingSends.length - 1];
       if (isMove(payload) && isMove(last) && Boolean(payload.dragging) === Boolean(last.dragging)) {
         pendingSends[pendingSends.length - 1] = payload;
+        replacedMoves += 1;
       } else {
         pendingSends.push(payload);
       }
+      maxPending = Math.max(maxPending, pendingSends.length);
       void drainSends();
     },
     close(code = 1000, reason = "") {
       void stop(code, reason || "client_closed");
+    },
+    getDiagnostics() {
+      return { transport: "https_long_poll", pending: pendingSends.length,
+        sending, sentCount, replacedMoves, lastSendDurationMs, maxPending };
     },
   };
 
@@ -126,6 +140,7 @@ export function createWebSocketWithHttpsFallback({ openWebSocket, openHttpsRelay
       if (!active || wrapper.readyState !== WebSocket.OPEN) throw new Error("Transporten er ikke åben");
       active.send(raw);
     },
+    getDiagnostics() { return active?.getDiagnostics?.() || null; },
     close(code = 1000, reason = "") {
       stopped = true;
       try { active?.close(code, reason); } catch {}

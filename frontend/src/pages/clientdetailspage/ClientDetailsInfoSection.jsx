@@ -43,6 +43,7 @@ import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 import { summarizeServiceLevels } from "../../utils/serviceHealthSummary.mjs";
 import { hasActiveLivestreamError } from "../../utils/livestreamHealth.mjs";
 import { calendarRebootView } from "./calendarRebootStatus.mjs";
+import ClientFlowHistoryOnDemand from "./ClientFlowHistoryOnDemand";
 
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
@@ -201,8 +202,6 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const [recoveryReason, setRecoveryReason] = React.useState("");
   const [recoverySaving, setRecoverySaving] = React.useState(false);
   const [recoveryRefreshKey, setRecoveryRefreshKey] = React.useState(0);
-
-
   const state = normalizeClientflowDeploymentState(deployment?.state);
   const meta = getClientflowDeploymentStepMeta(state);
   const inProgress = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(state);
@@ -508,6 +507,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
           {error && <Typography variant="body2" sx={{ mt: 0.75, color: "#f87171", fontWeight: 700 }}>Fejl: {error}</Typography>}
         </Box>
       )}
+      <ClientFlowHistoryOnDemand clientId={clientId} />
       <Dialog open={updateReasonDialogOpen} onClose={() => setUpdateReasonDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{isDowngrade ? "Bekræft ClientFlow-nedgradering" : "Bekræft ClientFlow-opdatering"}</DialogTitle>
         <DialogContent>

@@ -186,3 +186,34 @@ test("HTTPS relay aborts pending input after a send failure", async () => {
   assert.equal(socket.readyState, WebSocket.CLOSED);
   releasePoll({ messages: [], closed: true });
 });
+
+test("63D-8 HTTPS input diagnostics are local and preserve button/key order", async () => {
+  const sent = [];
+  let releaseFirst;
+  const gate = new Promise((resolve) => { releaseFirst = resolve; });
+  let releasePoll;
+  const poll = new Promise((resolve) => { releasePoll = resolve; });
+  const socket = createHttpRelaySocket({
+    relayId: "metric-only", pollMessages: () => poll,
+    sendPayload: async (payload) => {
+      sent.push(payload);
+      if (sent.length === 1) await gate;
+    },
+    closeRelay: async () => {},
+  });
+  await tick();
+  for (const x of [1,2,3]) socket.send(JSON.stringify({ type: "mouse", action: "move", x }));
+  socket.send(JSON.stringify({ type: "mouse", action: "down", button: 1 }));
+  socket.send(JSON.stringify({ type: "mouse", action: "up", button: 1 }));
+  const before = socket.getDiagnostics();
+  assert.equal(before.replacedMoves, 1);
+  assert.equal(before.pending, 3);
+  assert.equal(before.sending, true);
+  releaseFirst();
+  await tick(); await tick();
+  assert.deepEqual(sent.map((p) => p.action), ["move", "move", "down", "up"]);
+  assert.equal(socket.getDiagnostics().pending, 0);
+  assert.equal(socket.getDiagnostics().sentCount, 4);
+  releasePoll({ messages: [], closed: true });
+  await tick();
+});

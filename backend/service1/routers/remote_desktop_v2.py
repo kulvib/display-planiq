@@ -105,6 +105,12 @@ class BrowserSession:
     connected_at: float = field(default_factory=time.time)
     screen_width: Optional[int] = None
     screen_height: Optional[int] = None
+    geometry_fallback_attempted: bool = False
+    # One most-recent waiting video frame, not an unbounded outgoing JPEG FIFO.
+    # Control and file events retain FIFO semantics and the same authentication.
+    pending_frame: Optional[dict[str, Any]] = None
+    frame_sender: Optional[asyncio.Task[None]] = None
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass
@@ -344,13 +350,45 @@ async def _browser_for_session(session_id: str, client_id: int) -> Optional[Brow
     return browser if browser and browser.client_id == client_id else None
 
 
+async def _send_browser_serialized(browser: BrowserSession, payload: dict[str, Any]) -> None:
+    # WebSocket send operations must never overlap; ordered control messages
+    # can wait behind at most one already-in-flight JPEG, not a video backlog.
+    async with browser.send_lock:
+        await _send_json(browser.websocket, payload)
+
+
+async def _drain_browser_frames(browser: BrowserSession) -> None:
+    try:
+        while browser.pending_frame is not None:
+            current = browser.pending_frame
+            browser.pending_frame = None
+            await _send_browser_serialized(browser, current)
+            # Release the event loop so a control event can acquire send_lock.
+            await asyncio.sleep(0)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # A closed browser is handled by the existing session cleanup.
+        browser.pending_frame = None
+    finally:
+        browser.frame_sender = None
+
+
 async def _send_browser(session_id: str, client_id: int, payload: dict[str, Any]) -> None:
     browser = await _browser_for_session(session_id, client_id)
-    if browser:
-        try:
-            await _send_json(browser.websocket, payload)
-        except Exception:
-            pass
+    if browser is None:
+        return
+    if payload.get("type") == "frame":
+        # Latest-only pending frame for both WSS and HTTPS. Never discard a
+        # click, button release, key or any non-frame response.
+        browser.pending_frame = payload
+        if browser.frame_sender is None or browser.frame_sender.done():
+            browser.frame_sender = asyncio.create_task(_drain_browser_frames(browser))
+        return
+    try:
+        await _send_browser_serialized(browser, payload)
+    except Exception:
+        pass
 
 
 async def _broadcast_agent_status(client_id: int) -> None:
@@ -368,7 +406,7 @@ async def _broadcast_agent_status(client_id: int) -> None:
     }
     for browser in browsers:
         try:
-            await _send_json(browser.websocket, payload)
+            await _send_browser_serialized(browser, payload)
         except Exception:
             pass
 
@@ -744,19 +782,30 @@ async def _handle_control_agent_message(client_id: int, credential_id: str, mess
         return
     if message_type in {"frame", "stream_started", "stream_stopped"}:
         payload = dict(message)
-        width, height = _configured_resolution(client_id)
         if message_type in {"frame", "stream_started"}:
+            # A valid agent-reported native geometry is authoritative. The
+            # inventory fallback is attempted only once per browser session:
+            # never start a SQLModel session on every JPEG frame.
             try:
                 live_width = int(payload.get("screen_width") or payload.get("width") or 0)
                 live_height = int(payload.get("screen_height") or payload.get("height") or 0)
             except (TypeError, ValueError):
                 live_width = live_height = 0
-            if live_width > 0 and live_height > 0:
+            if 0 < live_width <= 7680 and 0 < live_height <= 4320:
                 browser.screen_width = live_width
                 browser.screen_height = live_height
+            elif not browser.screen_width or not browser.screen_height:
+                if not browser.geometry_fallback_attempted:
+                    browser.geometry_fallback_attempted = True
+                    width, height = _configured_resolution(client_id)
+                    browser.screen_width = width
+                    browser.screen_height = height
         if message_type == "frame":
-            payload.setdefault("screen_width", browser.screen_width or width)
-            payload.setdefault("screen_height", browser.screen_height or height)
+            # Always send the validated, session-authoritative geometry.
+            # setdefault() would retain a malformed agent value (including
+            # "invalid") even after the bounded fallback had succeeded.
+            payload["screen_width"] = browser.screen_width
+            payload["screen_height"] = browser.screen_height
         await _send_browser(session_id, client_id, payload)
 
 
@@ -1344,7 +1393,7 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
         BROWSERS[session_id] = browser
     await _open_session_on_available_channels(browser)
     width, height = _configured_resolution(client_id)
-    await _send_json(websocket, {
+    await _send_browser_serialized(browser, {
         "type": "hello",
         "role": "browser",
         "session_id": session_id,
@@ -1354,7 +1403,7 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
         "height": height,
     })
     if not _agent_ready(client_id):
-        await _send_json(websocket, {"type": "status", "level": "warning", "message": "Venter på Remote Desktop-agentens control- og file-kanaler."})
+        await _send_browser_serialized(browser, {"type": "status", "level": "warning", "message": "Venter på Remote Desktop-agentens control- og file-kanaler."})
 
     activity_lease_task = asyncio.create_task(
         maintain_activity_lease(
@@ -1404,10 +1453,10 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 if exc.close_code:
                     await _close_with_reason(websocket, exc.close_code, exc.message)
                     return
-                await _send_json(websocket, {"type": "error", "message": exc.message})
+                await _send_browser_serialized(browser, {"type": "error", "message": exc.message})
                 continue
             if decoded.type == "ping":
-                await _send_json(websocket, {"type": "pong", "ts": time.time()})
+                await _send_browser_serialized(browser, {"type": "pong", "ts": time.time()})
                 continue
             message = dict(decoded.payload)
             message["session_id"] = session_id
@@ -1417,7 +1466,7 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 else:
                     await _browser_control_message(client_id, session_id, message)
             except HTTPException as exc:
-                await _send_json(websocket, {"type": "error", "message": str(exc.detail)[:500]})
+                await _send_browser_serialized(browser, {"type": "error", "message": str(exc.detail)[:500]})
     except WebSocketDisconnect:
         pass
     finally:
@@ -1451,6 +1500,13 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
             )
         async with LOCK:
             BROWSERS.pop(session_id, None)
+        browser.pending_frame = None
+        if browser.frame_sender and not browser.frame_sender.done():
+            browser.frame_sender.cancel()
+            try:
+                await browser.frame_sender
+            except asyncio.CancelledError:
+                pass
         _pop_session_operation_state(session_id)
         for transfer_id, state in list(DOWNLOADS.items()):
             if state.session_id == session_id:
