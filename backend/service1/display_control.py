@@ -17,6 +17,8 @@ from sqlmodel import Session, select
 from .realtime_wakeup import queue_wakeup_after_commit
 from .client_domain_models import ClientCommand, ClientDomainStatus, DisplayDesiredConfiguration
 from .models import Client
+from .clientflow_deployments import active_deployment
+from .system_control import active_system_command
 
 DISPLAY_DOMAIN = "display"
 DISPLAY_DESIRED_SCHEMA = 1
@@ -231,6 +233,11 @@ def active_display_control_command(session: Session, client_id: int) -> ClientCo
 def display_command_legacy_action(row: ClientCommand | None) -> str:
     if row is None:
         return "none"
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    if (row.command_type == "stop_browser" and payload.get("restart_browser_after_stop") is True) or (
+        row.command_type == "start_browser" and payload.get("restart_browser_followup") is True
+    ):
+        return "restart_browser"
     if row.command_type == "set_display_power":
         state = str((row.payload or {}).get("state") or "")
         return "sleep" if state == "off" else "wakeup" if state == "on" else "none"
@@ -479,6 +486,43 @@ def apply_display_command_completion(session: Session, *, client_id: int, comman
     if command is None or command.client_id != client_id or command.domain != DISPLAY_DOMAIN:
         return
     client = session.get(Client, client_id)
+    # A single operator intent, implemented using the existing 1246 agent
+    # commands. The follow-up is inserted in the *same transaction* as the
+    # authenticated stop acknowledgement. Failed/expired/cancelled stops never
+    # queue a start. An intervening update, power transition or config edit
+    # also suppresses restart rather than reviving an unsafe browser.
+    payload = command.payload if isinstance(command.payload, dict) else {}
+    if command.command_type == "stop_browser" and payload.get("restart_browser_after_stop") is True:
+        # Serialize this continuation against a competing operator command.
+        # The agent's command acknowledgement and this follow-up share the
+        # transaction; the client row lock is the canonical producer lock.
+        lock_display_client(session, client_id)
+        result = command.result if isinstance(command.result, dict) else {}
+        if command.status != "succeeded" or result.get("stopped") is not True:
+            return
+        if client is None or client.status != "approved" or client.deleted_at is not None:
+            return
+        state = str(client.state or "normal").lower()
+        if (state.startswith("sleep") or state in {"rebooting", "shutdown", "updating"}
+                or client.pending_os_update or client.pending_reboot or client.pending_shutdown):
+            return
+        if active_deployment(session, client_id=client_id) is not None:
+            return
+        if active_system_command(session, client_id) is not None:
+            return
+        desired = get_display_desired_configuration(session, client_id)
+        if desired is None or not desired.kiosk_url or desired.revision != payload.get("desired_revision"):
+            return
+        # Reject a competing Display operation without resurrecting the browser.
+        if active_display_control_command(session, client_id) is not None:
+            return
+        queue_display_command(
+            session, client_id=client_id, command_type="start_browser",
+            payload={"restart_browser_followup": True},
+            requested_by_user_id=command.requested_by_user_id,
+            ttl_seconds=120, idempotency_prefix="kiosk-browser-restart-followup",
+        )
+        return
     if command.command_type == "set_kiosk_lockdown":
         if client is None:
             return

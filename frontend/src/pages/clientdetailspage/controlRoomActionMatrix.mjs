@@ -1,6 +1,6 @@
 // One pure decision for Control Room button visibility, disabled state and
 // click-time authorization. The backend is still authoritative for API calls.
-const BROWSER = new Set(["start", "stop"]);
+const BROWSER = new Set(["start", "stop", "restart_browser"]);
 const DISPLAY = new Set(["sleep", "wakeup"]);
 const SUPPORT = new Set(["terminal", "remote"]);
 
@@ -37,6 +37,7 @@ export function controlRoomActionDecision(action, state) {
   }
   if (action === "wakeup") return { disabled: true, reason: "Skærmen er allerede tændt" };
   if (state.busy) return { disabled: true, reason: "Der er allerede en handling i gang" };
+  if (action === "restart_browser" && state.chromeRunning !== true) return { disabled: true, reason: "Kiosk browser kører ikke – brug Start" };
   if (action === "start" && state.chromeRunning === true) return { disabled: true, reason: "Kiosk browser kører allerede" };
   if (action === "stop" && state.browserRequested === false && state.chromeRunning !== true) {
     return { disabled: true, reason: "Kiosk browser er allerede stoppet" };

@@ -273,7 +273,11 @@ def test_63d4_admin_read_denies_modified_stable_stage_even_with_good_db_control(
     monkeypatch.setattr(pilot_stage_1246, "STAGED_CATALOG_PATH", path)
     response = http.get("/api/clientflow/release-administration")
     assert response.status_code == 503
-    assert "godkendte kildestatus" in response.text
+    # The exact stable-record integrity check in _bound_control runs before
+    # staged 1246 candidate reporting. It must fail closed on any tampering.
+    assert response.json() == {
+        "detail": "Releasekatalogets kryptografiske autoritet er utilgængelig",
+    }
 
 
 def test_61b_create_draft_flushes_parent_before_fk_targets(environment):

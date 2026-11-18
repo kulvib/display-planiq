@@ -35,6 +35,7 @@ def planning_readiness(
     fleet_open: bool,
     fresh_install_open: bool,
     physical_acceptance: bool,
+    exact_update_only_pilot_catalog: bool = False,
 ) -> dict[str, Any]:
     """Safe status for the *current* pinned stable release.
 
@@ -46,7 +47,7 @@ def planning_readiness(
     catalog_match = bool(
         match
         and isinstance(releases, list)
-        and len(releases) == 1
+        and len(releases) == (2 if exact_update_only_pilot_catalog is True else 1)
         and isinstance(releases[0], dict)
         and releases[0].get("release_id") == release_id
         and releases[0].get("status") == "stable"

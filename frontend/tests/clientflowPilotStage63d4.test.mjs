@@ -22,12 +22,15 @@ test('approved 1246 archive is explicitly separate from installed 1245',()=>{
   assert.throws(()=>validateStagedPilotCandidate(candidate,'clientflow-1.3.45-seq-1246'));
 });
 
-test('any claimed pilot, catalog, cutover or deployment authority is refused',()=>{
-  for(const k of ['render_store_publication_verified','active_catalog_promoted','physical_pilot_accepted',
+test('active update-only pilot catalog is informational, never a deployment authorization',()=>{
+  const pilotCatalog = {...candidate,active_catalog_promoted:true};
+  assert.equal(validateStagedPilotCandidate(pilotCatalog,candidate.active_release_id),pilotCatalog);
+  for(const k of ['render_store_publication_verified','physical_pilot_accepted',
     'deployment_authorized','fleet_authorized','fresh_install_authorized','database_cutover_authorized']){
-    assert.throws(()=>validateStagedPilotCandidate({...candidate,[k]:true},candidate.active_release_id),k);
+    assert.throws(()=>validateStagedPilotCandidate({...pilotCatalog,[k]:true},candidate.active_release_id),k);
     assert.throws(()=>validateStagedPilotCandidate({...candidate,[k]:undefined},candidate.active_release_id),k);
   }
+  assert.throws(()=>validateStagedPilotCandidate({...candidate,active_catalog_promoted:undefined},candidate.active_release_id));
 });
 
 test('unexpected source, checksum, reference or version is refused',()=>{

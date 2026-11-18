@@ -1009,6 +1009,7 @@ export async function pushKioskUrl(id, url) {
  *   "sleep"            → action: "sleep"
  *   "wakeup"           → action: "wakeup"
  *   "reset_browser"    → pending_chrome_action: "reset_browser"
+ *   "restart_browser"  → chained stop/start without deleting cookies
  */
 export async function clientAction(id, action, source = "actionbutton") {
   // Kiosk-/display-handlinger sendes via det dedikerede command-endpoint.
@@ -1020,6 +1021,7 @@ export async function clientAction(id, action, source = "actionbutton") {
     sleep: "sleep",
     wakeup: "wakeup",
     reset_browser: "reset_browser",
+    restart_browser: "restart_browser",
   };
 
   if (action === "restart" || action === "reboot" || action === "shutdown") {
