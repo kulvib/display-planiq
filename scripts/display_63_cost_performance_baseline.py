@@ -158,7 +158,7 @@ def _database_summary(row: object) -> dict | None:
         return None
     if not isinstance(payload, dict) or not isinstance(payload.get("categories"), dict):
         return None
-    return payload["categories"]
+    return payload
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -176,6 +176,7 @@ def analyze(rows) -> dict:
     timestamps: list[datetime] = []
     db_counts: dict[str, Counter] = defaultdict(Counter)
     summaries = 0
+    db_summary_window_seconds = 0.0
     ignored = 0
     for index, row in enumerate(rows, 1):
         if index > MAX_RECORDS:
@@ -183,13 +184,25 @@ def analyze(rows) -> dict:
         summary = _database_summary(row)
         if summary is not None:
             summaries += 1
-            for key, values in summary.items():
+            # A summary is a completed process-local interval, NOT an HTTP
+            # sample. Missing/overlapping windows cannot prove a DB rate.
+            window_seconds = summary.get("window_seconds")
+            if (type(window_seconds) in (int, float) and math.isfinite(window_seconds)
+                    and 0 < window_seconds <= 86400):
+                db_summary_window_seconds += window_seconds
+            for key, values in summary["categories"].items():
                 if key not in ALLOWED_DB_CATEGORIES or not isinstance(values, dict):
                     continue
                 for metric in ("requests", "failed_http", "statements", "selects", "checkouts", "websocket_rechecks"):
                     v = values.get(metric, 0)
                     if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10_000_000:
                         db_counts[key][metric] += v
+                # Aggregate the sanitized database cursor duration, not SQL or
+                # connection details. Ignore nonfinite, negative and huge input.
+                cursor_ms = values.get("cursor_ms", 0)
+                if (type(cursor_ms) in (int, float) and math.isfinite(cursor_ms)
+                        and 0 <= cursor_ms <= 86_400_000):
+                    db_counts[key]["cursor_ms"] += cursor_ms
             continue
         data = _request(row)
         if data is None:
@@ -256,7 +269,12 @@ def analyze(rows) -> dict:
         "peak_requests_in_one_observed_second": max(seconds.values()),
         "request_categories": request_categories,
         "db_hotpath_windows_observed": summaries,
-        "db_hotpath_categories": {k: dict(v) for k, v in sorted(db_counts.items())},
+        "db_hotpath_window_seconds_sum": round(db_summary_window_seconds, 2),
+        "db_hotpath_categories": {
+            k: {metric: (round(value, 2) if metric == "cursor_ms" else value)
+                for metric, value in sorted(v.items())}
+            for k, v in sorted(db_counts.items())
+        },
         "linear_traffic_scenarios": models,
         "log_export_complete": False,
         "real_100_client_load_test_passed": False,
