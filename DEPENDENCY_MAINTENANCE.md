@@ -61,3 +61,11 @@ Status 2026-10-14: Den sidste midlertidige `brace-expansion` 1.1.21-undtagelse e
 Display bevarer HLS-, WebSocket-, ClientFlow- og Remote Desktop-afhængighederne. Dependency-opdateringer må ikke kombineres med produktændringer.
 
 For ClientFlow 1.3.30/1231 er `hls.js` eksplicit release-fastlåst til `1.6.16`, som allerede er den resolverede og testede runtime-version i lockfilen. Den må ikke løftes som del af den sidste pre-freeze closure. Nyere HLS.js skal vurderes særskilt efter 1.3.30 med den fysiske Livestream-regressionssuite og målte startup/reconnect/live-edge-resultater, før en ny version kan accepteres. Dette er en release-risiko-disposition, ikke en security-undtagelse.
+
+## Midlertidig spærring i upstream: picomatch GHSA-fc5q-39xc-vjpf (18. november 2026)
+
+GitHubs gennemgåede advisory (opdateret 17. november 2026) markerer **picomatch <=4.0.7** som påvirket af ReDoS og oplyser **ingen patchet version**. PlanIQ Display har picomatch 4.0.5 **udelukkende i frontendens development/build-kæde**, transitivt via Vite/tinyglobby/fdir. Disse pakker leveres ikke til browserens produktionsbundle eller backendens Python-runtime. Advisory: https://github.com/advisories/GHSA-fc5q-39xc-vjpf
+
+Kun den eksakte GHSA, den eksakte låste version `picomatch@4.0.5` og `dev-only` er accepteret frem til og med **2026-11-25**. Metafund på `fdir`, `tinyglobby`, `vite` og `@vitejs/plugin-react` accepteres *kun*, hvis hver eneste arvede afhængighed faktisk peger på dette ene accepterede fund, og alle trin er dokumenteret i `package-lock.json` som `dev=true`. Der findes **ingen generel Vite-undtagelse**. Enhver direkte Vite-advisory, ny GHSA, ekstra årsag, ulåst version, ændret produktionsscope, overskredet dato, ukendt ID eller manglende auditrapport medfører CI FAIL. `npm audit --json` kører uændret.
+
+Remediation: Ved første officielle patched picomatch-udgivelse regenereres den eksakte npm-lock (under pinnen Node 24.21.0 / npm 11.19.0), der køres den komplette CI- og build-gate, undtagelsen fjernes, og dev-dependencies gennemgås samlet. Dette er en begrænset, risikovurderet beslutning for at holde CI operationel, ikke en erklæring om, at sårbarheden er løst. Indtil da bør Vites udviklingsserver kun bruges lokalt, og der må ikke accepteres brugerleverede glob-mønstre i buildværktøjerne.

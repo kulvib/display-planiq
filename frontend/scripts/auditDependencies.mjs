@@ -2,11 +2,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { evaluateDependencyAudit } from "./dependencyAuditPolicy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(here, "..");
-const allowlistPath = path.join(frontendRoot, "dependency-audit-allowlist.json");
-const allowlist = JSON.parse(fs.readFileSync(allowlistPath, "utf8"));
+const allowlist = JSON.parse(fs.readFileSync(path.join(frontendRoot, "dependency-audit-allowlist.json"), "utf8"));
+const lock = JSON.parse(fs.readFileSync(path.join(frontendRoot, "package-lock.json"), "utf8"));
 
 const result = spawnSync("npm", ["audit", "--json"], {
   cwd: frontendRoot,
@@ -26,70 +27,32 @@ try {
   console.error("npm audit-svaret kunne ikke parses som JSON.", error);
   process.exit(2);
 }
+if (result.error || (result.status !== 0 && result.status !== 1) || !report?.metadata) {
+  console.error("npm audit returnerede ikke en gyldig komplet auditrapport.", result.stderr || result.error);
+  process.exit(2);
+}
 
 const today = new Date().toISOString().slice(0, 10);
-const exceptions = new Map((allowlist.exceptions || []).map((entry) => [entry.package, entry]));
-const vulnerabilities = new Map();
-
-// npm audit kan returnere forskellige JSON-formater på tværs af npm-versioner. Bevar støtte for
-// vulnerability-formatet, så quality gaten ikke bliver skrøbelig ved formatændringer.
-for (const advisory of Object.values(report.advisories || {})) {
-  const packageName = advisory.module_name;
-  if (!packageName) continue;
-  const advisoryId = advisory.github_advisory_id
-    || String(advisory.url || "").split("/").pop()
-    || String(advisory.id || "");
-  const current = vulnerabilities.get(packageName) || {
-    severity: advisory.severity || "unknown",
-    advisoryIds: [],
-  };
-  if (advisoryId) current.advisoryIds.push(advisoryId);
-  vulnerabilities.set(packageName, current);
+let evaluation;
+try {
+  evaluation = evaluateDependencyAudit(report, allowlist, lock, today);
+} catch (error) {
+  console.error("Dependency-audit-politikken fejlede lukket:", error.message);
+  process.exit(2);
 }
-
-for (const [packageName, vulnerability] of Object.entries(report.vulnerabilities || {})) {
-  const advisoryIds = (vulnerability.via || [])
-    .filter((item) => item && typeof item === "object")
-    .map((item) => item.github_advisory_id || String(item.url || "").split("/").pop())
-    .filter(Boolean);
-  vulnerabilities.set(packageName, {
-    severity: vulnerability.severity || "unknown",
-    advisoryIds,
-  });
-}
-
-const unexpected = [];
-const accepted = [];
-for (const [packageName, vulnerability] of vulnerabilities.entries()) {
-  const exception = exceptions.get(packageName);
-  const allowedIds = new Set(exception?.advisories || []);
-  const idsCovered = vulnerability.advisoryIds.length > 0
-    && vulnerability.advisoryIds.every((id) => allowedIds.has(id));
-  const validUntil = exception?.expires && exception.expires >= today;
-
-  if (exception && idsCovered && validUntil) {
-    accepted.push(`${packageName}: ${vulnerability.advisoryIds.join(", ")} (udløber ${exception.expires})`);
-  } else {
-    unexpected.push({ packageName, vulnerability });
+if (evaluation.accepted.length) {
+  console.warn("Midlertidig dev-only picomatch-undtagelse og arvede meta-advisories:");
+  for (const name of evaluation.accepted) console.warn(`- ${name}`);
+  for (const name of evaluation.exceptionsUsed) {
+    const entry = allowlist.exceptions.find((item) => item.package === name);
+    console.warn(`  Kun ${name}@${entry.lockedVersion} / ${entry.advisories.join(", ")} (udløber ${entry.expires})`);
   }
 }
-
-if (accepted.length) {
-  console.warn("Accepterede, tidsbegrænsede dependency-undtagelser:");
-  for (const line of accepted) console.warn(`- ${line}`);
-}
-
-if (unexpected.length) {
+if (evaluation.unexpected.length) {
   console.error("Uventede eller udløbne frontend-advisories:");
-  for (const item of unexpected) {
-    console.error(`- ${item.packageName} (${item.vulnerability.severity}): ${item.vulnerability.advisoryIds.join(", ") || "ukendt advisory"}`);
+  for (const item of evaluation.unexpected) {
+    console.error(`- ${item.packageName} (${item.severity}): ${item.advisoryIds.join(", ") || item.inheritedFrom.join(" -> ") || item.reason || "ukendt advisory"}`);
   }
   process.exit(1);
 }
-
-const totals = report.metadata?.vulnerabilities || {};
-const total = totals.total ?? Object.values(totals).reduce(
-  (sum, value) => sum + (Number.isFinite(value) ? value : 0),
-  0,
-);
-console.log(`Frontend dependency-audit bestået (${total || 0} rapporterede, ${accepted.length} kontrolleret undtaget).`);
+console.log(`Frontend dependency-audit bestået (${evaluation.total} rapporterede, ${evaluation.exceptionsUsed.length} tidsbegrænset dev-only-undtagelse).`);
