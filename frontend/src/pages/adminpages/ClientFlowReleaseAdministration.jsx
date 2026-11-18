@@ -6,6 +6,7 @@ import {
 } from "@mui/material";
 import client from "../../api/client";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
+import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
   validateReleasePlanningResponse, validatePlanningPreview,
@@ -199,7 +200,7 @@ export default function ClientFlowReleaseAdministration() {
           <Box sx={{ flex: "1 1 320px", minWidth: 0 }}>
             <Typography variant="h5" fontWeight={900}>ClientFlow · Releases</Typography>
             <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              Overblik over godkendte releases og klienter. Planlæg i grupper uden at starte installationer.
+              Overblik over godkendte releases og klienter. Inaktive bølgeplaner og særskilt kontrolleret Viborg1-pilot.
             </Typography>
           </Box>
           <Box sx={{ ml: "auto", flexShrink: 0 }}>
@@ -213,8 +214,9 @@ export default function ClientFlowReleaseAdministration() {
         : <Alert severity="error">Release- og klientdata er ikke verificeret. Alle handlinger er spærret.</Alert>) : (
         <>
           <Alert severity="info">
-            <strong>Planlægning – ikke udrulning.</strong> Ingen handling på denne side godkender, installerer eller tilbageruller en release.
-            Fysisk pilot, nyinstallation, fleet og DB-cutover er fortsat spærret.
+            <strong>Almindelige planer er inaktive.</strong> En plan godkender aldrig installation eller rollback.
+            Kun den særskilte 1246/Viborg1-pilot nedenfor kan efter genbekræftelse bestille én installation.
+            Nyinstallation, fleet, rollback og DB-cutover er fortsat spærret.
           </Alert>
           <Paper elevation={0} sx={panelSx}>
             <Stack spacing={1.4}>
@@ -341,10 +343,11 @@ export default function ClientFlowReleaseAdministration() {
               )}
             </Stack>
           </Paper>
+          <ClientFlowPilot1246Panel status={status} onAuthorized={refresh} />
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>3. Udrulning og rollback</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              Dette bliver kontrolstedet for pilot, bølgeudrulning og tilbageførsel til tidligere godkendte releases. De nuværende sikkerhedsgates tillader endnu ikke disse handlinger.
+              Bølgeudrulning, rollback og nyinstallation kræver særskilt godkendelse og er endnu ikke aktiveret. Den isolerede Viborg1-pilot ovenfor er den eneste nye installationsvej.
             </Typography>
             <Stack direction={{ xs: "column", sm: "row" }} gap={1.5}>
               <Button variant="contained" disabled>Start opdatering til valgte klienter · spærret</Button>
