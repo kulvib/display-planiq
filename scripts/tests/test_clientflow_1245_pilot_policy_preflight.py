@@ -13,6 +13,8 @@ from clientflow_1245_pilot_policy_preflight import inspect  # noqa: E402
 FILES = (
     "client/VERSION", "client/release/release-input.json", "client/release/rollback-trust.json",
     "backend/service1/clientflow_release_catalog.json",
+    "backend/service1/clientflow_release_catalog_1246_pilot.stage.json",
+    "backend/service1/clientflow_pilot_1246_approval.json",
     "backend/service1/clientflow_pilot_1245_approval.json",
     "backend/service1/clientflow_pilot_1245.py",
     "backend/service1/clientflow_stable_rollout.py",

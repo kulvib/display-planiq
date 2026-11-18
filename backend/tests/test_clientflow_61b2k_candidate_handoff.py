@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import io
 import json
+import shutil
+import sys
 from pathlib import Path
 import tarfile
 
@@ -13,6 +15,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts/verify_clientflow_candidate_handoff.py'
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location('clientflow_61b2k_handoff', SCRIPT)
 assert spec and spec.loader
 handoff_gate = importlib.util.module_from_spec(spec)
@@ -67,9 +70,14 @@ def scenario(tmp_path: Path):
         'architecture': 'amd64', 'minimum_ubuntu_lts': '26.04'})
     _save(repo / 'client/release/release-build-toolchain.json', {
         'python': '3.13.14', 'pip': '26.1.2', 'setuptools': '83.0.0'})
-    _save(repo / 'backend/service1/clientflow_release_catalog.json', {
-        'latest_stable': '1.3.44', 'default_install_version': '1.3.44',
-        'catalog_sequence': 1245, 'releases': [{'release_id': 'clientflow-1.3.44-seq-1245'}]})
+    for name in (
+        'backend/service1/clientflow_release_catalog.json',
+        'backend/service1/clientflow_release_catalog_1246_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1246_approval.json',
+    ):
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, path)
     _save(repo / 'backend/service1/clientflow_1245_fleet_acceptance.json', {
         'physical_pilot_accepted': False})
     payload = b'this-is-a-synthetic-test-payload'
@@ -216,7 +224,9 @@ def test_actual_source_catalog_still_disarmed_for_1246_candidate():
     assert inputs['release_sequence'] == 1246
     cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
-    assert len(cat['releases']) == 1
+    assert len(cat['releases']) == 2
     assert cat['releases'][0]['release_id'] == 'clientflow-1.3.44-seq-1245'
+    assert cat['releases'][1]['release_id'] == 'clientflow-1.3.45-seq-1246'
+    assert cat['releases'][1]['installable'] is False
     fleet = json.loads((ROOT / 'backend/service1/clientflow_1245_fleet_acceptance.json').read_text())
     assert fleet['physical_pilot_accepted'] is False

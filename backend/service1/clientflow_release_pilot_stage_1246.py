@@ -7,12 +7,15 @@ No network, database writes, environment toggles, signing or release promotion.
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from . import clientflow_pilot_1246 as pilot
 
 STAGED_CATALOG_PATH = Path(__file__).with_name('clientflow_release_catalog_1246_pilot.stage.json')
+# Full-file pin of the immutable reviewed stage, not only selected JSON fields.
+EXPECTED_STAGED_CATALOG_SHA256 = 'c416efdf9f5794e7bd7b48c355fbf91c77cfe691a6fbd46b6a489ef3f3052c8a'
 
 
 class PilotStageDenied(ValueError):
@@ -24,7 +27,10 @@ def load_staged_catalog() -> dict[str, Any]:
     try:
         if STAGED_CATALOG_PATH.is_symlink() or STAGED_CATALOG_PATH.stat().st_size > 12000:
             raise ValueError('invalid_catalog_file')
-        stage = json.loads(STAGED_CATALOG_PATH.read_text(encoding='utf-8'))
+        content = STAGED_CATALOG_PATH.read_bytes()
+        if hashlib.sha256(content).hexdigest() != EXPECTED_STAGED_CATALOG_SHA256:
+            raise ValueError('changed_pilot_source_bytes')
+        stage = json.loads(content.decode('utf-8'))
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         raise PilotStageDenied('1246-pilotkataloget er ikke verificerbart') from exc
     if not isinstance(stage, dict) or set(stage) != {

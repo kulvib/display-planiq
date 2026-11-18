@@ -171,7 +171,7 @@ def environment(monkeypatch):
         # for healthy read-only administration requests.  Exercise the real,
         # validated catalog; keep the approval and DB control mocked/closed.
         stable_catalog = load_canonical_catalog()
-        assert stable_catalog["catalog_sequence"] == 1245
+        assert stable_catalog["catalog_sequence"] == 1246
         assert stable_catalog["releases"][0]["release_id"] == RELEASE_ID
         monkeypatch.setattr(route, "load_catalog", lambda: deepcopy(stable_catalog))
 
@@ -251,9 +251,10 @@ def test_63d4_staged_pilot_status_is_inert_with_real_stable_catalog(environment)
     assert candidate["approved_bundle_sha256"] == (
         "e37de3250d58d313d57ad7bcbf59682cee342f2727c6ad5b188c8782342d4c78"
     )
+    assert candidate["active_catalog_promoted"] is True
     for field in (
         "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
-        "physical_pilot_accepted", "active_catalog_promoted",
+        "physical_pilot_accepted",
         "render_store_publication_verified", "database_cutover_authorized",
     ):
         assert candidate[field] is False

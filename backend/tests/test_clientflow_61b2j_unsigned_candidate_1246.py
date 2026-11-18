@@ -15,6 +15,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 GATE = ROOT / 'scripts/clientflow_61b2g_release_source_gate.py'
+sys.path.insert(0, str(ROOT / "scripts"))
 spec = importlib.util.spec_from_file_location('candidate_gate_61b2j', GATE)
 gate = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -62,16 +63,18 @@ def test_active_catalog_and_approval_remain_original_1245():
     fleet = json.loads((ROOT / 'backend/service1/clientflow_1245_fleet_acceptance.json').read_text())
     approval = json.loads((ROOT / 'backend/service1/clientflow_pilot_1245_approval.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
-    assert cat['catalog_sequence'] == 1245
-    assert len(cat['releases']) == 1
+    assert cat['catalog_sequence'] == 1246
+    assert len(cat['releases']) == 2
     assert cat['releases'][0]['release_id'] == 'clientflow-1.3.44-seq-1245'
     assert approval['release_id'] == fleet['release_id'] == 'clientflow-1.3.44-seq-1245'
     assert fleet['physical_pilot_accepted'] is False
-    assert all(x['release_sequence'] != 1246 for x in cat['releases'])
+    assert cat['releases'][1]['release_id'] == 'clientflow-1.3.45-seq-1246'
+    assert cat['releases'][1]['status'] == 'supported'
+    assert cat['releases'][1]['installable'] is False
 
 
 @pytest.mark.parametrize('field,value', [
-    ('catalog_sequence', 1246),
+    ('catalog_sequence', 1247),
     ('latest_stable', '1.3.45'),
     ('default_install_version', '1.3.45'),
 ])

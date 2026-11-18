@@ -66,7 +66,9 @@ def test_real_current_catalog_has_one_stable_1245_but_no_fleet_authority():
     current = releases.load_catalog()
     assert current["latest_stable"] == "1.3.44"
     assert current["default_install_version"] == "1.3.44"
-    assert len(current["releases"]) == 1
+    assert len(current["releases"]) == 2
+    assert current["releases"][1]["release_id"] == "clientflow-1.3.45-seq-1246"
+    assert current["releases"][1]["installable"] is False
     assert current["releases"][0]["status"] == "stable"
     assert json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text())["physical_pilot_accepted"] is False
 
