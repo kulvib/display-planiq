@@ -125,3 +125,64 @@ test("blocked WSS upgrade is transparent when HTTPS fallback succeeds", async ()
   assert.equal(wrapper.readyState, WebSocket.OPEN);
   assert.equal(visibleErrors, 0);
 });
+
+test("HTTPS relay coalesces only adjacent pending mouse moves, never clicks or keys", async () => {
+  const sent = [];
+  let resolveFirst;
+  const firstGate = new Promise((resolve) => { resolveFirst = resolve; });
+  let releasePoll;
+  const pollGate = new Promise((resolve) => { releasePoll = resolve; });
+  const socket = createHttpRelaySocket({
+    relayId: "rd-mouse",
+    sendPayload: async (payload) => {
+      sent.push(payload);
+      if (sent.length === 1) await firstGate;
+    },
+    pollMessages: () => pollGate,
+    closeRelay: async () => {},
+  });
+  await tick();
+  const send = (payload) => socket.send(JSON.stringify(payload));
+  send({ type: "mouse", action: "move", x: 1, dragging: false }); // in flight
+  send({ type: "mouse", action: "move", x: 2, dragging: false }); // pending
+  send({ type: "mouse", action: "move", x: 3, dragging: false }); // replace pending
+  send({ type: "mouse", action: "down", button: 1 });
+  send({ type: "mouse", action: "move", x: 4, dragging: true });
+  send({ type: "mouse", action: "move", x: 5, dragging: true });
+  send({ type: "mouse", action: "up", button: 1 });
+  send({ type: "key", key: "Escape" });
+  resolveFirst();
+  await tick();
+  await tick();
+  assert.deepEqual(sent, [
+    { type: "mouse", action: "move", x: 1, dragging: false },
+    { type: "mouse", action: "move", x: 3, dragging: false },
+    { type: "mouse", action: "down", button: 1 },
+    { type: "mouse", action: "move", x: 5, dragging: true },
+    { type: "mouse", action: "up", button: 1 },
+    { type: "key", key: "Escape" },
+  ]);
+  releasePoll({ messages: [], closed: true });
+  await tick();
+});
+
+test("HTTPS relay aborts pending input after a send failure", async () => {
+  let closeCount = 0;
+  let releasePoll;
+  const pollGate = new Promise((resolve) => { releasePoll = resolve; });
+  const sent = [];
+  const socket = createHttpRelaySocket({
+    relayId: "rd-send-failure",
+    sendPayload: async (message) => { sent.push(message); throw new Error("offline"); },
+    pollMessages: () => pollGate,
+    closeRelay: async () => { closeCount++; },
+  });
+  await tick();
+  socket.send(JSON.stringify({ type: "mouse", action: "down" }));
+  socket.send(JSON.stringify({ type: "mouse", action: "up" }));
+  await tick();
+  assert.deepEqual(sent, [{ type: "mouse", action: "down" }]);
+  assert.equal(closeCount, 1);
+  assert.equal(socket.readyState, WebSocket.CLOSED);
+  releasePoll({ messages: [], closed: true });
+});

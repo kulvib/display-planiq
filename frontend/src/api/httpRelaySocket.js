@@ -6,7 +6,32 @@
  */
 export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, closeRelay }) {
   let stopped = false;
-  let sendChain = Promise.resolve();
+  // Only adjacent, not-yet-sent mouse movements are replaceable. Keep every
+  // click, release, keystroke, drag-mode transition and all non-input commands
+  // in FIFO order. The in-flight HTTPS request cannot be cancelled safely.
+  const pendingSends = [];
+  let sending = false;
+  const isMove = (value) => value?.type === "mouse" && value.action === "move";
+
+  async function drainSends() {
+    if (sending) return;
+    sending = true;
+    try {
+      while (!stopped && pendingSends.length) {
+        const payload = pendingSends.shift();
+        try {
+          await sendPayload(payload);
+        } catch (error) {
+          socket.onerror?.(error);
+          void stop(1011, error?.message || "HTTPS relay sendefejl");
+          return;
+        }
+      }
+    } finally {
+      sending = false;
+      if (stopped) pendingSends.length = 0;
+    }
+  }
 
   const socket = {
     relayId,
@@ -25,12 +50,13 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
       } catch {
         throw new Error("HTTPS relay kræver JSON-meddelelser");
       }
-      sendChain = sendChain
-        .then(() => sendPayload(payload))
-        .catch((error) => {
-          socket.onerror?.(error);
-          void stop(1011, error?.message || "HTTPS relay sendefejl");
-        });
+      const last = pendingSends[pendingSends.length - 1];
+      if (isMove(payload) && isMove(last) && Boolean(payload.dragging) === Boolean(last.dragging)) {
+        pendingSends[pendingSends.length - 1] = payload;
+      } else {
+        pendingSends.push(payload);
+      }
+      void drainSends();
     },
     close(code = 1000, reason = "") {
       void stop(code, reason || "client_closed");
@@ -40,6 +66,7 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
   async function stop(code = 1000, reason = "") {
     if (stopped) return;
     stopped = true;
+    pendingSends.length = 0;
     socket.readyState = WebSocket.CLOSING;
     try {
       await closeRelay();

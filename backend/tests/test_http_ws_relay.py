@@ -76,3 +76,85 @@ def test_https_relay_global_byte_budget_fails_closed(monkeypatch) -> None:
         await close_relay(relay.relay_id, reason="budget_test_done")
 
     asyncio.run(scenario())
+
+
+def test_remote_desktop_browser_relay_keeps_only_latest_waiting_frame() -> None:
+    """Under a slow browser poll, keep controls but discard stale JPEGs."""
+    import service1.http_ws_relay as module
+
+    async def scenario() -> None:
+        initial = module._TOTAL_QUEUED_BYTES
+        relay = module.HttpWebSocketRelay(
+            relay_id="rd-test", headers={}, query_params={}, cookies={}, client_host=None,
+            scope={"kind": "rd_browser", "client_id": 3},
+        )
+        relay._put_outgoing('{"type":"frame","session_id":"s","data":"old"}')
+        relay._put_outgoing('{"type":"stream_mode_updated","fps":6}')
+        relay._put_outgoing('{"type":"frame","session_id":"s","data":"new"}')
+        relay._put_outgoing('{"type":"input_result","ok":true}')
+        assert [json.loads(value) for value in await relay.poll_to_http(1)] == [
+            {"type": "stream_mode_updated", "fps": 6},
+            {"type": "frame", "session_id": "s", "data": "new"},
+            {"type": "input_result", "ok": True},
+        ]
+        assert relay.outgoing_bytes == 0
+        assert module._TOTAL_QUEUED_BYTES == initial
+
+    asyncio.run(scenario())
+
+
+def test_file_and_unrelated_relays_do_not_drop_frames() -> None:
+    import service1.http_ws_relay as module
+
+    async def scenario() -> None:
+        for kind in ("rd_agent", "terminal_browser", "rd_files"):
+            relay = module.HttpWebSocketRelay(
+                relay_id=kind, headers={}, query_params={}, cookies={}, client_host=None,
+                scope={"kind": kind},
+            )
+            for n in range(3):
+                relay._put_outgoing(json.dumps({"type": "frame", "data": str(n)}, separators=(",", ":")))
+            received = [json.loads(value) for value in await relay.poll_to_http(1)]
+            assert [item["data"] for item in received] == ["0", "1", "2"]
+
+    asyncio.run(scenario())
+
+
+def test_remote_desktop_byte_limit_still_rejects_oversized_latest_frame(monkeypatch) -> None:
+    import service1.http_ws_relay as module
+
+    async def scenario() -> None:
+        relay = module.HttpWebSocketRelay(
+            relay_id="cap", headers={}, query_params={}, cookies={}, client_host=None,
+            scope={"kind": "rd_browser"},
+        )
+        monkeypatch.setattr(module, "MAX_QUEUE_BYTES", 64)
+        with pytest.raises(RuntimeError, match="byte-backpressure"):
+            relay._put_outgoing('{"type":"frame","data":"' + ("x" * 200) + '"}')
+        assert relay.outgoing_bytes == 0
+
+    asyncio.run(scenario())
+
+
+def test_remote_desktop_large_stale_frames_cannot_fill_browser_queue() -> None:
+    import service1.http_ws_relay as module
+
+    async def scenario() -> None:
+        initial = module._TOTAL_QUEUED_BYTES
+        relay = module.HttpWebSocketRelay(
+            relay_id="large", headers={}, query_params={}, cookies={}, client_host=None,
+            scope={"kind": "rd_browser"},
+        )
+        for n in range(40):
+            payload = json.dumps(
+                {"type": "frame", "session_id": "s", "serial": n, "data": "a" * 200000},
+                separators=(",", ":"),
+            )
+            relay._put_outgoing(payload)
+        assert relay.outgoing.qsize() == 1
+        assert relay.outgoing_bytes < 250000
+        messages = [json.loads(x) for x in await relay.poll_to_http(1)]
+        assert [x["serial"] for x in messages] == [39]
+        assert module._TOTAL_QUEUED_BYTES == initial
+
+    asyncio.run(scenario())

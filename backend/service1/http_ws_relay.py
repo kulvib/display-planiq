@@ -124,6 +124,25 @@ class HttpWebSocketRelay:
         self.incoming_bytes += size
 
     def _put_outgoing(self, payload: str) -> None:
+        # The Remote Desktop browser only needs the newest *pending* screenshot.
+        # Older frames in an HTTPS poll backlog would otherwise add seconds of
+        # lag and exhaust the shared byte budget. Preserve every non-frame event
+        # (input acknowledgements, errors, lifecycle and file operations) in
+        # its original FIFO order. Never alter agent or Terminal relays.
+        if self.scope.get("kind") == "rd_browser" and payload.startswith('{"type":"frame",'):
+            retained = []
+            while True:
+                try:
+                    queued, queued_size = self.outgoing.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if queued.startswith('{"type":"frame",'):
+                    self.outgoing_bytes = max(0, self.outgoing_bytes - queued_size)
+                    _release_global_bytes(queued_size)
+                else:
+                    retained.append((queued, queued_size))
+            for entry in retained:
+                self.outgoing.put_nowait(entry)
         size = self._payload_size(payload)
         if self.outgoing_bytes + size > MAX_QUEUE_BYTES:
             raise RuntimeError("HTTPS relay outgoing byte-backpressure er nået")
