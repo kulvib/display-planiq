@@ -20,6 +20,28 @@ export function validateReleaseReadiness(value, releaseId, revision) {
   return value;
 }
 
+/** Source-pinned GitHub approval is NOT Render publication or client permission. */
+export function validateStagedPilotCandidate(candidate, activeReleaseId) {
+  if (!candidate || candidate.schema_version !== 1 ||
+      candidate.phase !== "approved_github_archive_source_staged_only" ||
+      candidate.release_id !== "clientflow-1.3.45-seq-1246" ||
+      candidate.version !== "1.3.45" || candidate.sequence !== 1246 ||
+      candidate.active_release_id !== activeReleaseId ||
+      candidate.pilot_client_id !== 3 ||
+      !/^[a-f0-9]{40}$/.test(candidate.source_commit || "") ||
+      !/^[a-f0-9]{64}$/.test(candidate.approved_bundle_sha256 || "") ||
+      !Number.isSafeInteger(candidate.approved_bundle_size) || candidate.approved_bundle_size <= 0 ||
+      typeof candidate.approval_reference !== "string" ||
+      !/^CF-1\.3\.45-1246-/.test(candidate.approval_reference) ||
+      candidate.github_artifact_approval_pinned !== true ||
+      ["render_store_publication_verified", "active_catalog_promoted", "physical_pilot_accepted",
+       "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
+       "database_cutover_authorized"].some((field) => candidate[field] !== false)) {
+    throw new Error("1246-arkivstatus er ugyldig eller angiver uautoriseret installation");
+  }
+  return candidate;
+}
+
 export function validateReleasePlanningResponse(data) {
   if (!data || data.phase !== "additive_draft_only" ||
       data.authorization_active !== false || data.planning_review_available !== true ||
@@ -42,6 +64,9 @@ export function validateReleasePlanningResponse(data) {
     throw new Error("Ukendt eller usikker releaseadministrationskontrakt – planlægning er spærret");
   }
   validateReleaseReadiness(data.release_readiness, data.stable_release_id, data.revision);
+  if (data.staged_pilot_candidate !== undefined) {
+    validateStagedPilotCandidate(data.staged_pilot_candidate, data.stable_release_id);
+  }
   const ids = new Set();
   for (const client of data.available_clients) {
     if (!Number.isSafeInteger(client.id) || client.id < 1 || ids.has(client.id) ||

@@ -253,6 +253,24 @@ export default function ClientFlowReleaseAdministration() {
               ))}
             </Stack>
           </Paper>
+          {status.staged_pilot_candidate && (
+            <Paper elevation={0} sx={panelSx}>
+              <Stack spacing={1.25}>
+                <Typography variant="h6" fontWeight={850}>Godkendt GitHub-arkiv · 1.3.45/1246</Typography>
+                <Alert severity="warning">
+                  Kun kilde- og artifact-godkendelse. Releasen er <strong>ikke verificeret som</strong> publiceret til
+                  Render-release-lageret, aktiv i releasekataloget eller tilladt til installation.
+                  Fysisk Viborg1-pilot og recovery er ikke accepteret.
+                </Alert>
+                <Typography variant="body2" color="text.secondary">Kandidat: {status.staged_pilot_candidate.release_id} · kilde: {status.staged_pilot_candidate.source_commit}</Typography>
+                <Typography variant="caption" sx={{ fontFamily: "monospace", overflowWrap: "anywhere" }}>
+                  Godkendt TAR SHA256: {status.staged_pilot_candidate.approved_bundle_sha256}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">Godkendelsesreference: {status.staged_pilot_candidate.approval_reference}</Typography>
+                <Typography variant="caption" color="text.secondary">Kun Viborg1 (backend klient-ID {status.staged_pilot_candidate.pilot_client_id}) kan indgå i en senere, særskilt autoriseret pilot.</Typography>
+              </Stack>
+            </Paper>
+          )}
           <Paper elevation={0} sx={panelSx}>
             <Stack spacing={2}>
               <Box>
