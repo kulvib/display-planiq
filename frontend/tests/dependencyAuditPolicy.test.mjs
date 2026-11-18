@@ -33,6 +33,7 @@ test("kun picomatch GHSA samt dokumenterede dev-only meta-advisories accepteres"
   const result = evaluate();
   assert.deepEqual(result.unexpected, []);
   assert.deepEqual(result.exceptionsUsed, ["picomatch"]);
+  assert.deepEqual(result.dormantExceptions, []);
   assert.deepEqual(result.accepted, ["@vitejs/plugin-react", "fdir", "picomatch", "tinyglobby", "vite"]);
 });
 
@@ -92,15 +93,53 @@ test("udløbet undtagelse afviser hele kæden", () => {
   assert.throws(() => evaluate(report(), allowlist, lock, "2026-11-26"), /udløbet/);
 });
 
-test("overflødig undtagelse efter rettelse skal aktivt fjernes", () => {
+test("manglende npm advisory er ikke et patch: eksakt låst dev-only picomatch undtagelse bevares kortvarigt", () => {
   const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
-  assert.deepEqual(evaluate(clean).unexpected.map((item) => item.packageName), ["picomatch"]);
+  const result = evaluate(clean);
+  assert.deepEqual(result.unexpected, []);
+  assert.deepEqual(result.exceptionsUsed, []);
+  assert.deepEqual(result.dormantExceptions, ["picomatch"]);
+});
+
+test("manglende advisory fritager ikke en ændret version, runtime-afhængighed eller devOptional", () => {
+  const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
+  for (const change of [
+    (entry) => { entry.version = "4.0.6"; },
+    (entry) => { entry.dev = false; },
+    (entry) => { entry.devOptional = true; },
+  ]) {
+    const modified = structuredClone(lock);
+    change(modified.packages["node_modules/picomatch"]);
+    assert.deepEqual(evaluate(clean, allowlist, modified).unexpected.map((item) => item.packageName), ["picomatch"]);
+  }
+  const missing = structuredClone(lock);
+  delete missing.packages["node_modules/picomatch"];
+  assert.deepEqual(evaluate(clean, allowlist, missing).unexpected.map((item) => item.packageName), ["picomatch"]);
+});
+
+test("manglende advisory tillader kun den eksisterende korte GHSA-undtagelse", () => {
+  const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
+  for (const mutate of [
+    (entry) => { entry.advisories = ["GHSA-2345-6789-cfgh"]; },
+    (entry) => { entry.expires = "2026-11-26"; },
+    (entry) => { entry.package = "fdir"; entry.lockedVersion = lock.packages["node_modules/fdir"].version; },
+  ]) {
+    const modified = structuredClone(allowlist);
+    mutate(modified.exceptions[0]);
+    assert.deepEqual(evaluate(clean, modified).unexpected.map((item) => item.packageName), [modified.exceptions[0].package]);
+  }
+});
+
+test("den ikke-rapporterede picomatch-undtagelse udløber fortsat", () => {
+  const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
+  assert.throws(() => evaluate(clean, allowlist, lock, "2026-11-26"), /udløbet/);
 });
 
 test("rapport med positiv tæller uden advisory-details fejler lukket", () => {
   const broken = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 1 } } };
   const result = evaluate(broken);
-  assert.deepEqual(result.unexpected.map((item) => item.packageName), ["picomatch", "npm audit"]);
+  assert.deepEqual(result.unexpected.map((item) => item.packageName), ["npm audit"]);
+  assert.deepEqual(result.dormantExceptions, ["picomatch"]);
 });
 
 test("legacy npm advisories-format accepterer kun den præcise GHSA", () => {
