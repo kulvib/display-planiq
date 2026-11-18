@@ -31,6 +31,7 @@ from ..clientflow_release_admin_models import (
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog, compare_versions
 from ..db import get_session
 from ..client_domain_models import ClientDomainCredential, ClientDomainStatus
+from ..clientflow_update_models import ClientFlowDeployment
 from ..models import Client, Organization, User
 from ..rate_limit import assert_key_not_limited, clear_key_rate_limit, record_key_attempt
 
@@ -349,7 +350,34 @@ def read_release_administration(
         }
         for row in inventory_rows[:1000]
     ]
+    # Event-triggered read only: one indexed, bounded query on the existing
+    # superadmin page request. No background polling, no new Neon writes.
+    # Source is the durable deployment state machine (never an inert wave plan).
+    deployment_rows = session.exec(
+        select(ClientFlowDeployment, Client.name)
+        .join(Client, ClientFlowDeployment.client_id == Client.id)
+        .order_by(ClientFlowDeployment.requested_at.desc(), ClientFlowDeployment.id.desc())
+        .limit(20)
+    ).all()
+    recent_deployments = [
+        {
+            "id": item.id,
+            "client_id": item.client_id,
+            "client_name": name,
+            "target_version": item.target_version,
+            "target_release_id": item.target_release_id,
+            "state": item.state,
+            "requested_at": item.requested_at,
+            "state_updated_at": item.state_updated_at,
+            "completed_at": item.completed_at,
+            "observed_release_id": item.observed_release_id,
+            "failure_code": item.failure_code,
+            "failure_message": (item.failure_message or "")[:240] or None,
+        }
+        for item, name in deployment_rows
+    ]
     return {
+        "recent_deployments": recent_deployments,
         "available_clients": available_clients,
         "client_inventory_complete": len(inventory_rows) <= 1000,
         "available_releases": [{

@@ -7,6 +7,7 @@ import {
 import client from "../../api/client";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
+import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
   validateReleasePlanningResponse, validatePlanningPreview,
@@ -344,6 +345,15 @@ export default function ClientFlowReleaseAdministration() {
             </Stack>
           </Paper>
           <ClientFlowPilot1246Panel status={status} onAuthorized={refresh} />
+          <Paper elevation={0} sx={panelSx}>
+            <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Seneste 20 registrerede deployments – adskilt fra de inaktive planer.
+              Status følger backendens faktiske hændelser. Brug Opdater øverst for at hente ny status;
+              der er ingen automatisk polling eller kunstig downloadprocent.
+            </Typography>
+            <ClientFlowDeploymentHistory rows={status.recent_deployments ?? []} />
+          </Paper>
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>3. Udrulning og rollback</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>

@@ -1,4 +1,6 @@
 /** Pure planning helpers: no method creates a deployment or authorizes a release. */
+import { validateDeploymentHistory } from "./clientflowDeploymentHistory.mjs";
+
 export const MAX_PLAN_CLIENTS = 25;
 const VERSION = /^\d+\.\d+\.\d+$/;
 
@@ -65,6 +67,7 @@ export function validateReleasePlanningResponse(data) {
     throw new Error("Ukendt eller usikker releaseadministrationskontrakt – planlægning er spærret");
   }
   validateReleaseReadiness(data.release_readiness, data.stable_release_id, data.revision);
+  validateDeploymentHistory(data.recent_deployments, { allowMissing: true });
   if (data.staged_pilot_candidate !== undefined) {
     validateStagedPilotCandidate(data.staged_pilot_candidate, data.stable_release_id);
   }
