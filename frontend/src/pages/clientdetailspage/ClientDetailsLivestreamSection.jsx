@@ -33,8 +33,8 @@ function isRequestTimeout(error) {
 // og holder browseren tættere på live edge uden at bruge 1-segment-start.
 const HLS_INITIAL_MANIFEST_SEGMENTS = 2;
 const HLS_LIVE_SYNC_SECONDS = 4;
-const HLS_MAX_LATENCY_SECONDS = 14;
-const HLS_CATCH_UP_SEEK_SECONDS = 10;
+const HLS_MAX_LATENCY_SECONDS = 9;
+const HLS_CATCH_UP_SEEK_SECONDS = 6;
 
 
 const DISPLAY_AUTO_OPTION = {
@@ -1373,7 +1373,7 @@ export default function ClientDetailsLivestreamSection({
             maxBufferLength: 8,
             maxMaxBufferLength: 16,
             backBufferLength: 12,
-            maxLiveSyncPlaybackRate: 1.15,
+            maxLiveSyncPlaybackRate: 1.25,
             enableWorker: true,
             startLevel: -1,
             lowLatencyMode: false,
