@@ -38,6 +38,9 @@ from ..clientflow_pilot_1243 import (
 from ..clientflow_pilot_1245 import (
     ClientFlowPilot1245Denied, PILOT_FLAG as PILOT_1245_FLAG, require_pilot_1245,
 )
+from ..clientflow_pilot_1246 import (
+    ClientFlowPilot1246Denied, PILOT_FLAG as PILOT_1246_FLAG, require_pilot_1246,
+)
 from ..clientflow_stable_rollout import (
     ClientFlowStableRolloutDenied, ENABLED_FLAG as STABLE_ROLLOUT_FLAG,
     require_stable_rollout,
@@ -66,6 +69,10 @@ def _require_exact_scoped_pilot(*, release: dict, **kwargs) -> str:
     # client-level authorization, not a second selectable release version.
     # A partially armed pilot must fail closed instead of falling through to
     # fleet rollout. Full fleet authority requires later physical acceptance.
+    # 1246 must never fall through to stable fleet rollout.
+    if release.get("release_id") == "clientflow-1.3.45-seq-1246":
+        require_pilot_1246(release=release, **kwargs)
+        return PILOT_1246_FLAG
     if release.get("release_id") == "clientflow-1.3.44-seq-1245" and (
         os.environ.get(PILOT_1245_FLAG) is not None
         or os.environ.get("CLIENTFLOW_1245_PILOT_ARM_REFERENCE") is not None
@@ -317,7 +324,7 @@ def create_clientflow_deployment(
             pre_first_activation_repair=body.pre_first_activation_repair,
             confirm_downgrade=body.confirm_downgrade,
         )
-    except (ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowPilot1245Denied, ClientFlowStableRolloutDenied) as exc:
+    except (ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowPilot1245Denied, ClientFlowPilot1246Denied, ClientFlowStableRolloutDenied) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     target_version = str(release["version"])
@@ -366,7 +373,7 @@ def create_clientflow_deployment(
                 confirm_downgrade=body.confirm_downgrade,
                 artifact=artifact,
             )
-        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowPilot1245Denied, ClientFlowStableRolloutDenied, ClientFlowReleaseSecurityDenied) as exc:
+        except (ClientFlowCatalogError, ClientFlowPilotDenied, ClientFlowPilot1242Denied, ClientFlowPilot1243Denied, ClientFlowPilot1245Denied, ClientFlowPilot1246Denied, ClientFlowStableRolloutDenied, ClientFlowReleaseSecurityDenied) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if locked_version != current_version:
             raise HTTPException(status_code=409, detail="Klientens aktive release ændrede sig under autorisation")

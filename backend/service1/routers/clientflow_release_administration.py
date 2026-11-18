@@ -20,6 +20,8 @@ from ..audit import add_audit_log, commit_audit_log
 from ..auth import get_current_superadmin_user, verify_password
 from ..clientflow_pilot_1245 import _approved_lock, ClientFlowPilot1245Denied
 from ..clientflow_release_readiness import planning_readiness
+from ..clientflow_release_pilot_stage_1246 import staged_pilot_summary, PilotStageDenied
+from ..clientflow_pilot_1246 import ClientFlowPilot1246Denied
 from ..clientflow_release_admin_models import (
     ClientFlowReleaseControl,
     ClientFlowRolloutTarget,
@@ -280,6 +282,10 @@ def read_release_administration(
         fresh_install_open=control.fresh_install_open,
         physical_acceptance=False,
     )
+    try:
+        staged_pilot = staged_pilot_summary(active_catalog=load_catalog())
+    except (PilotStageDenied, ClientFlowPilot1246Denied) as exc:
+        raise HTTPException(status_code=503, detail="1246-kandidatens godkendte kildestatus kan ikke verificeres") from exc
     waves = session.exec(
         select(ClientFlowRolloutWave)
         .order_by(ClientFlowRolloutWave.created_at.desc())
@@ -359,6 +365,7 @@ def read_release_administration(
         "revision": control.revision,
         "waves": [_wave_json(w, ids.get(w.id, [])) for w in waves],
         "release_readiness": release_readiness,
+        "staged_pilot_candidate": staged_pilot,
     }
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
@@ -22,6 +23,8 @@ from service1.clientflow_release_admin_models import (
     ClientFlowPhysicalAcceptance,
 )
 from service1.db import get_session
+from service1.clientflow_releases import load_catalog as load_canonical_catalog
+from service1 import clientflow_release_pilot_stage_1246 as pilot_stage_1246
 from service1.client_domain_models import ClientDomainCredential, ClientDomainStatus
 from service1.auth import get_current_superadmin_user
 from service1.models import User, Client, Organization, AuditLog
@@ -162,12 +165,15 @@ def environment(monkeypatch):
 
         monkeypatch.setattr(route, "verify_password", lambda password, hashed: password == "correct-password")
         monkeypatch.setattr(route, "_approved_lock", lambda: {"approved_bundle_sha256": SHA})
-        monkeypatch.setattr(route, "load_catalog", lambda: {
-            "latest_stable": "1.3.44", "default_install_version": "1.3.44",
-            "releases": [{"release_id": RELEASE_ID, "version": "1.3.44", "release_sequence": 1245,
-                           "status": "stable", "install_modes": ["fresh_install", "in_place_update"],
-                           "rollback_allowed": False}],
-        })
+        # 63D-4 verifies the complete, immutable 1245 stable entry against
+        # the staged 1246 pilot.  The previous abbreviated mock lacked the
+        # sequence and pinned catalog metadata, so it incorrectly raised 503
+        # for healthy read-only administration requests.  Exercise the real,
+        # validated catalog; keep the approval and DB control mocked/closed.
+        stable_catalog = load_canonical_catalog()
+        assert stable_catalog["catalog_sequence"] == 1245
+        assert stable_catalog["releases"][0]["release_id"] == RELEASE_ID
+        monkeypatch.setattr(route, "load_catalog", lambda: deepcopy(stable_catalog))
 
         app = FastAPI()
         app.include_router(route.router, prefix="/api")
@@ -232,6 +238,42 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     assert http.get("/api/clientflow/release-administration").json()["waves"][0]["state"] == "draft"
     assert http.post("/api/clientflow/release-administration/drafts/invalid/approve").status_code == 404
     assert session.get(ClientFlowReleaseControl, 1).cutover_enabled is False
+
+
+def test_63d4_staged_pilot_status_is_inert_with_real_stable_catalog(environment):
+    """The read-only operator view must work without arming pilot or rollout."""
+    http, session = environment
+    result = http.get("/api/clientflow/release-administration")
+    assert result.status_code == 200, result.text
+    candidate = result.json()["staged_pilot_candidate"]
+    assert candidate["release_id"] == "clientflow-1.3.45-seq-1246"
+    assert candidate["active_release_id"] == RELEASE_ID
+    assert candidate["approved_bundle_sha256"] == (
+        "e37de3250d58d313d57ad7bcbf59682cee342f2727c6ad5b188c8782342d4c78"
+    )
+    for field in (
+        "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
+        "physical_pilot_accepted", "active_catalog_promoted",
+        "render_store_publication_verified", "database_cutover_authorized",
+    ):
+        assert candidate[field] is False
+    assert session.get(ClientFlowReleaseControl, 1).cutover_enabled is False
+
+
+def test_63d4_admin_read_denies_modified_stable_stage_even_with_good_db_control(
+    environment, monkeypatch, tmp_path,
+):
+    """Never hide a changed stable record behind a successful admin GET."""
+    http, _ = environment
+    assert http.get("/api/clientflow/release-administration").status_code == 200
+    corrupt = pilot_stage_1246.load_staged_catalog()
+    corrupt["releases"][0]["notes"][0] += " tampered"
+    path = tmp_path / "tampered-stage.json"
+    path.write_text(json.dumps(corrupt), encoding="utf-8")
+    monkeypatch.setattr(pilot_stage_1246, "STAGED_CATALOG_PATH", path)
+    response = http.get("/api/clientflow/release-administration")
+    assert response.status_code == 503
+    assert "godkendte kildestatus" in response.text
 
 
 def test_61b_create_draft_flushes_parent_before_fk_targets(environment):

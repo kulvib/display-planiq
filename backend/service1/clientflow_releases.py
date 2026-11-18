@@ -245,6 +245,37 @@ def load_catalog() -> dict[str, Any]:
                 raise ClientFlowCatalogError(
                     "1245 stabil kræver én fælles release til nyinstallation og kontrolleret opdatering"
                 )
+        # A 1246 pilot is UPDATE-ONLY while the already approved 1245 remains
+        # the sole stable/fresh-install target. Never silently promote 1246 to
+        # default installation or permit broad rollout via a catalog file.
+        elif data["catalog_sequence"] == 1246 and newest.get("status") == "supported":
+            baseline = releases[0] if len(releases) == 2 else {}
+            if not (
+                len(releases) == 2
+                and data.get("latest_stable") == "1.3.44"
+                and data.get("default_install_version") == "1.3.44"
+                and baseline.get("version") == "1.3.44"
+                and baseline.get("release_id") == "clientflow-1.3.44-seq-1245"
+                and baseline.get("release_sequence") == 1245
+                and baseline.get("status") == "stable"
+                and baseline.get("installable") is True
+                and baseline.get("update_allowed") is True
+                and baseline.get("install_modes") == ["fresh_install", "in_place_update"]
+                and baseline.get("rollback_allowed") is False
+                and newest.get("version") == "1.3.45"
+                and newest.get("release_id") == "clientflow-1.3.45-seq-1246"
+                and newest.get("release_sequence") == 1246
+                and newest.get("status") == "supported"
+                and newest.get("installable") is False
+                and newest.get("update_allowed") is True
+                and newest.get("install_modes") == ["in_place_update"]
+                and newest.get("min_current_version") == "1.3.43"
+                and newest.get("max_current_version") == "1.3.44"
+                and newest.get("requires_reboot") is True
+            ):
+                raise ClientFlowCatalogError(
+                    "1246-katalog må alene tilføje en eksakt update-only pilot til stabil 1245"
+                )
         elif (
             data.get("latest_stable") != newest.get("version")
             or data.get("default_install_version") != newest.get("version")
