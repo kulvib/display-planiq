@@ -141,7 +141,8 @@ class RemoteDesktopAgent:
         return session_id
 
     def _record_media_telemetry(
-        self, session_id: str, *, capture_ms: float, frame_bytes: int, relayed: bool, unchanged: bool
+        self, session_id: str, *, capture_ms: float, frame_bytes: int, relayed: bool, unchanged: bool,
+        relay_send_ms: float | None = None,
     ) -> None:
         row = self.media_telemetry.setdefault(session_id, {
             "transport": self.media_transport.name,
@@ -151,6 +152,9 @@ class RemoteDesktopAgent:
             "relayed_bytes": 0,
             "capture_ms_total": 0.0,
             "capture_ms_max": 0.0,
+            "relay_send_samples": 0,
+            "relay_send_ms_total": 0.0,
+            "relay_send_ms_max": 0.0,
             "input_to_frame_samples": 0,
             "input_to_frame_ms_total": 0.0,
             "input_to_frame_ms_max": 0.0,
@@ -165,6 +169,12 @@ class RemoteDesktopAgent:
         captured = max(1, int(row["captured_frames"]))
         row["unchanged_ratio"] = round(float(row["unchanged_frames"]) / captured, 4)
         row["capture_ms_avg"] = round(float(row["capture_ms_total"]) / captured, 3)
+        if relay_send_ms is not None and relayed:
+            row["relay_send_samples"] += 1
+            row["relay_send_ms_total"] += float(relay_send_ms)
+            row["relay_send_ms_max"] = max(float(row["relay_send_ms_max"]), float(relay_send_ms))
+            row["relay_send_ms_last"] = round(float(relay_send_ms), 3)
+            row["relay_send_ms_avg"] = round(float(row["relay_send_ms_total"]) / row["relay_send_samples"], 3)
         if relayed:
             input_started = self.pending_input_at.pop(session_id, None)
             if input_started is not None:
@@ -220,6 +230,7 @@ class RemoteDesktopAgent:
             return False
         self.last_frame_digest[session_id] = digest
         self.last_frame_sent_at[session_id] = now
+        relay_started = time.monotonic()
         await self._send_control(
             {
                 "type": "frame",
@@ -237,7 +248,11 @@ class RemoteDesktopAgent:
                 "deduplicated": True,
             }
         )
-        self._record_media_telemetry(session_id, capture_ms=capture_ms, frame_bytes=frame_bytes, relayed=True, unchanged=unchanged)
+        self._record_media_telemetry(
+            session_id, capture_ms=capture_ms, frame_bytes=frame_bytes,
+            relayed=True, unchanged=unchanged,
+            relay_send_ms=(time.monotonic() - relay_started) * 1000.0,
+        )
         return True
 
     async def _stream_loop(self, session_id: str) -> None:

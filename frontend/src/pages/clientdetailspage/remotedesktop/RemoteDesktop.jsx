@@ -78,6 +78,9 @@ function formatBytes(value) {
 
 const UPLOAD_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024;
 const RD_ACTIVE_FPS = 6;
+// Reduce the native-resolution JPEG byte load only when HTTPS is the transport.
+// WSS keeps its existing quality; native geometry and input coordinates never change.
+const RD_HTTPS_JPEG_QUALITY = 65;
 const RD_IDLE_FPS = 1;
 const RD_DEEP_IDLE_FPS = 0.2;
 const RD_IDLE_AFTER_MS = 20_000;
@@ -297,7 +300,9 @@ export default function RemoteDesktop() {
   const startStream = useCallback((mode = "active", force = false) => {
     const fps = mode === "deep_idle" ? RD_DEEP_IDLE_FPS : mode === "idle" ? RD_IDLE_FPS : RD_ACTIVE_FPS;
     if (!force && streamModeRef.current === mode) return true;
-    const ok = send({ ...streamStartPayloadRef.current, fps });
+    const quality = wsRef.current?.transport === "https_long_poll"
+      ? RD_HTTPS_JPEG_QUALITY : streamStartPayloadRef.current.quality;
+    const ok = send({ ...streamStartPayloadRef.current, fps, quality });
     if (ok) streamModeRef.current = mode;
     return ok;
   }, [send]);
@@ -885,6 +890,14 @@ export default function RemoteDesktop() {
     });
   }, [canControl, markRemoteActivity, send]);
 
+  const hasRemoteFrame = Boolean(frameSrc);
+  useEffect(() => {
+    const image = imgRef.current;
+    if (!image) return undefined;
+    image.addEventListener("wheel", handleWheel, { passive: false });
+    return () => image.removeEventListener("wheel", handleWheel);
+  }, [handleWheel, hasRemoteFrame]);
+
   const sendShout = useCallback(() => {
     const message = shoutText.trim();
     if (!message || shoutSending) return;
@@ -1340,7 +1353,6 @@ export default function RemoteDesktop() {
                   onContextMenu={handleContextMenu}
                   onMouseMove={handleMouseMove}
                   onMouseLeave={handleMouseLeave}
-                  onWheel={handleWheel}
                   sx={{
                     width: "100%",
                     height: "100%",
