@@ -90,6 +90,8 @@ class AgentChannel:
     websocket: Any
     connected_at: float = field(default_factory=time.time)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Only acknowledged sessions may use a newly registered input socket.
+    ready_sessions: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -155,6 +157,9 @@ class OperationBatch:
 
 
 CONTROL_AGENTS: dict[int, AgentChannel] = {}
+# Dedicated low-volume input transport; the existing control channel remains
+# a backwards-compatible fallback during rolling client upgrades.
+INPUT_AGENTS: dict[int, AgentChannel] = {}
 FILE_AGENTS: dict[int, AgentChannel] = {}
 BROWSERS: dict[str, BrowserSession] = {}
 DOWNLOADS: dict[str, DownloadState] = {}
@@ -573,17 +578,25 @@ def _mouse_sequence(
 async def _open_session_on_available_channels(browser: BrowserSession) -> None:
     control = CONTROL_AGENTS.get(browser.client_id)
     files = FILE_AGENTS.get(browser.client_id)
+    input_channel = INPUT_AGENTS.get(browser.client_id)
     payload = {"type": "session_open", "session_id": browser.session_id}
     if control:
         await _send_agent(control, payload)
     if files:
         await _send_agent(files, payload)
+    if input_channel:
+        try:
+            await _send_agent(input_channel, payload)
+        except Exception:
+            # Input is optional; the original control connection remains usable.
+            logger.warning("remote_desktop_input_session_open_failed client_id=%s", browser.client_id)
 
 
 async def _close_session_on_available_channels(browser: BrowserSession) -> None:
     payload = {"type": "session_close", "session_id": browser.session_id}
     control = CONTROL_AGENTS.get(browser.client_id)
     files = FILE_AGENTS.get(browser.client_id)
+    input_channel = INPUT_AGENTS.get(browser.client_id)
     if control:
         try:
             await _send_agent(control, payload)
@@ -592,6 +605,12 @@ async def _close_session_on_available_channels(browser: BrowserSession) -> None:
     if files:
         try:
             await _send_agent(files, payload)
+        except Exception:
+            pass
+    if input_channel:
+        input_channel.ready_sessions.discard(browser.session_id)
+        try:
+            await _send_agent(input_channel, payload)
         except Exception:
             pass
 
@@ -701,7 +720,7 @@ async def _fail_file_channel_state(client_id: int, reason: str) -> None:
 
 
 async def _register_agent_channel(client_id: int, channel_name: str, channel: AgentChannel) -> None:
-    registry = CONTROL_AGENTS if channel_name == "control" else FILE_AGENTS
+    registry = {"control": CONTROL_AGENTS, "input": INPUT_AGENTS, "files": FILE_AGENTS}[channel_name]
     async with LOCK:
         old = registry.get(client_id)
         registry[client_id] = channel
@@ -725,7 +744,7 @@ async def _register_agent_channel(client_id: int, channel_name: str, channel: Ag
 
 
 async def _unregister_agent_channel(client_id: int, channel_name: str, websocket: WebSocket) -> None:
-    registry = CONTROL_AGENTS if channel_name == "control" else FILE_AGENTS
+    registry = {"control": CONTROL_AGENTS, "input": INPUT_AGENTS, "files": FILE_AGENTS}[channel_name]
     removed_current = False
     async with LOCK:
         current = registry.get(client_id)
@@ -740,7 +759,10 @@ async def _unregister_agent_channel(client_id: int, channel_name: str, websocket
     await _broadcast_agent_status(client_id)
 
 
-async def _handle_control_agent_message(client_id: int, credential_id: str, message: dict[str, Any]) -> None:
+async def _handle_control_agent_message(
+    client_id: int, credential_id: str, message: dict[str, Any], *,
+    input_websocket: Any = None,
+) -> None:
     session_id = str(message.get("session_id") or "")
     if not session_id:
         return
@@ -748,6 +770,14 @@ async def _handle_control_agent_message(client_id: int, credential_id: str, mess
     if not browser:
         return
     message_type = str(message.get("type") or "")
+    if message_type == "input_ready":
+        # Ignore delayed acknowledgements from a replaced or closed input socket.
+        if input_websocket is not None:
+            async with LOCK:
+                channel = INPUT_AGENTS.get(client_id)
+                if channel and channel.websocket is input_websocket and browser.session_id in BROWSERS:
+                    channel.ready_sessions.add(session_id)
+        return
     if message_type == "agent_ready":
         with Session(engine) as session:
             try:
@@ -999,12 +1029,12 @@ async def _handle_file_agent_message(client_id: int, message: dict[str, Any]) ->
 async def remote_desktop_agent_http_open(
     client_id: int, channel: str, request: Request,
 ):
-    if channel not in {"control", "files"}:
+    if channel not in {"control", "input", "files"}:
         raise HTTPException(status_code=404, detail="Ukendt Remote Desktop relay-kanal")
     token = bearer_token(request.headers.get("authorization"))
     with Session(engine) as session:
         credential = verify_remote_desktop_agent_token(session, token, client_id=client_id)
-    handler = remote_desktop_agent_control_ws if channel == "control" else remote_desktop_agent_files_ws
+    handler = {"control": remote_desktop_agent_control_ws, "input": remote_desktop_agent_input_ws, "files": remote_desktop_agent_files_ws}[channel]
     relay = await create_relay(
         lambda ws: handler(ws, client_id),
         headers={"authorization": f"Bearer {token}"},
@@ -1018,7 +1048,7 @@ async def remote_desktop_agent_http_open(
 async def remote_desktop_agent_http_send(
     client_id: int, channel: str, relay_id: str, body: RemoteDesktopHttpRelaySendBody, request: Request,
 ):
-    if channel not in {"control", "files"}:
+    if channel not in {"control", "input", "files"}:
         raise HTTPException(status_code=404, detail="Ukendt Remote Desktop relay-kanal")
     token = bearer_token(request.headers.get("authorization"))
     with Session(engine) as session:
@@ -1038,7 +1068,7 @@ async def remote_desktop_agent_http_poll(
     client_id: int, channel: str, relay_id: str, request: Request,
     timeout_seconds: int = 25,
 ):
-    if channel not in {"control", "files"}:
+    if channel not in {"control", "input", "files"}:
         raise HTTPException(status_code=404, detail="Ukendt Remote Desktop relay-kanal")
     timeout_seconds = min(30, max(1, int(timeout_seconds)))
     token = bearer_token(request.headers.get("authorization"))
@@ -1095,6 +1125,60 @@ async def remote_desktop_agent_control_ws(websocket: WebSocket, client_id: int):
             except asyncio.CancelledError:
                 pass
         await _unregister_agent_channel(client_id, "control", websocket)
+
+
+@router.websocket("/remote-desktop-agent/clients/{client_id}/input/ws")
+async def remote_desktop_agent_input_ws(websocket: WebSocket, client_id: int):
+    """Authenticated input-only agent lane, isolated from multi-MB JPEG sends."""
+    await websocket.accept()
+    credential = await _authenticate_agent_websocket(websocket, client_id)
+    if credential is None:
+        return
+    channel = AgentChannel(client_id=client_id, credential_id=credential.id,
+                           token_version=int(credential.token_version), websocket=websocket)
+    await _register_agent_channel(client_id, "input", channel)
+    receive_task = None
+    next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_AGENT_AUTH_RECHECK_SECONDS
+    try:
+        receive_task = asyncio.create_task(websocket.receive_text())
+        while True:
+            timeout = max(0.0, next_auth_recheck - time.monotonic())
+            done, _ = await asyncio.wait({receive_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if receive_task not in done:
+                if not _remote_desktop_agent_channel_valid(channel):
+                    await _close_with_reason(websocket, 4401, "Remote Desktop credential er ikke længere gyldigt")
+                    return
+                next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_AGENT_AUTH_RECHECK_SECONDS
+                continue
+            raw = receive_task.result()
+            receive_task = asyncio.create_task(websocket.receive_text())
+            if time.monotonic() >= next_auth_recheck:
+                if not _remote_desktop_agent_channel_valid(channel):
+                    await _close_with_reason(websocket, 4401, "Remote Desktop credential er ikke længere gyldigt")
+                    return
+                next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_AGENT_AUTH_RECHECK_SECONDS
+            try:
+                decoded = decode_json_message(raw, max_chars=MAX_BROWSER_MESSAGE_CHARS)
+            except ProtocolError as exc:
+                if exc.close_code:
+                    await _close_with_reason(websocket, exc.close_code, exc.message)
+                    return
+                continue
+            # Never allow frame injection or file operations through the input lane.
+            if decoded.type not in {"input_ready", "input_result", "error"}:
+                await _close_with_reason(websocket, 4400, "Ukendt inputkanal-meddelelse")
+                return
+            await _handle_control_agent_message(client_id, credential.id, decoded.payload, input_websocket=websocket)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if receive_task is not None and not receive_task.done():
+            receive_task.cancel()
+            try:
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+        await _unregister_agent_channel(client_id, "input", websocket)
 
 
 @router.websocket("/remote-desktop-agent/clients/{client_id}/files/ws")
@@ -1209,6 +1293,32 @@ async def _browser_file_operation(client_id: int, session_id: str, message: dict
         return
 
 
+async def _send_browser_input(
+    client_id: int, session_id: str, control: AgentChannel, payload: dict[str, Any],
+) -> None:
+    """Prefer an ACKed input lane, reverting to control on a transport failure.
+
+    A stable ID lets the local privileged input broker suppress replays if the
+    socket write succeeded even though the sender reported a connection error.
+    """
+    payload = {**payload, "session_id": session_id, "input_id": str(uuid.uuid4())}
+    input_channel = INPUT_AGENTS.get(client_id)
+    if input_channel is not None and session_id in input_channel.ready_sessions:
+        try:
+            await _send_agent(input_channel, payload)
+            return
+        except Exception:
+            input_channel.ready_sessions.discard(session_id)
+            logger.warning("remote_desktop_input_lane_send_failed_using_control client_id=%s", client_id)
+    try:
+        await _send_agent(control, payload)
+    except Exception:
+        # A transient agent disconnect must not tear down the browser websocket.
+        await _send_browser(session_id, client_id, {
+            "type": "error", "message": "Remote Desktop-input kunne ikke leveres. Prøv igen.",
+        })
+
+
 async def _browser_control_message(client_id: int, session_id: str, message: dict[str, Any]) -> None:
     control = CONTROL_AGENTS.get(client_id)
     if not control:
@@ -1231,8 +1341,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         if not width or not height:
             width, height = _configured_resolution(client_id)
         for payload in _mouse_sequence(message, width, height):
-            payload["session_id"] = session_id
-            await _send_agent(control, payload)
+            await _send_browser_input(client_id, session_id, control, payload)
         return
     if message_type == "key":
         sequence = _input_key_sequence(message.get("key"))
@@ -1240,11 +1349,10 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             await _send_browser(session_id, client_id, {"type": "error", "message": "Tasten kunne ikke oversættes sikkert"})
             return
         for payload in sequence:
-            payload["session_id"] = session_id
-            await _send_agent(control, payload)
+            await _send_browser_input(client_id, session_id, control, payload)
         return
     if message_type == "text":
-        await _send_agent(control, {"type": "text", "session_id": session_id, "text": str(message.get("text") or "")[:1000]})
+        await _send_browser_input(client_id, session_id, control, {"type": "text", "text": str(message.get("text") or "")[:1000]})
         return
     if message_type == "shout":
         text = str(message.get("text") or "").strip()[:120]

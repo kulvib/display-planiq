@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ from .constants import Domain
 from .logging_utils import configure_logging
 from .remote_desktop_net import DomainTransport, TransportError, backoff_seconds
 from .remote_desktop_files import FileArea
+from .remote_desktop_input_queue import InputLaneQueue
 from .status import report_status
 from .unix_rpc import RpcError, call
 
@@ -93,6 +95,16 @@ class RemoteDesktopAgent:
         self.last_frame_sent_at: dict[str, float] = {}
         self.control_ws: Any = None
         self.file_ws: Any = None
+        self.input_ws: Any = None
+        self.input_send_lock = asyncio.Lock()
+        self.input_sessions: set[str] = set()
+        # Input socket and its DB rechecks exist only while a browser session
+        # is active. Control/files remain fully backwards compatible.
+        self.input_demand = asyncio.Event()
+        # Serialize cross-lane input during reconnect and dedupe replayed IDs.
+        self.input_rpc_lock = asyncio.Lock()
+        self.completed_input_ids: set[str] = set()
+        self.recent_input_ids: deque[str] = deque()
         self.control_send_lock = asyncio.Lock()
         self.file_send_lock = asyncio.Lock()
         self.control_sessions: set[str] = set()
@@ -114,6 +126,12 @@ class RemoteDesktopAgent:
             return
         async with self.control_send_lock:
             await self.control_ws.send(json.dumps(payload, separators=(",", ":")))
+
+    async def _send_input(self, payload: dict[str, Any]) -> None:
+        if self.input_ws is None:
+            return
+        async with self.input_send_lock:
+            await self.input_ws.send(json.dumps(payload, separators=(",", ":")))
 
     async def _send_file(self, payload: dict[str, Any]) -> None:
         if self.file_ws is None:
@@ -140,11 +158,8 @@ class RemoteDesktopAgent:
             raise ValueError("Remote Desktop-session-id er ugyldigt") from exc
         return session_id
 
-    def _record_media_telemetry(
-        self, session_id: str, *, capture_ms: float, frame_bytes: int, relayed: bool, unchanged: bool,
-        relay_send_ms: float | None = None,
-    ) -> None:
-        row = self.media_telemetry.setdefault(session_id, {
+    def _new_media_row(self) -> dict[str, Any]:
+        return {
             "transport": self.media_transport.name,
             "captured_frames": 0,
             "relayed_frames": 0,
@@ -158,7 +173,13 @@ class RemoteDesktopAgent:
             "input_to_frame_samples": 0,
             "input_to_frame_ms_total": 0.0,
             "input_to_frame_ms_max": 0.0,
-        })
+        }
+
+    def _record_media_telemetry(
+        self, session_id: str, *, capture_ms: float, frame_bytes: int, relayed: bool, unchanged: bool,
+        relay_send_ms: float | None = None,
+    ) -> None:
+        row = self.media_telemetry.setdefault(session_id, self._new_media_row())
         row["captured_frames"] += 1
         row["relayed_frames"] += int(relayed)
         row["unchanged_frames"] += int(unchanged)
@@ -368,6 +389,7 @@ class RemoteDesktopAgent:
         session_id = self._session_id(message)
         if message_type == "session_open":
             self.control_sessions.add(session_id)
+            self.input_demand.set()
             await self._send_control({"type": "agent_ready", "session_id": session_id})
             return
         if session_id not in self.control_sessions:
@@ -375,6 +397,8 @@ class RemoteDesktopAgent:
         if message_type == "session_close":
             await self._stop_stream(session_id)
             self.control_sessions.discard(session_id)
+            self.input_demand.set()
+            await self._release_session_input(session_id)
             await self._close_mutter_if_idle()
             await self._send_control({"type": "session_closed", "session_id": session_id})
         elif message_type == "start_stream":
@@ -385,17 +409,23 @@ class RemoteDesktopAgent:
             await self._capture(session_id, message, force=True)
         elif message_type in {"mouse", "key"}:
             self.pending_input_at[session_id] = time.monotonic()
-            request = {"action": message_type, **{key: value for key, value in message.items() if key not in {"type", "session_id"}}}
+            fields = {"event", "x", "y", "button", "delta"} if message_type == "mouse" else {"event", "key"}
+            request = {"action": message_type, "session_id": session_id,
+                       **{key: value for key, value in message.items() if key in fields}}
+            if message.get("input_id"):
+                request["input_id"] = str(message["input_id"])
             try:
-                result = await asyncio.to_thread(call, INPUT_SOCKET, request, timeout=15)
+                result = await self._input_rpc(INPUT_SOCKET, request)
                 await self._send_control({"type": "input_result", "session_id": session_id, "ok": True, "result": result})
             except RpcError as exc:
                 await self._send_control({"type": "input_result", "session_id": session_id, "ok": False, "error": str(exc)[:500]})
         elif message_type == "text":
             self.pending_input_at[session_id] = time.monotonic()
             request = {"action": "text", "text": str(message.get("text") or "")[:1000]}
+            if message.get("input_id"):
+                request["input_id"] = str(message["input_id"])
             try:
-                result = await asyncio.to_thread(call, CAPTURE_SOCKET, request, timeout=15)
+                result = await self._input_rpc(CAPTURE_SOCKET, request)
                 await self._send_control({"type": "input_result", "session_id": session_id, "ok": True, "result": result})
             except RpcError as exc:
                 await self._send_control({"type": "input_result", "session_id": session_id, "ok": False, "error": str(exc)[:500]})
@@ -418,6 +448,57 @@ class RemoteDesktopAgent:
                 })
         else:
             raise ValueError("Ukendt Remote Desktop-controlmeddelelse")
+
+    async def _handle_input(self, message: dict[str, Any]) -> None:
+        """Only keyboard/mouse/text over a separate socket; no media or file RPC."""
+        message_type = str(message.get("type") or "")
+        session_id = self._session_id(message)
+        if message_type == "session_open":
+            self.input_sessions.add(session_id)
+            # Backend must not route input until the agent confirms the local
+            # session was installed on this particular input connection.
+            await self._send_input({"type": "input_ready", "session_id": session_id})
+            return
+        if message_type == "session_close":
+            self.input_sessions.discard(session_id)
+            await self._release_session_input(session_id)
+            return
+        if session_id not in self.input_sessions or session_id not in self.control_sessions:
+            raise ValueError("Remote Desktop-inputsessionen er ikke åbnet")
+        if message_type not in {"mouse", "key", "text"}:
+            raise ValueError("Inputkanalen accepterer kun muse- og tastaturhandlinger")
+        self.pending_input_at[session_id] = time.monotonic()
+        request = (
+            {"action": "text", "text": str(message.get("text") or "")[:1000]}
+            if message_type == "text" else
+            {"action": message_type, **{key: value for key, value in message.items()
+                                       if key in ({"event", "x", "y", "button", "delta"}
+                                                  if message_type == "mouse" else {"event", "key"})}}
+        )
+        if message_type in {"mouse", "key"}:
+            request["session_id"] = session_id
+        if message.get("input_id"):
+            request["input_id"] = str(message["input_id"])
+        socket = CAPTURE_SOCKET if message_type == "text" else INPUT_SOCKET
+        started = time.monotonic()
+        try:
+            result = await self._input_rpc(socket, request)
+            self._record_input_telemetry(session_id, (time.monotonic() - started) * 1000)
+            # A successful mouse move needs no acknowledgement. On HTTPS
+            # fallback each acknowledgement would otherwise cost a POST+auth.
+            if not (message_type == "mouse" and message.get("event") == "move"):
+                await self._send_input({"type": "input_result", "session_id": session_id, "ok": True, "result": result})
+        except RpcError as exc:
+            await self._send_input({"type": "input_result", "session_id": session_id, "ok": False, "error": str(exc)[:500]})
+
+    def _record_input_telemetry(self, session_id: str, duration_ms: float) -> None:
+        row = self.media_telemetry.setdefault(session_id, self._new_media_row())
+        samples = int(row.get("input_rpc_samples", 0)) + 1
+        row["input_rpc_samples"] = samples
+        row["input_rpc_ms_last"] = round(duration_ms, 3)
+        row["input_rpc_ms_max"] = round(max(float(row.get("input_rpc_ms_max", 0)), duration_ms), 3)
+        row["input_rpc_ms_total"] = round(float(row.get("input_rpc_ms_total", 0)) + duration_ms, 3)
+        row["input_rpc_ms_avg"] = round(row["input_rpc_ms_total"] / samples, 3)
 
     async def _handle_file(self, message: dict[str, Any]) -> None:
         message_type = str(message.get("type") or "")
@@ -498,6 +579,8 @@ class RemoteDesktopAgent:
                 raise ValueError("Remote Desktop-meddelelse skal være et objekt")
             if channel == "control":
                 await self._handle_control(message)
+            elif channel == "input":
+                await self._handle_input(message)
             else:
                 await self._handle_file(message)
         except (ValueError, RuntimeError, json.JSONDecodeError) as exc:
@@ -509,13 +592,94 @@ class RemoteDesktopAgent:
                     session_id = candidate
                 except ValueError:
                     pass
-            payload = {"type": "error" if channel == "control" else "file_error", "error": str(exc)[:500]}
+            payload = {"type": "file_error" if channel == "files" else "error", "error": str(exc)[:500]}
             if session_id:
                 payload["session_id"] = session_id
             if channel == "control":
                 await self._send_control(payload)
+            elif channel == "input":
+                await self._send_input(payload)
             else:
                 await self._send_file(payload)
+
+    async def _input_rpc(self, socket: str, request: dict[str, Any]) -> dict[str, Any]:
+        input_id = str(request.get("input_id") or "")
+        async with self.input_rpc_lock:
+            session_id = str(request.get("session_id") or "")
+            if session_id and session_id not in self.control_sessions:
+                raise RpcError("Remote Desktop-sessionen er lukket")
+            if input_id and input_id in self.completed_input_ids:
+                return {"accepted": True, "duplicate": True}
+            # Cancellation of to_thread() does not cancel the RPC thread.
+            # Wait for completion before releasing remote-held buttons.
+            wire_request = ({key: value for key, value in request.items() if key != "input_id"}
+                            if socket == CAPTURE_SOCKET else request)
+            task = asyncio.create_task(asyncio.to_thread(call, socket, wire_request, timeout=15))
+            try:
+                result = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await asyncio.gather(task, return_exceptions=True)
+                raise
+            if input_id:
+                if len(self.recent_input_ids) >= 2048:
+                    self.completed_input_ids.discard(self.recent_input_ids.popleft())
+                self.recent_input_ids.append(input_id)
+                self.completed_input_ids.add(input_id)
+            return result
+
+    async def _release_session_input(self, session_id: str) -> None:
+        """Release only remote-held keys/buttons of this authorized session."""
+        try:
+            # Wait for any in-flight input RPC before releasing the held state.
+            # A queued old 'down' must never execute after this cleanup.
+            async with self.input_rpc_lock:
+                await asyncio.to_thread(
+                    call, INPUT_SOCKET, {"action": "release_session", "session_id": session_id}, timeout=5,
+                )
+        except (OSError, RpcError) as exc:
+            self.logger.warning("remote_desktop_input_release_failed", extra={"event": str(exc)[:200]})
+
+    async def _release_input_sessions(self) -> None:
+        for session_id in tuple(self.input_sessions):
+            await self._release_session_input(session_id)
+        self.input_sessions.clear()
+
+    async def _run_input_on_demand(self) -> None:
+        """Do not keep an idle third WebSocket and 15s SQL recheck alive."""
+        while True:
+            while not self.control_sessions:
+                self.input_demand.clear()
+                await self.input_demand.wait()
+            input_task = asyncio.create_task(self._channel("input"))
+            try:
+                while self.control_sessions:
+                    self.input_demand.clear()
+                    await self.input_demand.wait()
+            finally:
+                input_task.cancel()
+                await asyncio.gather(input_task, return_exceptions=True)
+
+    def _input_queue(self) -> InputLaneQueue:
+        async def process(raw: str) -> None:
+            await self._process_channel_message("input", raw)
+
+        def record_delay(raw: str, delay_ms: float) -> None:
+            try:
+                value = json.loads(raw)
+                session_id = str(value.get("session_id") or "")
+                if session_id not in self.input_sessions:
+                    return
+                row = self.media_telemetry.setdefault(session_id, self._new_media_row())
+                count = int(row.get("input_queue_samples", 0)) + 1
+                row["input_queue_samples"] = count
+                row["input_queue_ms_last"] = round(delay_ms, 3)
+                row["input_queue_ms_max"] = round(max(float(row.get("input_queue_ms_max", 0)), delay_ms), 3)
+                row["input_queue_ms_total"] = round(float(row.get("input_queue_ms_total", 0)) + delay_ms, 3)
+                row["input_queue_ms_avg"] = round(row["input_queue_ms_total"] / count, 3)
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                return
+
+        return InputLaneQueue(process, max_pending=32, on_dequeue=record_delay)
 
     async def _http_channel_once(self, channel: str) -> None:
         client_id = self.credential.client_id
@@ -530,28 +694,37 @@ class RemoteDesktopAgent:
         socket = _HttpRelaySocket(self.transport, client_id, channel, relay_id)
         if channel == "control":
             self.control_ws = socket
+        elif channel == "input":
+            self.input_ws = socket
         else:
             self.file_ws = socket
-        while True:
-            response = await asyncio.to_thread(
-                self.transport.json_request, "GET",
-                f"/api/remote-desktop-agent/clients/{client_id}/{channel}/http/{relay_id}/poll?timeout_seconds=25",
-                timeout=35,
-            )
-            for raw in response.get("messages") or []:
-                decoded = json.loads(raw) if isinstance(raw, str) else raw
-                if isinstance(decoded, dict) and decoded.get("type") == "relay_closed":
-                    raise RuntimeError(str(decoded.get("reason") or "Remote Desktop HTTPS relay lukket"))
-                await self._process_channel_message(channel, raw if isinstance(raw, str) else json.dumps(raw))
-            if response.get("closed") is True:
-                raise RuntimeError("Remote Desktop HTTPS relay er lukket")
+        input_queue = self._input_queue() if channel == "input" else None
+        worker = asyncio.create_task(input_queue.run()) if input_queue else None
+        try:
+            while True:
+                response = await asyncio.to_thread(
+                    self.transport.json_request, "GET",
+                    f"/api/remote-desktop-agent/clients/{client_id}/{channel}/http/{relay_id}/poll?timeout_seconds=25",
+                    timeout=35,
+                )
+                for raw in response.get("messages") or []:
+                    decoded = json.loads(raw) if isinstance(raw, str) else raw
+                    if isinstance(decoded, dict) and decoded.get("type") == "relay_closed":
+                        raise RuntimeError(str(decoded.get("reason") or "Remote Desktop HTTPS relay lukket"))
+                    raw_message = raw if isinstance(raw, str) else json.dumps(raw)
+                    if input_queue is not None:
+                        await input_queue.put(raw_message)
+                    else:
+                        await self._process_channel_message(channel, raw_message)
+                if response.get("closed") is True:
+                    raise RuntimeError("Remote Desktop HTTPS relay er lukket")
+        finally:
+            if worker is not None:
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
 
     async def _channel(self, channel: str) -> None:
-        path = (
-            f"/api/remote-desktop-agent/clients/{self.credential.client_id}/control/ws"
-            if channel == "control"
-            else f"/api/remote-desktop-agent/clients/{self.credential.client_id}/files/ws"
-        )
+        path = f"/api/remote-desktop-agent/clients/{self.credential.client_id}/{channel}/ws"
         attempt = 0
         while True:
             try:
@@ -567,11 +740,23 @@ class RemoteDesktopAgent:
                 ) as websocket:
                     if channel == "control":
                         self.control_ws = websocket
+                    elif channel == "input":
+                        self.input_ws = websocket
                     else:
                         self.file_ws = websocket
                     attempt = 0
-                    async for raw in websocket:
-                        await self._process_channel_message(channel, raw)
+                    input_queue = self._input_queue() if channel == "input" else None
+                    worker = asyncio.create_task(input_queue.run()) if input_queue else None
+                    try:
+                        async for raw in websocket:
+                            if input_queue is not None:
+                                await input_queue.put(raw)
+                            else:
+                                await self._process_channel_message(channel, raw)
+                    finally:
+                        if worker is not None:
+                            worker.cancel()
+                            await asyncio.gather(worker, return_exceptions=True)
             except KeyboardInterrupt:
                 return
             except TransportError as exc:
@@ -604,8 +789,14 @@ class RemoteDesktopAgent:
                         await asyncio.gather(*tasks, return_exceptions=True)
                     self.stream_tasks.clear()
                     self.stream_options.clear()
+                    for session_id in tuple(self.control_sessions):
+                        await self._release_session_input(session_id)
                     self.control_sessions.clear()
+                    self.input_demand.set()
                     await self._close_mutter_if_idle()
+                elif channel == "input":
+                    self.input_ws = None
+                    await self._release_input_sessions()
                 else:
                     self.file_ws = None
                     for session_id in tuple(self.file_sessions):
@@ -625,7 +816,9 @@ class RemoteDesktopAgent:
                 "file_root": str(FILE_ROOT),
             },
         )
-        await asyncio.gather(self._channel("control"), self._channel("files"))
+        await asyncio.gather(
+            self._channel("control"), self._run_input_on_demand(), self._channel("files")
+        )
 
 
 def main() -> int:
