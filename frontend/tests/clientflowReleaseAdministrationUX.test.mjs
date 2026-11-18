@@ -2,13 +2,23 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import {
-  MAX_PLAN_CLIENTS, planVersionGroups, preparePlan, validateReleasePlanningResponse, validatePlanningPreview,
+  MAX_PLAN_CLIENTS, planVersionGroups, preparePlan, validateReleasePlanningResponse, validatePlanningPreview, validateReleaseReadiness,
 } from "../src/pages/adminpages/clientflowReleasePlan.mjs";
 
 const body = {
   phase: "additive_draft_only", authorization_active: false, planning_review_available: true,
   fresh_install_open: false, fleet_open: false, cutover_enabled: false, physical_pilot_accepted: false,
   client_inventory_complete: true, revision: 1, stable_release_id: "clientflow-1.3.44-seq-1245",
+  release_readiness: {
+    schema_version: 1, release_id: "clientflow-1.3.44-seq-1245", policy_revision: 1,
+    deployment_authorized: false, automatic_rollout_authorized: false,
+    ready_for_fleet: false, ready_for_fresh_install: false,
+    checks: ["stable_catalog_binding", "physical_pilot", "database_cutover", "fleet",
+      "fresh_install", "reproducible_candidate", "physical_recovery"].map(
+      (id, index) => index === 0
+        ? ({id, ready: true, reason: null})
+        : ({id, ready: false, reason: "Kræver særskilt verificering"})),
+  },
   stable_version: "1.3.44", bundle_sha256: "a".repeat(64), waves: [],
   available_releases: [{release_id: "clientflow-1.3.44-seq-1245", version: "1.3.44", status: "stable", bundle_sha256: "a".repeat(64), deployment_authorized: false}],
   available_clients: [
@@ -81,4 +91,23 @@ test("62A preview fails closed on mismatched clients or imaginary rollout permis
   assert.match(source, /client\.post\(`\$\{RELEASE_PATH\}\/preview`/);
   assert.match(source, /ml: "auto", flexShrink: 0/);
   assert.match(source, /AdminRefreshButton/);
+});
+
+
+test("63D readiness gate cannot be converted into implicit deployment permission", () => {
+  const known = clone();
+  assert.equal(validateReleaseReadiness(known.release_readiness, known.stable_release_id, 1).deployment_authorized, false);
+  for (const mutation of [
+    {deployment_authorized: true}, {automatic_rollout_authorized: true},
+    {ready_for_fleet: true}, {ready_for_fresh_install: true},
+    {policy_revision: 2}, {checks: []},
+    {checks: known.release_readiness.checks.map((row, index) => index === 0 ? {...row, ready: false} : row)},
+    {checks: known.release_readiness.checks.map((row, index) => index === 1 ? {...row, reason: ""} : row)},
+  ]) {
+    const value = {...known.release_readiness, ...mutation};
+    assert.throws(() => validateReleaseReadiness(value, known.stable_release_id, 1));
+    assert.throws(() => validateReleasePlanningResponse(clone({release_readiness: value})));
+  }
+  assert.match(fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8"),
+    /Release readiness – obligatoriske gates/);
 });

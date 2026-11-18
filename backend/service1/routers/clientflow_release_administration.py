@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 from ..audit import add_audit_log, commit_audit_log
 from ..auth import get_current_superadmin_user, verify_password
 from ..clientflow_pilot_1245 import _approved_lock, ClientFlowPilot1245Denied
+from ..clientflow_release_readiness import planning_readiness
 from ..clientflow_release_admin_models import (
     ClientFlowReleaseControl,
     ClientFlowRolloutTarget,
@@ -266,6 +267,19 @@ def read_release_administration(
     _require_actor(request, user)
     _no_store(response)
     control = _bound_control(session)
+    # A read-only, fail-closed gate matrix reuses the already verified
+    # singleton/catalog; it never creates an extra DB query on kiosk hotpaths.
+    release_readiness = planning_readiness(
+        release_id=control.stable_release_id,
+        bundle_sha256=control.stable_bundle_sha256,
+        catalog=load_catalog(),
+        approval_bundle_sha256=_approved_lock()["approved_bundle_sha256"],
+        control_revision=control.revision,
+        cutover_enabled=control.cutover_enabled,
+        fleet_open=control.fleet_open,
+        fresh_install_open=control.fresh_install_open,
+        physical_acceptance=False,
+    )
     waves = session.exec(
         select(ClientFlowRolloutWave)
         .order_by(ClientFlowRolloutWave.created_at.desc())
@@ -344,6 +358,7 @@ def read_release_administration(
         "physical_pilot_accepted": False,
         "revision": control.revision,
         "waves": [_wave_json(w, ids.get(w.id, [])) for w in waves],
+        "release_readiness": release_readiness,
     }
 
 
