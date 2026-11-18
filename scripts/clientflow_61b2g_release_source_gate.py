@@ -13,6 +13,8 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 
+from clientflow_63d6_active_catalog_contract import projected_stable_1245, verified_mode
+
 BASELINE_VERSION = (1, 3, 44)
 BASELINE_SEQUENCE = 1245
 EXPECTED_CANDIDATE_VERSION = (1, 3, 45)
@@ -192,7 +194,10 @@ def inspect(root: Path) -> dict:
         # Candidate source is not a new catalog entry. This check intentionally
         # uses the original APPROVED artifact and rollout evidence; a new
         # version can only be published after separate, explicit acceptance.
-        catalog = json.loads(_read(root, 'backend/service1/clientflow_release_catalog.json'))
+        # The 1246 catalog is a separately pinned, update-only operator
+        # selector; this audit never confers installer/deployment permission.
+        verified_mode(root)
+        catalog = projected_stable_1245(root)
         approval = json.loads(_read(root, 'backend/service1/clientflow_pilot_1245_approval.json'))
         fleet = json.loads(_read(root, 'backend/service1/clientflow_1245_fleet_acceptance.json'))
         rows = catalog.get('releases')
@@ -222,7 +227,7 @@ def inspect(root: Path) -> dict:
                 and fleet.get('approved_bundle_sha256') == approval.get('approved_bundle_sha256')
                 and fleet.get('physical_pilot_accepted') is False):
             raise ValueError('candidate_must_not_modify_approved_stable_or_approval')
-        return '1245_remains_sole_selected_stable_1246_unpublished'
+        return '1245_stays_sole_stable_target_1246_update_only_separately_gated'
 
     check('unchanged_approved_stable_catalog_and_disarmed_pilot', stable_1245_still_immutable)
     identity = check('release_source_identity', lambda: _identity(root))

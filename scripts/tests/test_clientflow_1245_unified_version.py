@@ -17,6 +17,8 @@ from service1 import clientflow_releases as releases  # noqa: E402
 
 SOURCE_FILES = (
     "backend/service1/clientflow_release_catalog.json",
+    "backend/service1/clientflow_release_catalog_1246_pilot.stage.json",
+    "backend/service1/clientflow_pilot_1246_approval.json",
     "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
     "backend/service1/clientflow_pilot_1245_approval.json",
     "backend/service1/clientflow_1245_fleet_acceptance.json",

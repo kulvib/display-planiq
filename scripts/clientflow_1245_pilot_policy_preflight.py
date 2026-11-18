@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+
+from clientflow_63d6_active_catalog_contract import (
+    ActiveCatalogDenied, projected_stable_1245, verified_mode,
+)
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +36,13 @@ def inspect(repo: Path) -> dict:
             return {}
         return record if isinstance(record, dict) else {}
 
-    cat = load("backend/service1/clientflow_release_catalog.json")
+    try:
+        catalog_mode = verified_mode(repo)
+        cat = projected_stable_1245(repo)
+    except ActiveCatalogDenied:
+        catalog_mode = None
+        cat = {}
+
     releases = cat.get("releases") or []
     lock = load("backend/service1/clientflow_pilot_1245_approval.json")
     source = load("client/release/release-input.json")
@@ -43,7 +53,8 @@ def inspect(repo: Path) -> dict:
         in (("1.3.44", 1245), ("1.3.45", 1246))
     )
     checks["one_stable_1245_catalog"] = (
-        cat.get("catalog_sequence") == 1245
+        catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog")
+        and cat.get("catalog_sequence") == 1245
         and cat.get("latest_stable") == cat.get("default_install_version") == "1.3.44"
         and isinstance(releases, list) and len(releases) == 1
         and releases[0].get("release_id") == EXPECTED_RELEASE

@@ -69,13 +69,47 @@ def _load(tmp_path, monkeypatch, payload):
 
 
 @pytest.mark.parametrize("sequences", [
-    (1244,), (1245,), (1244, 1245, 1246), (1245, 1246, 1247),
+    (1244,), (1245,), (1245, 1246, 1247),
 ])
 def test_one_to_three_only_latest_stable(tmp_path, monkeypatch, sequences):
+    # Future window policy can be exercised with synthetic catalogs, except
+    # for 1246: that sequence now has a separately pinned, update-only source
+    # identity and must not accept an invented stable/fresh-install variant.
     payload = _future(*sequences)
     actual = _load(tmp_path, monkeypatch, payload)
     assert [r["release_sequence"] for r in actual["releases"]] == list(sequences)
     assert actual["default_install_version"] == payload["releases"][-1]["version"]
+
+
+@pytest.mark.parametrize("sequences", [
+    (1246,), (1244, 1245, 1246),
+])
+def test_unapproved_synthetic_stable_1246_fails_closed(tmp_path, monkeypatch, sequences):
+    # The former three-release synthetic fixture must NOT bypass the exact
+    # 1246 source lock by turning 1246 into the fresh-install default.
+    with pytest.raises(releases.ClientFlowCatalogError,
+                       match="1246-katalogets godkendte autoritet"):
+        _load(tmp_path, monkeypatch, _future(*sequences))
+
+
+def test_exact_1246_update_only_pilot_catalog_is_accepted(tmp_path, monkeypatch):
+    # Release-store retention remains three, but the active pilot catalog
+    # intentionally selects only stable 1245 + approved update-only 1246.
+    from service1.clientflow_release_pilot_stage_1246 import load_staged_catalog
+
+    payload = load_staged_catalog()
+    actual = _load(tmp_path, monkeypatch, payload)
+    assert [r["release_sequence"] for r in actual["releases"]] == [1245, 1246]
+    assert actual["latest_stable"] == actual["default_install_version"] == "1.3.44"
+    assert actual["releases"][0]["installable"] is True
+    assert actual["releases"][1]["installable"] is False
+    assert actual["releases"][1]["update_allowed"] is True
+
+    tampered = deepcopy(payload)
+    tampered["releases"][1]["notes"][0] += " tampered"
+    with pytest.raises(releases.ClientFlowCatalogError,
+                       match="1246-katalogets godkendte autoritet"):
+        _load(tmp_path, monkeypatch, tampered)
 
 
 @pytest.mark.parametrize("mutate", [

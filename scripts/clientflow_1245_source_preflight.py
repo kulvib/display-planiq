@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import argparse
 import json
+
+from clientflow_63d6_active_catalog_contract import (
+    ActiveCatalogDenied, projected_stable_1245, verified_mode,
+)
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,14 +89,21 @@ def inspect_source(repo: Path) -> dict:
         "max_installable_versions": 1,
         "keep_blocked_metadata": False,
     })
-    active = load("backend/service1/clientflow_release_catalog.json")
+    try:
+        catalog_mode = verified_mode(repo)
+        active = projected_stable_1245(repo)
+    except ActiveCatalogDenied:
+        catalog_mode = None
+        active = {}
+
     stable_stage = load("backend/service1/clientflow_release_catalog_1245_stable.stage.json")
     stage_rows = stable_stage.get("releases") or []
     active_rows = active.get("releases") or []
     # Preserve the historical frozen two-entry pilot design as evidence, but
     # require one common stable 1245 as the *current* selectable catalog.
     check("historical_1244_immutable_and_current_1245_stable",
-          not any(isinstance(item, dict) and item.get("release_sequence") == 1245
+          catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog")
+          and not any(isinstance(item, dict) and item.get("release_sequence") == 1245
                   for item in (releases if isinstance(releases, list) else []))
           and active.get("catalog_sequence") == stable_stage.get("catalog_sequence") == 1245
           and active.get("latest_stable") == active.get("default_install_version") == "1.3.44"

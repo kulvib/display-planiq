@@ -15,6 +15,8 @@ import re
 import stat
 import tarfile
 
+from clientflow_63d6_active_catalog_contract import ActiveCatalogDenied, verified_mode
+
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 VERSION = re.compile(r"\d+\.\d+\.\d+\Z")
@@ -104,11 +106,15 @@ def verify(repo: Path, handoff: Path, *, source_sha: str,
     for name in expected_handoff:
         _regular(handoff / name)
 
+    try:
+        verified_mode(repo)
+    except ActiveCatalogDenied as exc:
+        raise HandoffError("stable_catalog_changed") from exc
     stable = _load(repo / "backend/service1/clientflow_release_catalog.json")
     _require(stable.get("latest_stable") == "1.3.44"
              and stable.get("default_install_version") == "1.3.44"
-             and stable.get("catalog_sequence") == 1245
-             and len(stable.get("releases", [])) == 1
+             and stable.get("catalog_sequence") in (1245, 1246)
+             and len(stable.get("releases", [])) in (1, 2)
              and stable["releases"][0].get("release_id") == "clientflow-1.3.44-seq-1245"
              and release_id != stable["releases"][0]["release_id"], "stable_catalog_changed")
     fleet = _load(repo / "backend/service1/clientflow_1245_fleet_acceptance.json")

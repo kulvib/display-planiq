@@ -105,7 +105,10 @@ def test_rollout_admin_is_inert_and_legacy_gates_remain_untouched():
     deploy = _source("backend/service1/routers/clientflow_deployments.py")
     maintenance = _source("backend/service1/clientflow_fresh_install_maintenance.py")
     active_catalog = json.loads(_source("backend/service1/clientflow_release_catalog.json"))
-    assert len(active_catalog["releases"]) == 1
+    assert len(active_catalog["releases"]) == 2
+    assert active_catalog["catalog_sequence"] == 1246
+    assert active_catalog["releases"][1]["install_modes"] == ["in_place_update"]
+    assert active_catalog["releases"][1]["installable"] is False
     assert active_catalog["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
     assert "additive_draft_only" in endpoint and '"authorization_active": False' in endpoint
     assert '"cutover_enabled": False' in endpoint

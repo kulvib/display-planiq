@@ -285,6 +285,20 @@ def load_catalog() -> dict[str, Any]:
         ):
             raise ClientFlowCatalogError("1244+ katalog skal bruge seneste release som stable/fresh-install")
 
+    # A generic two-record shape alone is not sufficient proof of an approved
+    # pilot. The entire live 1246 source must match the immutable, GitHub-
+    # reviewed stage and independently pinned artifact approval lock.
+    if data["catalog_sequence"] == 1246:
+        from .clientflow_release_pilot_stage_1246 import (
+            PilotStageDenied, validated_catalog_mode,
+        )
+        from .clientflow_pilot_1246 import ClientFlowPilot1246Denied
+        try:
+            if validated_catalog_mode(active_catalog=data) != "update_only_1246_pilot_catalog":
+                raise ClientFlowCatalogError("Kun det eksakte 1246-pilotkatalog accepteres")
+        except (PilotStageDenied, ClientFlowPilot1246Denied) as exc:
+            raise ClientFlowCatalogError("1246-katalogets godkendte autoritet kan ikke verificeres") from exc
+
     if data["catalog_sequence"] >= 1244 and sum(
         item.get("status") == "stable" for item in releases
     ) != 1:

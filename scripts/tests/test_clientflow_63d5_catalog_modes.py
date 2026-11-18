@@ -21,10 +21,19 @@ def _stable():
     return json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
 
 
-def test_stable_catalog_remains_fresh_install_default():
+def test_live_catalog_is_update_only_without_deployment_authority():
     active = _stable()
-    assert validated_catalog_mode(active_catalog=active) == "stable_1245_only"
+    assert validated_catalog_mode(active_catalog=active) == "update_only_1246_pilot_catalog"
     summary = staged_pilot_summary(active_catalog=active)
+    assert summary["active_catalog_promoted"] is True
+    assert summary["deployment_authorized"] is False
+
+
+def test_prior_1245_single_stable_baseline_remains_recognized():
+    stage = load_staged_catalog()
+    previous = {**stage, "catalog_sequence": 1245, "releases": [stage["releases"][0]]}
+    assert validated_catalog_mode(active_catalog=previous) == "stable_1245_only"
+    summary = staged_pilot_summary(active_catalog=previous)
     assert summary["active_catalog_promoted"] is False
     assert summary["deployment_authorized"] is False
 
