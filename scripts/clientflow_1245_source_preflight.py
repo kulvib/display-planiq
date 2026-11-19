@@ -60,12 +60,12 @@ def inspect_source(repo: Path) -> dict:
     source_version = read("client/VERSION").strip()
     approved_or_candidate_source = (
         (source_version, source_input.get("release_sequence"))
-        in (("1.3.44", 1245), ("1.3.45", 1246))
+        in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247))
         and {k: v for k, v in source_input.items() if k != "release_sequence"}
         == {k: v for k, v in EXPECTED_INPUT.items() if k != "release_sequence"}
     )
     # Approval below always belongs to immutable 1245 catalog bytes, not the
-    # unsigned 1246 source. Retain exact version+sequence pairing.
+    # unsigned successor sources. Retain exact version+sequence pairing.
     check("exact_1245_source_identity", approved_or_candidate_source)
     catalog = load("scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json")
     releases = catalog.get("releases")
