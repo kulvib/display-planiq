@@ -209,7 +209,7 @@ function LivestreamTile({ client, pageMediaActive }) {
             enableWorker: true,
             lowLatencyMode: false,
             liveSyncDuration: 4,
-            liveMaxLatencyDuration: 14,
+            liveMaxLatencyDuration: 9,
             maxBufferLength: 6,
             maxMaxBufferLength: 12,
             backBufferLength: 8,

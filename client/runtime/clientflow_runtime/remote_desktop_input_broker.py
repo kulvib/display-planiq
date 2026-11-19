@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
+import uuid
 from typing import Any
 
 from evdev import AbsInfo, UInput, ecodes
@@ -79,12 +81,49 @@ class InputDevice:
         }
         self.device = UInput(capabilities, name="ClientFlow Remote Desktop", bustype=ecodes.BUS_VIRTUAL)
         self.lock = threading.Lock()
+        self.pressed_by_session: dict[str, set[int]] = {}
+        self.executed_ids: set[str] = set()
+        self.recent_ids: deque[str] = deque()
 
     def sync(self) -> None:
         self.device.syn()
 
     def key(self, code: int, value: int) -> None:
         self.device.write(ecodes.EV_KEY, code, value)
+
+    def transition(self, session_id: str, code: int, down: bool) -> None:
+        """Track remote-held controls, never release another session's holds."""
+        held = self.pressed_by_session.setdefault(session_id, set())
+        previously_held = any(code in values for values in self.pressed_by_session.values())
+        if down:
+            if code not in held:
+                held.add(code)
+                if not previously_held:
+                    self.key(code, 1)
+                    self.sync()
+        elif code in held:
+            held.remove(code)
+            if not any(code in values for values in self.pressed_by_session.values()):
+                self.key(code, 0)
+                self.sync()
+        if not held:
+            self.pressed_by_session.pop(session_id, None)
+
+    def release_session(self, session_id: str) -> None:
+        held = self.pressed_by_session.pop(session_id, set())
+        for code in held:
+            if not any(code in values for values in self.pressed_by_session.values()):
+                self.key(code, 0)
+        if held:
+            self.sync()
+
+    def remember(self, input_id: str) -> None:
+        if not input_id:
+            return
+        if len(self.recent_ids) >= 2048:
+            self.executed_ids.discard(self.recent_ids.popleft())
+        self.recent_ids.append(input_id)
+        self.executed_ids.add(input_id)
 
     def click(self, code: int) -> None:
         self.key(code, 1)
@@ -122,8 +161,29 @@ def _device() -> InputDevice:
 
 def handle(request: dict[str, Any]) -> dict[str, Any]:
     action = str(request.get("action") or "")
+    session_id = str(request.get("session_id") or "__legacy__")
+    input_id = str(request.get("input_id") or "")
+    if session_id != "__legacy__":
+        try:
+            if str(uuid.UUID(session_id)) != session_id:
+                raise ValueError("Ugyldigt session-id")
+        except ValueError as exc:
+            raise ValueError("Ugyldigt session-id") from exc
+    if input_id:
+        try:
+            if str(uuid.UUID(input_id)) != input_id:
+                raise ValueError("Ugyldigt input-id")
+        except ValueError as exc:
+            raise ValueError("Ugyldigt input-id") from exc
     device = _device()
     with device.lock:
+        if action == "release_session":
+            if session_id == "__legacy__":
+                raise ValueError("Frigivelse kræver session-id")
+            device.release_session(session_id)
+            return {"accepted": True, "action": action}
+        if input_id and input_id in device.executed_ids:
+            return {"accepted": True, "action": action, "duplicate": True}
         if action == "mouse":
             event = str(request.get("event") or "move")
             if event == "move":
@@ -141,8 +201,7 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
                 if event == "click":
                     device.click(button)
                 else:
-                    device.key(button, 1 if event == "down" else 0)
-                    device.sync()
+                    device.transition(session_id, button, event == "down")
             elif event == "scroll":
                 delta = int(request.get("delta", 0))
                 if not -20 <= delta <= 20:
@@ -160,12 +219,12 @@ def handle(request: dict[str, Any]) -> dict[str, Any]:
             if event == "press":
                 device.click(code)
             elif event in {"down", "up"}:
-                device.key(code, 1 if event == "down" else 0)
-                device.sync()
+                device.transition(session_id, code, event == "down")
             else:
                 raise ValueError("Ukendt tastehandling")
         else:
-            raise ValueError("Inputbroker accepterer kun mouse, key og text")
+            raise ValueError("Inputbroker accepterer kun mouse og key")
+        device.remember(input_id)
     return {"accepted": True, "action": action}
 
 

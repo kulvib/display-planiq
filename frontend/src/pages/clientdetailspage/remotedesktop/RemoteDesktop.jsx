@@ -179,6 +179,7 @@ export default function RemoteDesktop() {
   const dragCounterRef = useRef(0);
   const mouseDownRef = useRef(false);
   const lastMouseMoveSentRef = useRef(0);
+  const pingSentAtRef = useRef(null);
   const shoutAckTimerRef = useRef(null);
   const fileBrowserPathRef = useRef("");
   const fileBrowserShowHiddenRef = useRef(false);
@@ -206,6 +207,7 @@ export default function RemoteDesktop() {
   const lastFrameStateChangeRef = useRef(0);
   const lastFrameGeometryRef = useRef(null);
   const [transportMode, setTransportMode] = useState(null);
+  const [roundTripMs, setRoundTripMs] = useState(null);
   const [screenSize, setScreenSize] = useState({ width: null, height: null });
   const [lastFrameTs, setLastFrameTs] = useState(null);
   const [frameAgeTick, setFrameAgeTick] = useState(0);
@@ -303,6 +305,25 @@ export default function RemoteDesktop() {
     return true;
   }, []);
 
+  // Measures browser-to-backend round trip through the actual transport.
+  // No database query or client credential is involved. It is not presented
+  // as end-to-end mouse-to-screen latency.
+  useEffect(() => {
+    if (!connected) return undefined;
+    const measure = () => {
+      const now = performance.now();
+      if (pingSentAtRef.current != null && now - pingSentAtRef.current < 15_000) return;
+      pingSentAtRef.current = now;
+      if (!send({ type: "ping" })) pingSentAtRef.current = null;
+    };
+    measure();
+    const timer = window.setInterval(measure, 10_000);
+    return () => {
+      window.clearInterval(timer);
+      pingSentAtRef.current = null;
+    };
+  }, [connected, send]);
+
   const showActionMessage = useCallback((message) => {
     setActionMessage(String(message || ""));
   }, []);
@@ -368,6 +389,8 @@ export default function RemoteDesktop() {
     firstFrameRef.current = false;
     framePainter.clear();
     setTransportMode(null);
+    setRoundTripMs(null);
+    pingSentAtRef.current = null;
     setLastFrameTs(null);
     setScreenSize({ width: null, height: null });
     setFileBrowserEntries([]);
@@ -456,6 +479,14 @@ export default function RemoteDesktop() {
       try {
         msg = JSON.parse(event.data);
       } catch {
+        return;
+      }
+
+      if (msg.type === "pong") {
+        if (pingSentAtRef.current !== null) {
+          setRoundTripMs(Math.round(Math.max(0, performance.now() - pingSentAtRef.current)));
+          pingSentAtRef.current = null;
+        }
         return;
       }
 
@@ -1424,6 +1455,9 @@ export default function RemoteDesktop() {
         </Typography>
         {transportMode && <Chip size="small" color={transportMode === "https_long_poll" ? "warning" : "success"}
           variant="outlined" label={transportMode === "https_long_poll" ? "HTTPS-fallback" : "WebSocket"} />}
+        {roundTripMs !== null && <Tooltip title="Browser → backend → browser. Omfatter ikke inputbehandling eller billedoptagelse på klienten.">
+          <Chip size="small" variant="outlined" label={`Transport RTT ${roundTripMs} ms`} />
+        </Tooltip>}
         {transportMode === "https_long_poll" && (() => {
           const stats = wsRef.current?.getDiagnostics?.();
           return stats ? <Typography variant="caption" color="text.secondary">
