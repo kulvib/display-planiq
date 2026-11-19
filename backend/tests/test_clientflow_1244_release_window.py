@@ -69,7 +69,7 @@ def _load(tmp_path, monkeypatch, payload):
 
 
 @pytest.mark.parametrize("sequences", [
-    (1244,), (1245,), (1245, 1246, 1247),
+    (1244,), (1245,),
 ])
 def test_one_to_three_only_latest_stable(tmp_path, monkeypatch, sequences):
     # Future window policy can be exercised with synthetic catalogs, except
@@ -90,6 +90,27 @@ def test_unapproved_synthetic_stable_1246_fails_closed(tmp_path, monkeypatch, se
     with pytest.raises(releases.ClientFlowCatalogError,
                        match="1246-katalogets godkendte autoritet"):
         _load(tmp_path, monkeypatch, _future(*sequences))
+
+
+def test_unapproved_synthetic_stable_1247_fails_closed(tmp_path, monkeypatch):
+    # Sequence 1247 now has an exact approved update-only, 1246->1247 identity.
+    # Historical synthetic newest-stable shapes must never bypass it.
+    with pytest.raises(releases.ClientFlowCatalogError,
+                       match="1247-kataloget mangler præcist godkendt kildeautoritet"):
+        _load(tmp_path, monkeypatch, _future(1245, 1246, 1247))
+
+
+def test_exact_1247_update_only_pilot_stage_is_accepted(tmp_path, monkeypatch):
+    from service1.clientflow_release_pilot_stage_1247 import load_staged_catalog_1247
+    actual = _load(tmp_path, monkeypatch, load_staged_catalog_1247())
+    assert [r["release_sequence"] for r in actual["releases"]] == [1245, 1246, 1247]
+    assert actual["default_install_version"] == actual["latest_stable"] == "1.3.44"
+    assert actual["releases"][2]["installable"] is False
+    assert actual["releases"][2]["min_current_version"] == "1.3.45"
+    tampered = deepcopy(actual)
+    tampered["releases"][2]["update_allowed"] = False
+    with pytest.raises(releases.ClientFlowCatalogError):
+        _load(tmp_path, monkeypatch, tampered)
 
 
 def test_exact_1246_update_only_pilot_catalog_is_accepted(tmp_path, monkeypatch):

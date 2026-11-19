@@ -34,6 +34,7 @@ from .routers import enrollment
 from .routers import clientflow_releases
 from .routers import clientflow_release_administration
 from .routers import clientflow_release_pilot_63d7
+from .routers import clientflow_release_pilot_63d11
 from .routers import clientflow_rollbacks
 from .routers import clientflow_deployments
 from .routers import clientflow_update
@@ -675,6 +676,7 @@ app.include_router(enrollment.router, prefix="/api")
 app.include_router(clientflow_releases.router, prefix="/api")
 app.include_router(clientflow_release_administration.router, prefix="/api")
 app.include_router(clientflow_release_pilot_63d7.router, prefix="/api")
+app.include_router(clientflow_release_pilot_63d11.router, prefix="/api")
 app.include_router(clientflow_deployments.router, prefix="/api")
 app.include_router(clientflow_rollbacks.router, prefix="/api")
 app.include_router(clientflow_update.router, prefix="/api")

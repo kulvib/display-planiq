@@ -96,21 +96,26 @@ def plan_cleanup(directory: Path) -> dict:
     )) and approved_count > 1:
         from scripts.clientflow_1244_transition_policy import require_quiesced
         require_quiesced()
-        try:
-            catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise PruneDenied("Cannot verify 1244 reset catalog") from exc
-        rows = catalog.get("releases") or []
-        if not (
-            catalog.get("catalog_sequence") == 1244
-            and catalog.get("latest_stable") == "1.3.43"
-            and catalog.get("default_install_version") == "1.3.43"
-            and isinstance(rows, list) and len(rows) == 1
-            and rows[0].get("release_id") == "clientflow-1.3.43-seq-1244"
-            and rows[0].get("installable") is True
-            and "fresh_install" in rows[0].get("install_modes", [])
-        ):
-            raise PruneDenied("1244 cleanup requires a deployed 1244-only fresh-install catalog")
+        # Historical six-bundle 1244 reset is a distinct, pinned transition.
+        # It must not block ordinary three-bundle 1244->1245->1246 retention
+        # rotation after 1245 became the stable, active catalog. Never skip
+        # catalog pin checks or dependency attestations for normal rotation.
+        if approved_count > KEEP_LATEST_APPROVED:
+            try:
+                catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise PruneDenied("Cannot verify 1244 reset catalog") from exc
+            rows = catalog.get("releases") or []
+            if not (
+                catalog.get("catalog_sequence") == 1244
+                and catalog.get("latest_stable") == "1.3.43"
+                and catalog.get("default_install_version") == "1.3.43"
+                and isinstance(rows, list) and len(rows) == 1
+                and rows[0].get("release_id") == "clientflow-1.3.43-seq-1244"
+                and rows[0].get("installable") is True
+                and "fresh_install" in rows[0].get("install_modes", [])
+            ):
+                raise PruneDenied("1244 historical reset requires an exact 1244-only catalog")
     if approved_count == 1:
         # Never suggest deleting the sole remaining approved release.
         raise PruneDenied("Cannot prune the sole approved release")
