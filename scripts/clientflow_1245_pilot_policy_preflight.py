@@ -50,7 +50,7 @@ def inspect(repo: Path) -> dict:
     # coexist without becoming the selected catalog or inheriting approval.
     checks["pinned_source_identity"] = (
         (read("client/VERSION").strip(), source.get("release_sequence"))
-        in (("1.3.44", 1245), ("1.3.45", 1246))
+        in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247))
     )
     checks["one_stable_1245_catalog"] = (
         catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog")

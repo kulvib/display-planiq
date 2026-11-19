@@ -218,10 +218,10 @@ def test_workflows_run_same_strict_handoff_gate_before_attestation_and_manual_ap
         assert yaml.safe_load(content)['on']['workflow_dispatch']['inputs']
 
 
-def test_actual_source_catalog_still_disarmed_for_1246_candidate():
-    assert (ROOT / 'client/VERSION').read_text().strip() == '1.3.45'
+def test_actual_source_catalog_preserves_1246_and_disarms_1247_candidate():
+    assert (ROOT / 'client/VERSION').read_text().strip() == '1.3.46'
     inputs = json.loads((ROOT / 'client/release/release-input.json').read_text())
-    assert inputs['release_sequence'] == 1246
+    assert inputs['release_sequence'] == 1247
     cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
     assert len(cat['releases']) == 2

@@ -12,17 +12,17 @@ def test_1239_source_identity_matches_published_catalog_after_approval():
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(encoding="utf-8"))
 
-    assert version == "1.3.45"
+    assert version == "1.3.46"
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1246,
+        "release_sequence": 1247,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",
     }
     assert catalog["catalog_sequence"] == 1243
     assert catalog["catalog_sequence"] == 1243  # immutable historical catalog
-    assert source["release_sequence"] == 1246  # current staged source
+    assert source["release_sequence"] == 1247  # current staged source
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert len(catalog["releases"]) == 4
     selected = catalog["releases"][0]
