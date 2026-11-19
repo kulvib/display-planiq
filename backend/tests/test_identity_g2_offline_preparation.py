@@ -74,6 +74,8 @@ def rejected(fn):
     "https://name:password@identity.example.test/realms/planiq",
     "https://identity.example.test/realms/planiq#frag",
     "https://identity.example.test.",
+    "https://identity.example.test:invalid/realms/planiq",
+    "https://identity.example.test/realms/planiq\\nattacker",
     " HTTPS://identity.example.test/",
 ])
 def test_strict_https_issuer(issuer):

@@ -166,6 +166,9 @@ def test_session_is_not_a_bypass_for_csrf_or_request_origin(setup):
         session=tokens.csrf, method="GET", now=now))
     rejected(lambda: store.require_local_request(
         session=tokens.session, method="UNKNOWN", now=now))
+    rejected(lambda: store.require_local_request(
+        session=tokens.session, method="GET",
+        now=now - timedelta(seconds=5)))
 
 
 def test_callback_replay_and_stolen_browser_binding_fail_closed(setup):

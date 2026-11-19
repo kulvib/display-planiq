@@ -34,10 +34,14 @@ MAX_TRANSACTION_AGE = timedelta(minutes=5)
 
 
 def _https(value: str) -> bool:
-    if not isinstance(value, str) or not value or value.strip() != value or "\\" in value:
+    if (
+        not isinstance(value, str) or not value or value.strip() != value
+        or "\\" in value or any(ord(char) <= 32 or ord(char) == 127 for char in value)
+    ):
         return False
     try:
         parsed = urlsplit(value)
+        _ = parsed.port  # reject invalid, nonnumeric or out-of-range ports
         return (
             parsed.scheme == "https" and bool(parsed.hostname)
             and parsed.username is None and parsed.password is None

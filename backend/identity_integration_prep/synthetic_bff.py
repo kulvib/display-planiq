@@ -312,7 +312,7 @@ class SyntheticDisplayBff:
                 _deny()
             stored_csrf, issuer, subject, user_id, created, seen, end, revoked = row
             if (
-                revoked != 0 or when < created or when >= end
+                revoked != 0 or when < created or when < seen or when >= end
                 or when - seen > int(SESSION_IDLE.total_seconds())
             ):
                 _deny()
