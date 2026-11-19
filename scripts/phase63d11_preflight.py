@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / 'backend')]
-from scripts.audit_clientflow_release_retention import inspect_store, plan_publication
+from scripts.audit_clientflow_release_retention import inspect_store
 from scripts.prune_clientflow_release_retention import plan_cleanup
 from service1.clientflow_pilot_1247 import (approval_lock_1247, PILOT_RELEASE_ID,
                                              APPROVED_BUNDLE_SHA256, APPROVED_BUNDLE_SIZE)
