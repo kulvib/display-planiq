@@ -7,6 +7,7 @@ import {
 import client from "../../api/client";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
+import ClientFlowPilot1247Panel from "./ClientFlowPilot1247Panel";
 import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
@@ -216,7 +217,7 @@ export default function ClientFlowReleaseAdministration() {
         <>
           <Alert severity="info">
             <strong>Almindelige planer er inaktive.</strong> En plan godkender aldrig installation eller rollback.
-            Kun den særskilte 1246/Viborg1-pilot nedenfor kan efter genbekræftelse bestille én installation.
+            Kun en særskilt, præcist godkendt 1246- eller 1247-pilot på Viborg1 kan efter genbekræftelse bestille én installation.
             Nyinstallation, fleet, rollback og DB-cutover er fortsat spærret.
           </Alert>
           <Paper elevation={0} sx={panelSx}>
@@ -259,7 +260,7 @@ export default function ClientFlowReleaseAdministration() {
           {status.staged_pilot_candidate && (
             <Paper elevation={0} sx={panelSx}>
               <Stack spacing={1.25}>
-                <Typography variant="h6" fontWeight={850}>Godkendt GitHub-arkiv · 1.3.45/1246</Typography>
+                <Typography variant="h6" fontWeight={850}>Godkendt GitHub-arkiv · {status.staged_pilot_candidate.version}/{status.staged_pilot_candidate.sequence}</Typography>
                 <Alert severity="warning">
                   Kun kilde- og artifact-godkendelse. Releasen er <strong>ikke verificeret som</strong> publiceret til
                   Render-release-lageret eller tilladt til installation.
@@ -345,6 +346,7 @@ export default function ClientFlowReleaseAdministration() {
             </Stack>
           </Paper>
           <ClientFlowPilot1246Panel status={status} onAuthorized={refresh} />
+          <ClientFlowPilot1247Panel status={status} onAuthorized={refresh} />
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>

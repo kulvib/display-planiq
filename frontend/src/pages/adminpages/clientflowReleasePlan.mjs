@@ -22,25 +22,38 @@ export function validateReleaseReadiness(value, releaseId, revision) {
   return value;
 }
 
+/** Strict reviewed release bytes. UI never infers permission from an archive. */
+const APPROVED_PILOTS = Object.freeze({
+  "clientflow-1.3.45-seq-1246": Object.freeze({
+    version: "1.3.45", sequence: 1246,
+    source_commit: "bc7adef9fec4f4f4bc8382a5a9d212b71b9a9085",
+    approved_bundle_sha256: "e37de3250d58d313d57ad7bcbf59682cee342f2727c6ad5b188c8782342d4c78",
+    approved_bundle_size: 223682560,
+    approval_reference: "CF-1.3.45-1246-20261118-bc7adef-f36bcd0b",
+  }),
+  "clientflow-1.3.46-seq-1247": Object.freeze({
+    version: "1.3.46", sequence: 1247,
+    source_commit: "22a8a873899fe736018e8238f4b2ec4bb896f6a2",
+    approved_bundle_sha256: "3d6df5ec096a5713866943a67d9f88bba3fc6287458d0ea2f616bd41e42db150",
+    approved_bundle_size: 223692800,
+    approval_reference: "CF-1.3.46-1247-20261119-22a8a873-d60d63ba",
+  }),
+});
+
 /** Source-pinned GitHub approval is NOT Render publication or client permission. */
 export function validateStagedPilotCandidate(candidate, activeReleaseId) {
-  if (!candidate || candidate.schema_version !== 1 ||
+  const pinned = APPROVED_PILOTS[candidate?.release_id];
+  if (!candidate || !pinned || candidate.schema_version !== 1 ||
       candidate.phase !== "approved_github_archive_source_staged_only" ||
-      candidate.release_id !== "clientflow-1.3.45-seq-1246" ||
-      candidate.version !== "1.3.45" || candidate.sequence !== 1246 ||
+      Object.entries(pinned).some(([key, value]) => candidate[key] !== value) ||
       candidate.active_release_id !== activeReleaseId ||
       candidate.pilot_client_id !== 3 ||
-      !/^[a-f0-9]{40}$/.test(candidate.source_commit || "") ||
-      !/^[a-f0-9]{64}$/.test(candidate.approved_bundle_sha256 || "") ||
-      !Number.isSafeInteger(candidate.approved_bundle_size) || candidate.approved_bundle_size <= 0 ||
-      typeof candidate.approval_reference !== "string" ||
-      !/^CF-1\.3\.45-1246-/.test(candidate.approval_reference) ||
       candidate.github_artifact_approval_pinned !== true ||
       (candidate.active_catalog_promoted !== false && candidate.active_catalog_promoted !== true) ||
       ["render_store_publication_verified", "physical_pilot_accepted",
        "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
        "database_cutover_authorized"].some((field) => candidate[field] !== false)) {
-    throw new Error("1246-arkivstatus er ugyldig eller angiver uautoriseret installation");
+    throw new Error("1246/1247-arkivstatus er ugyldig eller angiver uautoriseret installation");
   }
   return candidate;
 }

@@ -276,6 +276,33 @@ def load_catalog() -> dict[str, Any]:
                 raise ClientFlowCatalogError(
                     "1246-katalog må alene tilføje en eksakt update-only pilot til stabil 1245"
                 )
+        # 1247 is a strictly update-only *single-client* stage. Never turn it
+        # into latest_stable, a fresh-install target or a fleet release.
+        elif data["catalog_sequence"] == 1247 and newest.get("status") == "supported":
+            first = releases[0] if len(releases) == 3 else {}
+            previous = releases[1] if len(releases) == 3 else {}
+            if not (
+                len(releases) == 3
+                and data.get("latest_stable") == "1.3.44"
+                and data.get("default_install_version") == "1.3.44"
+                and first.get("release_id") == "clientflow-1.3.44-seq-1245"
+                and first.get("status") == "stable"
+                and first.get("installable") is True
+                and first.get("install_modes") == ["fresh_install", "in_place_update"]
+                and previous.get("release_id") == "clientflow-1.3.45-seq-1246"
+                and previous.get("status") == "supported"
+                and previous.get("installable") is False
+                and previous.get("install_modes") == ["in_place_update"]
+                and newest.get("release_id") == "clientflow-1.3.46-seq-1247"
+                and newest.get("release_sequence") == 1247
+                and newest.get("installable") is False
+                and newest.get("update_allowed") is True
+                and newest.get("install_modes") == ["in_place_update"]
+                and newest.get("min_current_version") == "1.3.45"
+                and newest.get("max_current_version") == "1.3.45"
+                and newest.get("requires_reboot") is True
+            ):
+                raise ClientFlowCatalogError("1247 skal være eksakt 1246→1247 Viborg1 update-only")
         elif (
             data.get("latest_stable") != newest.get("version")
             or data.get("default_install_version") != newest.get("version")
@@ -298,6 +325,16 @@ def load_catalog() -> dict[str, Any]:
                 raise ClientFlowCatalogError("Kun det eksakte 1246-pilotkatalog accepteres")
         except (PilotStageDenied, ClientFlowPilot1246Denied) as exc:
             raise ClientFlowCatalogError("1246-katalogets godkendte autoritet kan ikke verificeres") from exc
+
+    if data["catalog_sequence"] == 1247:
+        from .clientflow_release_pilot_stage_1247 import (
+            PilotStage1247Denied, validated_catalog_mode_1247,
+        )
+        from .clientflow_pilot_1247 import ClientFlowPilot1247Denied
+        try:
+            validated_catalog_mode_1247(active_catalog=data)
+        except (PilotStage1247Denied, ClientFlowPilot1247Denied) as exc:
+            raise ClientFlowCatalogError("1247-kataloget mangler præcist godkendt kildeautoritet") from exc
 
     if data["catalog_sequence"] >= 1244 and sum(
         item.get("status") == "stable" for item in releases
