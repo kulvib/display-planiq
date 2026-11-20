@@ -78,6 +78,12 @@ def scenario(tmp_path: Path):
         path = repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, path)
+    # Keep the historical unsigned-1246 handoff isolated from the active 1247
+    # production catalog. This fixture must remain an exact 1246 source state.
+    shutil.copy2(
+        ROOT / 'backend/service1/clientflow_release_catalog_1246_pilot.stage.json',
+        repo / 'backend/service1/clientflow_release_catalog.json',
+    )
     _save(repo / 'backend/service1/clientflow_1245_fleet_acceptance.json', {
         'physical_pilot_accepted': False})
     payload = b'this-is-a-synthetic-test-payload'
@@ -218,15 +224,23 @@ def test_workflows_run_same_strict_handoff_gate_before_attestation_and_manual_ap
         assert yaml.safe_load(content)['on']['workflow_dispatch']['inputs']
 
 
-def test_actual_source_catalog_preserves_1246_and_disarms_1247_candidate():
+def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1247():
     assert (ROOT / 'client/VERSION').read_text().strip() == '1.3.46'
     inputs = json.loads((ROOT / 'client/release/release-input.json').read_text())
     assert inputs['release_sequence'] == 1247
     cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
-    assert len(cat['releases']) == 2
-    assert cat['releases'][0]['release_id'] == 'clientflow-1.3.44-seq-1245'
-    assert cat['releases'][1]['release_id'] == 'clientflow-1.3.45-seq-1246'
-    assert cat['releases'][1]['installable'] is False
+    assert cat['catalog_sequence'] == 1247
+    assert len(cat['releases']) == 3
+    assert [entry['release_id'] for entry in cat['releases']] == [
+        'clientflow-1.3.44-seq-1245',
+        'clientflow-1.3.45-seq-1246',
+        'clientflow-1.3.46-seq-1247',
+    ]
+    assert sum(entry['installable'] is True for entry in cat['releases']) == 1
+    assert all(entry['rollback_allowed'] is False for entry in cat['releases'])
+    assert cat['releases'][2]['installable'] is False
+    assert cat['releases'][2]['install_modes'] == ['in_place_update']
+    assert cat['releases'][2]['min_current_version'] == cat['releases'][2]['max_current_version'] == '1.3.45'
     fleet = json.loads((ROOT / 'backend/service1/clientflow_1245_fleet_acceptance.json').read_text())
     assert fleet['physical_pilot_accepted'] is False

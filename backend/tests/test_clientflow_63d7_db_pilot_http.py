@@ -60,6 +60,17 @@ def pilot_client(environment, monkeypatch):
         "source_commit": SOURCE_COMMIT,
     })
 
+    # Recreate the former active 1246 pilot *only in this isolated SQLite test*.
+    # The production catalog now contains 1247, and correctly refuses a
+    # replay of the historical 1246 single-use authorization.
+    from pathlib import Path
+    from service1 import clientflow_releases
+    from service1.routers import clientflow_release_administration as admin_route
+    stage = Path(__file__).resolve().parents[1] / 'service1/clientflow_release_catalog_1246_pilot.stage.json'
+    monkeypatch.setattr(clientflow_releases, 'CATALOG_PATH', stage)
+    clientflow_releases.load_catalog.cache_clear()
+    monkeypatch.setattr(admin_route, 'load_catalog', clientflow_releases.load_catalog)
+
     # Existing admin fixture overrides auth for a dedicated test user, and
     # uses a monkeypatched password validator inside release administration.
     from service1.models import User
@@ -68,7 +79,8 @@ def pilot_client(environment, monkeypatch):
     app.include_router(pilot_route.router, prefix="/api")
     app.dependency_overrides[get_current_superadmin_user] = lambda: user
     app.dependency_overrides[get_session] = lambda: session
-    return _ASGITestClient(app), session
+    yield _ASGITestClient(app), session
+    clientflow_releases.load_catalog.cache_clear()
 
 
 def payload(**changes):
