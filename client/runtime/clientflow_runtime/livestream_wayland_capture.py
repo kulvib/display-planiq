@@ -260,7 +260,17 @@ def _build_pipeline(
     preset: str,
     segment_seconds: int,
     playlist_size: int,
+    source_mode: str = "normal",
 ) -> Gst.Pipeline:
+    # The first attempt preserves the established fast path. When a verified
+    # zero-buffer startup times out, the producer may try a bounded, non-pool
+    # PipeWire negotiation on its next attempt. Do not copy pixels by default.
+    if source_mode not in {"normal", "bounded"}:
+        raise ValueError("Unknown PipeWire source mode")
+    source_options = (
+        " min-buffers=2 max-buffers=4 use-bufferpool=false"
+        if source_mode == "bounded" else ""
+    )
     location = str(output / "segment-%09d.ts").replace('"', '\\"')
     playlist = str(output / "index.m3u8").replace('"', '\\"')
     key_interval = fps * segment_seconds
@@ -274,7 +284,7 @@ def _build_pipeline(
     # authorization, or media transport is introduced here.
     description = (
         f"pipewiresrc name=capture_source path={node_id} do-timestamp=true on-disconnect=error "
-        f"keepalive-time={keepalive_ms} "
+        f"keepalive-time={keepalive_ms}{source_options} "
         "! queue max-size-buffers=8 leaky=downstream "
         "! videoconvert ! videorate "
         f"! video/x-raw,format=I420,framerate={fps}/1 "
@@ -491,6 +501,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--preset", required=True)
     parser.add_argument("--segment-seconds", type=int, required=True)
     parser.add_argument("--playlist-size", type=int, required=True)
+    parser.add_argument("--source-mode", choices=("normal", "bounded"), default="normal")
     return parser.parse_args()
 
 
@@ -525,7 +536,8 @@ def main() -> int:
         node_id = capture.start()
         print(
             f"clientflow_wayland_capture_ready backend=mutter node={node_id} "
-            f"monitor={monitor} fps={args.fps} bitrate_kbit={args.bitrate_kbit} phase=node_only",
+            f"monitor={monitor} fps={args.fps} bitrate_kbit={args.bitrate_kbit} "
+            f"source_mode={args.source_mode} phase=node_only",
             flush=True,
         )
         pipeline = _build_pipeline(
@@ -536,6 +548,7 @@ def main() -> int:
             args.preset,
             args.segment_seconds,
             args.playlist_size,
+            source_mode=args.source_mode,
         )
         _run_pipeline(pipeline, output)
         return 0

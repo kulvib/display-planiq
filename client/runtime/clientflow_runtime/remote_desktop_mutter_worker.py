@@ -307,7 +307,7 @@ class FramePipeline:
     def __init__(self) -> None:
         self.pipeline: Gst.Pipeline | None = None
         self.sink: GstApp.AppSink | None = None
-        self.spec: tuple[int, int, int, int, bool] | None = None
+        self.spec: tuple[int, int, int, int, bool, str] | None = None
         self.last_frame: bytes | None = None
         self.last_geometry: tuple[int, int] | None = None
 
@@ -320,14 +320,25 @@ class FramePipeline:
         self.last_frame = None
         self.last_geometry = None
 
-    def ensure(self, node_id: int, width: int, height: int, quality: int, native: bool = False) -> None:
-        spec = (node_id, width, height, quality, bool(native))
+    def ensure(
+        self, node_id: int, width: int, height: int, quality: int,
+        native: bool = False, source_mode: str = "normal",
+    ) -> None:
+        if source_mode not in {"normal", "bounded"}:
+            raise ValueError("Ukendt PipeWire source mode")
+        spec = (node_id, width, height, quality, bool(native), source_mode)
         if self.pipeline is not None and self.spec == spec:
             return
         self.close()
+        # Bound negotiated capture buffers only when the initial zero-frame
+        # capture failed. Default preserves the native/fast capture path.
+        source_options = (
+            " min-buffers=2 max-buffers=4 use-bufferpool=false"
+            if source_mode == "bounded" else ""
+        )
         if native:
             description = (
-                f"pipewiresrc path={node_id} do-timestamp=true on-disconnect=error keepalive-time=100 "
+                f"pipewiresrc path={node_id} do-timestamp=true on-disconnect=error keepalive-time=100{source_options} "
                 "! queue max-size-buffers=2 leaky=downstream "
                 "! videoconvert "
                 f"! jpegenc quality={quality} "
@@ -335,7 +346,7 @@ class FramePipeline:
             )
         else:
             description = (
-                f"pipewiresrc path={node_id} do-timestamp=true on-disconnect=error keepalive-time=100 "
+                f"pipewiresrc path={node_id} do-timestamp=true on-disconnect=error keepalive-time=100{source_options} "
                 "! queue max-size-buffers=2 leaky=downstream "
                 "! videoconvert ! videoscale "
                 f"! video/x-raw,width={width},height={height},pixel-aspect-ratio=1/1 "
@@ -408,6 +419,7 @@ class Worker:
         self.node_id: int | None = None
         self.monitor: str | None = None
         self.requested_monitor: str | None = None
+        self.source_mode = "normal"
 
     def stop_capture(self) -> None:
         self.pipeline.close()
@@ -415,6 +427,7 @@ class Worker:
         self.node_id = None
         self.monitor = None
         self.requested_monitor = None
+        self.source_mode = "normal"
 
     def close(self) -> None:
         self.stop_capture()
@@ -445,7 +458,10 @@ class Worker:
                 if self.node_id is None or requested_monitor != self.requested_monitor:
                     self._start_stream(requested_monitor)
                 assert self.node_id is not None
-                self.pipeline.ensure(self.node_id, width, height, quality, native=native)
+                self.pipeline.ensure(
+                    self.node_id, width, height, quality,
+                    native=native, source_mode=self.source_mode,
+                )
                 frame, actual_width, actual_height = self.pipeline.capture()
                 return {
                     "ok": True,
@@ -461,8 +477,14 @@ class Worker:
                 }
             except RuntimeError as exc:
                 last_error = exc
+                # Recover one genuine zero-frame failure using an alternative
+                # bounded buffer negotiation. Other faults retain the existing
+                # clean restart, but never change capture transport or auth.
+                fallback = attempt == 0 and "GStreamer returnerede ingen frame" in str(exc)
                 self.close()
                 if attempt == 0:
+                    if fallback:
+                        self.source_mode = "bounded"
                     continue
                 break
         raise RuntimeError(f"Mutter/PipeWire capture kunne ikke genetableres: {last_error}")
