@@ -175,7 +175,7 @@ def environment(monkeypatch):
         # for healthy read-only administration requests.  Exercise the real,
         # validated catalog; keep the approval and DB control mocked/closed.
         stable_catalog = load_canonical_catalog()
-        assert stable_catalog["catalog_sequence"] == 1246
+        assert stable_catalog["catalog_sequence"] == 1247
         assert stable_catalog["releases"][0]["release_id"] == RELEASE_ID
         monkeypatch.setattr(route, "load_catalog", lambda: deepcopy(stable_catalog))
 

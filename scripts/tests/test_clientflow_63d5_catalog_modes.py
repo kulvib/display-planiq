@@ -23,8 +23,11 @@ def _stable():
 
 def test_live_catalog_is_update_only_without_deployment_authority():
     active = _stable()
-    assert validated_catalog_mode(active_catalog=active) == "update_only_1246_pilot_catalog"
-    summary = staged_pilot_summary(active_catalog=active)
+    from service1.clientflow_release_pilot_stage_1247 import (
+        validated_catalog_mode_1247, staged_pilot_summary_1247,
+    )
+    assert validated_catalog_mode_1247(active_catalog=active) == "update_only_1247_pilot_catalog"
+    summary = staged_pilot_summary_1247(active_catalog=active)
     assert summary["active_catalog_promoted"] is True
     assert summary["deployment_authorized"] is False
 

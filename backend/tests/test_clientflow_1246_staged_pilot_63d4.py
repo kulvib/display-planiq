@@ -51,7 +51,7 @@ def test_approved_source_record_is_exact_not_deployment():
     assert locked['source_commit'] == pilot.SOURCE_COMMIT
     assert locked['approval_reference'] == pilot.APPROVAL_REFERENCE
     assert '1245' in json.dumps(json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text()))
-    assert [x['release_sequence'] for x in json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())['releases']] == [1245, 1246]
+    assert [x['release_sequence'] for x in json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())['releases']] == [1245, 1246, 1247]
 
 
 @pytest.mark.parametrize('name', [pilot.PILOT_FLAG, pilot.PILOT_ARM_FLAG])
@@ -177,7 +177,7 @@ def test_stage_catalog_mismatched_release_denied(monkeypatch,tmp_path):
 
 
 def test_admin_stage_never_proves_render_or_pilot():
-    active=json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())
+    active=stage.load_staged_catalog()  # Historic 1246 stage, not current 1247.
     info=stage.staged_pilot_summary(active_catalog=active)
     assert info['github_artifact_approval_pinned'] is True
     assert info['active_catalog_promoted'] is True

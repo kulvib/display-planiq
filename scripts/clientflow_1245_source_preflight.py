@@ -102,7 +102,7 @@ def inspect_source(repo: Path) -> dict:
     # Preserve the historical frozen two-entry pilot design as evidence, but
     # require one common stable 1245 as the *current* selectable catalog.
     check("historical_1244_immutable_and_current_1245_stable",
-          catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog")
+          catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog", "update_only_1247_pilot_catalog")
           and not any(isinstance(item, dict) and item.get("release_sequence") == 1245
                   for item in (releases if isinstance(releases, list) else []))
           and active.get("catalog_sequence") == stable_stage.get("catalog_sequence") == 1245

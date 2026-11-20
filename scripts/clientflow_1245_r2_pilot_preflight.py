@@ -106,7 +106,7 @@ def inspect(repo: Path) -> dict:
     )
     stable_rows = stable_stage.get("releases") or []
     checks["live_catalog_exact_one_stable_1245"] = (
-        catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog")
+        catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog", "update_only_1247_pilot_catalog")
         and active.get("catalog_sequence") == stable_stage.get("catalog_sequence") == 1245
         and active.get("latest_stable") == active.get("default_install_version") == "1.3.44"
         and isinstance(active_releases, list) and len(active_releases) == 1

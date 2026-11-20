@@ -63,18 +63,20 @@ def test_active_catalog_and_approval_remain_original_1245():
     fleet = json.loads((ROOT / 'backend/service1/clientflow_1245_fleet_acceptance.json').read_text())
     approval = json.loads((ROOT / 'backend/service1/clientflow_pilot_1245_approval.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
-    assert cat['catalog_sequence'] == 1246
-    assert len(cat['releases']) == 2
+    assert cat['catalog_sequence'] == 1247
+    assert len(cat['releases']) == 3
     assert cat['releases'][0]['release_id'] == 'clientflow-1.3.44-seq-1245'
     assert approval['release_id'] == fleet['release_id'] == 'clientflow-1.3.44-seq-1245'
     assert fleet['physical_pilot_accepted'] is False
     assert cat['releases'][1]['release_id'] == 'clientflow-1.3.45-seq-1246'
     assert cat['releases'][1]['status'] == 'supported'
     assert cat['releases'][1]['installable'] is False
+    assert cat['releases'][2]['release_id'] == 'clientflow-1.3.46-seq-1247'
+    assert cat['releases'][2]['installable'] is False
 
 
 @pytest.mark.parametrize('field,value', [
-    ('catalog_sequence', 1247),
+    ('catalog_sequence', 1248),
     ('latest_stable', '1.3.45'),
     ('default_install_version', '1.3.45'),
 ])
