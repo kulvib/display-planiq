@@ -18,7 +18,7 @@ class LivestreamHandler:
     def __init__(self, transport: DomainTransport) -> None:
         self.transport = transport
 
-    def _wait_producer(self, generation_id: str, wanted: set[str], timeout: float = 30.0) -> dict[str, Any]:
+    def _wait_producer(self, generation_id: str, wanted: set[str], timeout: float = 45.0) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
         last: dict[str, Any] = {}
         while time.monotonic() < deadline:

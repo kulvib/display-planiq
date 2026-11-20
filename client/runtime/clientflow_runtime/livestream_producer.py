@@ -43,6 +43,11 @@ def retry_delay_seconds(attempt: int) -> int:
     return min(RETRY_BASE_SECONDS * (2 ** min(max(attempt - 1, 0), 5)), RETRY_MAX_SECONDS)
 
 
+def capture_source_mode(retries: int) -> str:
+    """Keep the fast path; change PipeWire negotiation only after a failed attempt."""
+    return "normal" if retries <= 0 else "bounded"
+
+
 class Producer:
     def __init__(self) -> None:
         self.logger = configure_logging("clientflow.livestream.producer")
@@ -77,6 +82,7 @@ class Producer:
         self._status(
             "retrying", reason=reason, attempt=self._retry_attempts,
             retry_after_seconds=delay, next_retry_at=next_retry_at,
+            next_source_mode=capture_source_mode(self._retry_attempts),
         )
 
     def _read_json(self, path: Path) -> dict[str, Any]:
@@ -297,7 +303,7 @@ class Producer:
             if playlist.is_file() and any(output.glob("segment-*.ts")):
                 return
             time.sleep(0.25)
-        raise RuntimeError("Wayland capture blev ikke HLS-klar inden for 25 sekunder")
+        raise RuntimeError(f"Wayland capture blev ikke HLS-klar inden for {timeout:g} sekunder")
 
     def _start(self, generation_id: str) -> None:
         try:
@@ -314,8 +320,6 @@ class Producer:
         fps, bitrate_kbit, preset, segment_seconds, playlist_size = self._configuration()
         username, uid, gid, home, runtime_dir = self._resolve_wayland_user()
         cache_dir = self._prepare_capture_state(username, uid)
-        output = self._prepare_output(generation_id, username, uid)
-
         environment = {
             "HOME": home,
             "USER": username,
@@ -329,57 +333,85 @@ class Producer:
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUNBUFFERED": "1",
         }
-        command = [
-            str(SETPRIV),
-            f"--reuid={uid}",
-            f"--regid={gid}",
-            "--init-groups",
-            "--",
-            str(SYSTEM_PYTHON),
-            "-B",
-            str(CAPTURE_HELPER),
-            "--output", str(output),
-            "--fps", str(fps),
-            "--bitrate-kbit", str(bitrate_kbit),
-            "--preset", preset,
-            "--segment-seconds", str(segment_seconds),
-            "--playlist-size", str(playlist_size),
-        ]
-        self.generation_id = generation_id
-        self.process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=None,
-            stderr=None,
-            env=environment,
-            cwd="/",
-            start_new_session=True,
-            close_fds=True,
-        )
-        self._status(
-            "starting",
-            graphical_user=username,
-            fps=fps,
-            bitrate_kbit=bitrate_kbit,
-            preset=preset,
-            segment_seconds=segment_seconds,
-            playlist_size=playlist_size,
-        )
-        try:
-            self._wait_ready(output)
-        except Exception:
-            self._stop()
+
+        # The backend agent waits for a real HLS segment before acknowledging
+        # /started. Do a single bounded fallback *within* this claim/lease;
+        # deferring it to the next retry would fail the backend command first.
+        retries = getattr(self, "_retry_attempts", 0)
+        modes = ("normal", "bounded") if retries == 0 else ("bounded",)
+        for source_mode in modes:
+            output = self._prepare_output(generation_id, username, uid)
+            command = [
+                str(SETPRIV),
+                f"--reuid={uid}",
+                f"--regid={gid}",
+                "--init-groups",
+                "--",
+                str(SYSTEM_PYTHON),
+                "-B",
+                str(CAPTURE_HELPER),
+                "--output", str(output),
+                "--fps", str(fps),
+                "--bitrate-kbit", str(bitrate_kbit),
+                "--preset", preset,
+                "--segment-seconds", str(segment_seconds),
+                "--playlist-size", str(playlist_size),
+                "--source-mode", source_mode,
+            ]
             self.generation_id = generation_id
-            raise
-        self._status(
-            "running",
-            graphical_user=username,
-            fps=fps,
-            bitrate_kbit=bitrate_kbit,
-            preset=preset,
-            segment_seconds=segment_seconds,
-            playlist_size=playlist_size,
-        )
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=None,
+                stderr=None,
+                env=environment,
+                cwd="/",
+                start_new_session=True,
+                close_fds=True,
+            )
+            self._status(
+                "starting",
+                source_mode=source_mode,
+                graphical_user=username,
+                fps=fps,
+                bitrate_kbit=bitrate_kbit,
+                preset=preset,
+                segment_seconds=segment_seconds,
+                playlist_size=playlist_size,
+            )
+            # A first cold boot should usually yield the first 2s segment
+            # quickly; reserve time for the bounded-mode attempt under the
+            # agent's command timeout and its existing 60s lease keeper.
+            timeout = 12.0 if source_mode == "normal" else (14.0 if len(modes) == 2 else 25.0)
+            try:
+                self._wait_ready(output, timeout=timeout)
+            except Exception as exc:
+                # Terminate the child and close the previous Mutter session
+                # before starting a second one; never overlap captures.
+                self._stop()
+                self.generation_id = generation_id
+                if (
+                    source_mode == "normal"
+                    and isinstance(exc, RuntimeError)
+                    and str(exc).startswith("Wayland capture blev ikke HLS-klar inden for")
+                ):
+                    self.logger.warning(
+                        "capture_startup_bounded_fallback",
+                        extra={"event": "capture_fallback", "source_mode": "bounded"},
+                    )
+                    continue
+                raise
+            self._status(
+                "running",
+                source_mode=source_mode,
+                graphical_user=username,
+                fps=fps,
+                bitrate_kbit=bitrate_kbit,
+                preset=preset,
+                segment_seconds=segment_seconds,
+                playlist_size=playlist_size,
+            )
+            return
 
     def run(self) -> int:
         self._status("stopped")
@@ -427,7 +459,10 @@ class Producer:
                         except Exception as exc:
                             self.logger.exception("producer_start_failed")
                             self.generation_id = generation
-                            self._status("failed", error=str(exc)[:1000])
+                            self._status(
+                                "failed", error=str(exc)[:1000],
+                                source_mode=capture_source_mode(self._retry_attempts),
+                            )
                             self._healthy_since = None
                             self._schedule_retry("startup_failed")
                 else:
