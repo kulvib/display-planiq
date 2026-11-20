@@ -242,7 +242,7 @@ def _controller_fixture(
         local_state["staged_release_id"] = snapshot.target_release_id
         return {"status": "staged"}
 
-    def activate_func(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+    def activate_func(release_id: str, *, expected_release_approval_reference: str, layout: Layout, expected_update_deployment_id: str):
         actions.append("local_activate")
         assert transport.deployment["state"] == "activating"
         assert release_id == snapshot.target_release_id
@@ -320,7 +320,7 @@ def test_controller_automatic_local_rollback_is_reported_to_backend():
         tmp = Path(raw_tmp)
         controller, transport, snapshot, actions, local_state = _controller_fixture(tmp)
 
-        def rollback_activate(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+        def rollback_activate(release_id: str, *, expected_release_approval_reference: str, layout: Layout, expected_update_deployment_id: str):
             actions.append("local_activate")
             assert transport.deployment["state"] == "activating"
             local_state["history"].append({
@@ -381,7 +381,7 @@ def test_old_rollback_history_before_activation_anchor_is_not_reused_for_current
         })
 
         def fail_without_transaction_outcome(
-            release_id: str, *, expected_release_approval_reference: str, layout: Layout
+            release_id: str, *, expected_release_approval_reference: str, layout: Layout, expected_update_deployment_id: str
         ):
             actions.append("local_activate")
             assert transport.deployment["state"] == "activating"
@@ -493,7 +493,7 @@ def test_controller_resumes_exact_transaction_activation_intent_after_symlink_sw
         }
         local_state["active_symlink_release_id"] = snapshot.target_release_id
 
-        def resume_activate(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+        def resume_activate(release_id: str, *, expected_release_approval_reference: str, layout: Layout, expected_update_deployment_id: str):
             actions.append("local_resume")
             assert release_id == snapshot.target_release_id
             assert expected_release_approval_reference == snapshot.release_approval_reference
@@ -539,7 +539,7 @@ def test_controller_recovers_exact_failed_local_rollback_before_reporting_backen
         controller, transport, snapshot, actions, local_state = _controller_fixture(Path(raw_tmp))
         previous = local_state["active_release_id"]
 
-        def fail_activation(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+        def fail_activation(release_id: str, *, expected_release_approval_reference: str, layout: Layout, expected_update_deployment_id: str):
             actions.append("local_activate")
             local_state["activation_intent"] = {
                 "release_id": release_id,
@@ -587,7 +587,7 @@ def test_controller_failed_retry_keeps_terminal_recovery_failed_and_pending_inte
         controller, transport, snapshot, actions, local_state = _controller_fixture(Path(raw_tmp))
         previous = local_state["active_release_id"]
 
-        def fail_activation(release_id, *, expected_release_approval_reference, layout):
+        def fail_activation(release_id, *, expected_release_approval_reference, layout, expected_update_deployment_id):
             local_state["activation_intent"] = {
                 "release_id": release_id,
                 "previous_release_id": previous,

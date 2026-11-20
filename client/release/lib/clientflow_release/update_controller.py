@@ -995,6 +995,7 @@ class UpdateController:
                 snapshot.target_release_id,
                 expected_release_approval_reference=snapshot.release_approval_reference,
                 layout=self.layout,
+                expected_update_deployment_id=snapshot.deployment_id,
             )
         except TransactionError as exc:
             recovered_state = self.status_func(self.layout)

@@ -297,7 +297,7 @@ def _controller(
         local_state["staged_release_id"] = snapshot.target_release_id
         return {"status": "staged", "release_id": snapshot.target_release_id}
 
-    def activate_func(release_id: str, *, expected_release_approval_reference: str, layout: Layout):
+    def activate_func(release_id: str, *, expected_release_approval_reference: str, layout: Layout, expected_update_deployment_id: str):
         backend = transport.get_active_deployment("token")
         assert backend is not None and backend["state"] == "activating"
         assert release_id == TARGET_RELEASE_ID

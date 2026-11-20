@@ -1400,6 +1400,7 @@ def activate_release(
     expected_release_approval_reference: str,
     layout: Layout = Layout(),
     first_activation_authorizer: Callable[[Layout], None] | None = None,
+    expected_update_deployment_id: str | None = None,
 ) -> dict[str, Any]:
     release_id = _validate_release_id(release_id)
     with TransactionLock(layout):
@@ -1442,7 +1443,29 @@ def activate_release(
                                    else layout.path('/var/lib/clientflow/install-coordinator'))
         coordinator_state = install_coordinator.snapshot(root=fresh_coordination_root)
         fresh_install_id = None
-        if coordinator_state is not None:
+        # The privileged update controller has already obtained backend
+        # activation-start and claimed this *exact* deployment's durable mutex.
+        # The transaction must accept that owner, never a generic update lock.
+        # The optional ID is supplied only by the backend-bound controller;
+        # it cannot authorize a first install or a downgrade.
+        if expected_update_deployment_id is not None:
+            try:
+                update_id = str(uuid.UUID(expected_update_deployment_id))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise TransactionError('Update deployment-ID er ugyldigt') from exc
+            if (update_id != expected_update_deployment_id
+                    or coordinator_state != {
+                        'schema_version': 1,
+                        'owner': 'update_clientflow',
+                        'operation_id': update_id,
+                    }
+                    or state.get('active_release_id') is None
+                    or state.get('staged_release_id') != release_id
+                    or first_activation_authorizer is not None):
+                raise TransactionError('Update activation matcher ikke den autoriserede installationslås')
+            if current_id not in {state['active_release_id'], release_id}:
+                raise TransactionError('Update activation matcher ikke aktiv release')
+        elif coordinator_state is not None:
             if coordinator_state.get('owner') != 'fresh_install':
                 raise TransactionError('Aktivering blokeret af en anden aktiv installation')
             install_path = layout.path('/var/lib/clientflow/release/install-state.json')
