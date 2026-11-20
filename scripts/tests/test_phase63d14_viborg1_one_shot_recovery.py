@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 import subprocess
 import sys
-import zipfile
 
 import pytest
 from scripts import phase63d14_viborg1_one_shot_recovery as runner
@@ -132,7 +130,6 @@ def test_exact_activation_wrapper_passes_deployment_id_only_for_expected_target(
 
 def test_installed_controller_can_share_reviewed_transaction_exception_identity(tmp_path):
     """Run in a fresh subprocess to avoid polluting this pytest's sys.modules."""
-    old_zip = Path('/mnt/data/display-planiq-main(20261120-110623).zip')
     # GitHub CI does not have user uploads; test against the matching source
     # contract by constructing a synthetic release with one in-memory loader.
     code = r'''
@@ -163,7 +160,6 @@ def test_no_imports_activate_and_no_self_deployment_mutations():
 
 def test_exact_historic_1246_file_hashes_are_reproducible_from_63d13_diff():
     """63D-13 modified ONLY the intended lock/call sites, not other internals."""
-    import re
     transaction = (ROOT / 'client/release/lib/clientflow_release/transaction.py').read_text()
     controller = (ROOT / 'client/release/lib/clientflow_release/update_controller.py').read_text()
     historic_txn = transaction.replace(
