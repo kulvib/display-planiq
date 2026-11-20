@@ -175,7 +175,7 @@ def environment(monkeypatch):
         # for healthy read-only administration requests.  Exercise the real,
         # validated catalog; keep the approval and DB control mocked/closed.
         stable_catalog = load_canonical_catalog()
-        assert stable_catalog["catalog_sequence"] == 1246
+        assert stable_catalog["catalog_sequence"] == 1247
         assert stable_catalog["releases"][0]["release_id"] == RELEASE_ID
         monkeypatch.setattr(route, "load_catalog", lambda: deepcopy(stable_catalog))
 
@@ -251,10 +251,10 @@ def test_63d4_staged_pilot_status_is_inert_with_real_stable_catalog(environment)
     result = http.get("/api/clientflow/release-administration")
     assert result.status_code == 200, result.text
     candidate = result.json()["staged_pilot_candidate"]
-    assert candidate["release_id"] == "clientflow-1.3.45-seq-1246"
+    assert candidate["release_id"] == "clientflow-1.3.46-seq-1247"
     assert candidate["active_release_id"] == RELEASE_ID
     assert candidate["approved_bundle_sha256"] == (
-        "e37de3250d58d313d57ad7bcbf59682cee342f2727c6ad5b188c8782342d4c78"
+        "3d6df5ec096a5713866943a67d9f88bba3fc6287458d0ea2f616bd41e42db150"
     )
     assert candidate["active_catalog_promoted"] is True
     for field in (

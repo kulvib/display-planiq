@@ -44,10 +44,35 @@ def planning_readiness(
     """
     releases = catalog.get("releases")
     match = _RELEASE_ID.fullmatch(release_id) if isinstance(release_id, str) else None
+    # The operator endpoint has already validated the *entire*, SHA-locked
+    # active catalog before setting this flag. Still fail closed on partial or
+    # widened pilot shapes here: 1245 remains the only stable/default entry.
+    pilot_shape = False
+    if exact_update_only_pilot_catalog is True and isinstance(releases, list):
+        def update_only(row: Any, release_id: str) -> bool:
+            return (
+                isinstance(row, dict)
+                and row.get("release_id") == release_id
+                and row.get("status") == "supported"
+                and row.get("installable") is False
+                and row.get("update_allowed") is True
+                and row.get("rollback_allowed") is False
+                and row.get("install_modes") == ["in_place_update"]
+            )
+        pilot_shape = (
+            (catalog.get("catalog_sequence") == 1246 and len(releases) == 2
+             and update_only(releases[1], "clientflow-1.3.45-seq-1246"))
+            or
+            (catalog.get("catalog_sequence") == 1247 and len(releases) == 3
+             and update_only(releases[1], "clientflow-1.3.45-seq-1246")
+             and update_only(releases[2], "clientflow-1.3.46-seq-1247")
+             and releases[2].get("min_current_version") == "1.3.45"
+             and releases[2].get("max_current_version") == "1.3.45")
+        )
     catalog_match = bool(
         match
         and isinstance(releases, list)
-        and len(releases) == (2 if exact_update_only_pilot_catalog is True else 1)
+        and (pilot_shape if exact_update_only_pilot_catalog is True else len(releases) == 1)
         and isinstance(releases[0], dict)
         and releases[0].get("release_id") == release_id
         and releases[0].get("status") == "stable"

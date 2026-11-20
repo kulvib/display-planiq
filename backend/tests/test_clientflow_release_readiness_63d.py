@@ -82,6 +82,57 @@ def test_malformed_catalog_binding_fails_readiness(changed):
     assert planning_readiness(**kwargs)["checks"][0]["ready"] is False
 
 
+def test_promoted_1247_inert_readiness_reports_stable_1245_binding():
+    from service1.clientflow_release_pilot_stage_1247 import load_staged_catalog_1247
+
+    catalog = load_staged_catalog_1247()
+    report = planning_readiness(
+        release_id="clientflow-1.3.44-seq-1245", bundle_sha256=SHA,
+        catalog=catalog, approval_bundle_sha256=SHA, control_revision=1,
+        cutover_enabled=False, fleet_open=False, fresh_install_open=False,
+        physical_acceptance=False, exact_update_only_pilot_catalog=True,
+    )
+    assert report["checks"][0] == {"id": "stable_catalog_binding", "ready": True, "reason": None}
+    assert all(not check["ready"] for check in report["checks"][1:])
+    assert report["deployment_authorized"] is False
+    assert report["automatic_rollout_authorized"] is False
+    assert report["ready_for_fleet"] is False
+    assert report["ready_for_fresh_install"] is False
+    # Merely passing a three-entry catalog without the checked pilot context
+    # must not imply that it is the single stable/default catalog.
+    assert planning_readiness(
+        release_id="clientflow-1.3.44-seq-1245", bundle_sha256=SHA,
+        catalog=catalog, approval_bundle_sha256=SHA, control_revision=1,
+        cutover_enabled=False, fleet_open=False, fresh_install_open=False,
+        physical_acceptance=False,
+    )["checks"][0]["ready"] is False
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: c["releases"][2].update(installable=True),
+    lambda c: c["releases"][2].update(rollback_allowed=True),
+    lambda c: c["releases"][2].update(update_allowed=False),
+    lambda c: c["releases"][2].update(min_current_version="1.3.44"),
+    lambda c: c["releases"][2].update(max_current_version="1.3.46"),
+    lambda c: c["releases"][1].update(install_modes=["fresh_install"]),
+    lambda c: c.update(catalog_sequence=1248),
+    lambda c: c["releases"].append(dict(c["releases"][2])),
+])
+def test_promoted_1247_readiness_refuses_widened_or_drifted_pilots(change):
+    from service1.clientflow_release_pilot_stage_1247 import load_staged_catalog_1247
+
+    catalog = deepcopy(load_staged_catalog_1247())
+    change(catalog)
+    report = planning_readiness(
+        release_id="clientflow-1.3.44-seq-1245", bundle_sha256=SHA,
+        catalog=catalog, approval_bundle_sha256=SHA, control_revision=1,
+        cutover_enabled=False, fleet_open=False, fresh_install_open=False,
+        physical_acceptance=False, exact_update_only_pilot_catalog=True,
+    )
+    assert report["checks"][0]["ready"] is False
+    assert report["deployment_authorized"] is False
+
+
 def test_synthetic_future_prerequisites_are_not_automatic_deployment_grant():
     ok, reason = assess_future_db_wave(**_ready_wave())
     assert ok and reason == "preconditions_only_not_deployment_authority"

@@ -46,7 +46,7 @@ def payload():
     }
 
 
-def test_source_approval_is_exactly_hashed_and_staged_1247_not_live():
+def test_source_approval_is_exactly_hashed_and_1247_promoted_update_only():
     approval = approval_lock_1247()
     assert approval['approval_run_id'] == 44609878344
     assert approval['approved_bundle_sha256'] == APPROVED_BUNDLE_SHA256
@@ -58,11 +58,12 @@ def test_source_approval_is_exactly_hashed_and_staged_1247_not_live():
     assert stage['releases'][2]['installable'] is False
     assert stage['releases'][2]['rollback_allowed'] is False
     live = json.loads((SVC / 'clientflow_release_catalog.json').read_text())
-    assert live['catalog_sequence'] == 1246
-    assert live['releases'] == stage['releases'][:2]
-    assert validated_catalog_mode_1247(active_catalog=stage) == 'update_only_1247_pilot_catalog'
-    with pytest.raises(PilotStage1247Denied):
-        validated_catalog_mode_1247(active_catalog=live)
+    assert live['catalog_sequence'] == 1247
+    assert live == stage
+    assert validated_catalog_mode_1247(active_catalog=live) == 'update_only_1247_pilot_catalog'
+    assert live['releases'][0]['status'] == 'stable'
+    assert [r['installable'] for r in live['releases']] == [True, False, False]
+    assert all(r['rollback_allowed'] is False for r in live['releases'])
 
 
 def test_approval_digest_tampering_refused(monkeypatch, tmp_path):
@@ -162,7 +163,7 @@ def test_database_pilot_rejects_fresh_install_open_and_fleet_open(monkeypatch):
 
 def test_database_pilot_rejects_non_active_catalog(monkeypatch):
     monkeypatch.setenv('CLIENTFLOW_FRESH_INSTALL_SUSPENDED', '1')
-    args=payload(); args['catalog']=json.loads((SVC/'clientflow_release_catalog.json').read_text())
+    args=payload(); args['catalog']=json.loads((SVC/'clientflow_release_catalog_1246_pilot.stage.json').read_text())
     with pytest.raises(PilotStage1247Denied):
         require_database_pilot_1247(**args)
 
