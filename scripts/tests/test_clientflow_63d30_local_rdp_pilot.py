@@ -64,6 +64,21 @@ def test_credentials_are_parsed_without_showing_or_storing_secrets(monkeypatch):
         )),
     )
     assert pilot.credentials_empty(1000)
+    # Actual GNOME 50/51 output is TAB-indented, not space-indented.
+    monkeypatch.setattr(
+        pilot, "kiosk",
+        lambda uid, *args, **kw: Result(stdout=(
+            "RDP:\n\tUsername: (empty)\n\tPassword: (empty)\n"
+        )),
+    )
+    assert pilot.credentials_empty(1000)
+    monkeypatch.setattr(
+        pilot, "kiosk",
+        lambda uid, *args, **kw: Result(stdout=(
+            "\tUsername: (empty)\n\tUsername: (empty)\n\tPassword: (empty)\n"
+        )),
+    )
+    assert not pilot.credentials_empty(1000)
     monkeypatch.setattr(
         pilot, "kiosk",
         lambda uid, *args, **kw: Result(stdout=(
