@@ -162,6 +162,13 @@ def main() -> int:
     checks["GNOME_RDP_SETTINGS_BASELINE"] = settings_ok
 
     code, raw, _ = kiosk("grdctl", "status")
+    query_state = (
+        "OK" if code == 0
+        else ("TIMEOUT_OR_EXEC_ERROR" if code is None else "EXIT_NONZERO")
+    )
+    record("GRDCTL_CREDENTIAL_STATUS_QUERY", code == 0, query_state)
+    rdp_block = rdp_status_section(raw) if code == 0 else None
+    record("GRDCTL_RDP_STATUS_BLOCK_PRESENT", rdp_block is not None)
     state = credential_state(raw) if code == 0 else "UNKNOWN"
     record("RDP_CREDENTIALS_EMPTY", state == "EMPTY", state)
 
