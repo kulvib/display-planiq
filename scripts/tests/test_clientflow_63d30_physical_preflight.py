@@ -22,18 +22,22 @@ def test_strict_machine_identity():
 
 @pytest.mark.parametrize("text, expected", [
     ("RDP:\n Username: (empty)\n Password: (empty)\n", "EMPTY"),
-    ("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\n", "EMPTY"),
-    ("\tUsername:\t(empty)\n\tPassword:\t(empty)\n", "EMPTY"),
-    (" Username: (empty)\r\n\tPassword: (empty) \r\n", "EMPTY"),
-    ("\tUsername: (empty)\n\tUsername: (empty)\n\tPassword: (empty)\n", "UNKNOWN"),
-    ("\tUsername: (empty)\n\tPassword: (empty)\n\tPassword: (empty)\n", "UNKNOWN"),
-
-    (" Username: (hidden)\n Password: (hidden)", "NOT_EMPTY_OR_UNEXPECTED"),
-    (" Username: (empty)\n Password: (hidden)", "NOT_EMPTY_OR_UNEXPECTED"),
-    (" Username: remote-user\n Password: remote-secret", "NOT_EMPTY_OR_UNEXPECTED"),
-    (" Username: (empty)\n", "UNKNOWN"),
+    ("Overall:\n\tUnit status: inactive\nRDP:\n\tUsername: (empty)\n\tPassword: (empty)\n", "EMPTY"),
+    ("RDP:\n\tUsername:\t(empty)\n\tPassword:\t(empty)\n", "EMPTY"),
+    ("RDP:\r\n Username: (empty)\r\n\tPassword: (empty) \r\n", "EMPTY"),
+    ("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\nVNC:\n\tPassword: (hidden)\n", "EMPTY"),
+    ("RDP:\n\tUsername: (empty)\n\tUsername: (empty)\n\tPassword: (empty)\n", "UNKNOWN"),
+    ("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\n\tPassword: (empty)\n", "UNKNOWN"),
+    ("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\nRDP:\n\tUsername: (empty)\n\tPassword: (empty)", "UNKNOWN"),
+    ("RDP:\n Username: (hidden)\n Password: (hidden)", "NOT_EMPTY_OR_UNEXPECTED"),
+    ("RDP:\n Username: (empty)\n Password: (hidden)", "NOT_EMPTY_OR_UNEXPECTED"),
+    ("RDP:\n Username: remote-user\n Password: remote-secret", "NOT_EMPTY_OR_UNEXPECTED"),
+    ("RDP:\n Username: (empty)\n", "UNKNOWN"),
+    ("VNC:\n\tPassword: (empty)\n", "UNKNOWN"),
+    (" Username: (empty)\n Password: (empty)", "UNKNOWN"),
     ("", "UNKNOWN"),
 ])
+
 def test_credentials_are_never_copied_to_output(text, expected):
     assert p.credential_state(text) == expected
 
