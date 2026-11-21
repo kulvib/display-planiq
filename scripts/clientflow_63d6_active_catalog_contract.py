@@ -1,4 +1,4 @@
-"""Strict, read-only source audit for pinned 1245/1246/1247 catalogs.
+"""Strict, read-only source audit for pinned 1245/1246/1247/1248 catalogs.
 
 Legacy 1245 source gates use this common contract to review a promoted
 1246 update-only catalog without weakening their historical 1245 invariants.
@@ -20,6 +20,10 @@ STAGE_1247_PATH = "backend/service1/clientflow_release_catalog_1247_pilot.stage.
 APPROVAL_1247_PATH = "backend/service1/clientflow_pilot_1247_approval.json"
 STAGED_1247_SHA256 = "d54fa0438b020461a668fad241bf08c5e64dcae9befd0b4a7bdc6dac97fc9cd9"
 APPROVAL_1247_SHA256 = "f2e84210e39850b87d382ec4dd186ad39f5b7e768fa8cef42bf76a8d5b81bf04"
+STAGE_1248_PATH = "backend/service1/clientflow_release_catalog_1248_pilot.stage.json"
+APPROVAL_1248_PATH = "backend/service1/clientflow_pilot_1248_approval.json"
+STAGED_1248_SHA256 = "79b33f2431d6321a6f9b98b45d22dc327217f74b327452ce2a2632a3e11d3dac"
+APPROVAL_1248_SHA256 = "0d493cf0782c4616a632334ce258b2363d81a3429e95d5663189221051704a25"
 
 
 class ActiveCatalogDenied(ValueError):
@@ -49,7 +53,7 @@ def _strict_json(repo: Path, name: str, *, max_size: int = 16_384) -> tuple[dict
 
 
 def verified_mode(repo: Path) -> str:
-    """Recognize only exactly pinned stable 1245, pilot 1246, or pilot 1247 source."""
+    """Recognize only the full pinned baseline, 1246, 1247 or 1248 stage."""
     stage, stage_sha = _strict_json(repo, STAGE_PATH)
     lock, lock_sha = _strict_json(repo, APPROVAL_PATH, max_size=4096)
     active, _ = _strict_json(repo, ACTIVE_PATH)
@@ -103,6 +107,49 @@ def verified_mode(repo: Path) -> str:
                 or active != new_stage):
             raise ActiveCatalogDenied("Active 1247 catalog differs from exact approved stage")
         return "update_only_1247_pilot_catalog"
+    # 1248 replaces only the 1246 *selector*, not its immutable TAR.
+    # Compare the full source-locked 1245 and 1247 rows and the 1248 stage
+    # bytes. A new field, changed note or widened install mode must fail shut.
+    if active.get("catalog_sequence") == 1248:
+        prior, prior_sha = _strict_json(repo, STAGE_1247_PATH)
+        prior_approval, prior_approval_sha = _strict_json(
+            repo, APPROVAL_1247_PATH, max_size=4096,
+        )
+        current, current_sha = _strict_json(repo, STAGE_1248_PATH)
+        approval, approval_sha = _strict_json(repo, APPROVAL_1248_PATH, max_size=4096)
+        if (
+            prior_sha != STAGED_1247_SHA256
+            or prior_approval_sha != APPROVAL_1247_SHA256
+            or prior_approval.get("approved") is not True
+            or current_sha != STAGED_1248_SHA256
+            or approval_sha != APPROVAL_1248_SHA256
+        ):
+            raise ActiveCatalogDenied("Pinned 1247/1248 source or approval changed")
+        if (
+            current.get("catalog_sequence") != 1248
+            or type(current.get("releases")) is not list
+            or len(current["releases"]) != 3
+            or current["releases"][:2] != [prior["releases"][0], prior["releases"][2]]
+            or any(current.get(k) != prior.get(k) for k in (
+                "manifest_schema", "channel", "latest_stable",
+                "default_install_version", "retention_policy",
+            ))
+            or current["releases"][2].get("release_id") != "clientflow-1.3.47-seq-1248"
+            or current["releases"][2].get("status") != "supported"
+            or current["releases"][2].get("installable") is not False
+            or current["releases"][2].get("update_allowed") is not True
+            or current["releases"][2].get("rollback_allowed") is not False
+            or current["releases"][2].get("install_modes") != ["in_place_update"]
+            or current["releases"][2].get("min_current_version") != "1.3.46"
+            or current["releases"][2].get("max_current_version") != "1.3.46"
+            or approval.get("approved") is not True
+            or approval.get("release_id") != "clientflow-1.3.47-seq-1248"
+            or approval.get("approved_bundle_sha256")
+                != "9ca8852ba29153f2ec40b58d18007c738a03f9569f14762486fc1953c59eb6ff"
+            or active != current
+        ):
+            raise ActiveCatalogDenied("Active 1248 differs from exact pinned update-only stage")
+        return "update_only_1248_pilot_catalog"
     raise ActiveCatalogDenied("Active catalog differs from pinned baseline/pilot")
 
 

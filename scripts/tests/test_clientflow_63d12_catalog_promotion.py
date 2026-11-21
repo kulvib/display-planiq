@@ -1,4 +1,4 @@
-"""63D-12: source-only promotion of the EXACT approved 1247 pilot catalog.
+"""63D-12/19: source-only promotion of the EXACT approved 1248 pilot catalog.
 
 No DB connection, client update, Render or network access.
 """
@@ -21,8 +21,10 @@ from clientflow_63d6_active_catalog_contract import (  # noqa: E402
 FILES = (
     "backend/service1/clientflow_release_catalog.json",
     "backend/service1/clientflow_release_catalog_1246_pilot.stage.json",
-    "backend/service1/clientflow_release_catalog_1247_pilot.stage.json",
+    "backend/service1/clientflow_release_catalog_1248_pilot.stage.json",
     "backend/service1/clientflow_pilot_1246_approval.json",
+    "backend/service1/clientflow_pilot_1248_approval.json",
+    "backend/service1/clientflow_release_catalog_1247_pilot.stage.json",
     "backend/service1/clientflow_pilot_1247_approval.json",
 )
 
@@ -44,21 +46,21 @@ def test_promoted_catalog_is_exact_pinned_stage_and_does_not_open_rollout():
     live = (ROOT / FILES[0]).read_bytes()
     stage = (ROOT / FILES[2]).read_bytes()
     assert live == stage
-    assert verified_mode(ROOT) == "update_only_1247_pilot_catalog"
+    assert verified_mode(ROOT) == "update_only_1248_pilot_catalog"
     record = json.loads(live)
-    assert record["catalog_sequence"] == 1247
+    assert record["catalog_sequence"] == 1248
     assert record["latest_stable"] == record["default_install_version"] == "1.3.44"
-    assert [r["release_sequence"] for r in record["releases"]] == [1245, 1246, 1247]
+    assert [r["release_sequence"] for r in record["releases"]] == [1245, 1247, 1248]
     assert [r["installable"] for r in record["releases"]] == [True, False, False]
     assert [r["status"] for r in record["releases"]] == ["stable", "supported", "supported"]
     assert all(r["rollback_allowed"] is False for r in record["releases"])
     assert record["releases"][2]["install_modes"] == ["in_place_update"]
-    assert record["releases"][2]["min_current_version"] == "1.3.45"
-    assert record["releases"][2]["max_current_version"] == "1.3.45"
+    assert record["releases"][2]["min_current_version"] == "1.3.46"
+    assert record["releases"][2]["max_current_version"] == "1.3.46"
 
 
 @pytest.mark.parametrize("attack", (
-    lambda d: d.update(catalog_sequence=1248),
+    lambda d: d.update(catalog_sequence=1249),
     lambda d: d.update(default_install_version="1.3.46"),
     lambda d: d.update(latest_stable="1.3.46"),
     lambda d: d["releases"][0].update(installable=False),
@@ -110,10 +112,10 @@ def test_duplicate_active_json_field_rejected(tmp_path):
     repo = _fixture(tmp_path)
     path = repo / FILES[0]
     content = path.read_text()
-    assert '"catalog_sequence": 1247,' in content
+    assert '"catalog_sequence": 1248,' in content
     path.write_text(content.replace(
-        '"catalog_sequence": 1247,',
-        '"catalog_sequence": 1247, "catalog_sequence": 1247,', 1,
+        '"catalog_sequence": 1248,',
+        '"catalog_sequence": 1248, "catalog_sequence": 1248,', 1,
     ))
     with pytest.raises(ActiveCatalogDenied):
         verified_mode(repo)

@@ -19,6 +19,8 @@ REQUIRED = (
     "backend/service1/clientflow_pilot_1246_approval.json",
     "backend/service1/clientflow_release_catalog_1247_pilot.stage.json",
     "backend/service1/clientflow_pilot_1247_approval.json",
+    "backend/service1/clientflow_release_catalog_1248_pilot.stage.json",
+    "backend/service1/clientflow_pilot_1248_approval.json",
     "backend/service1/clientflow_release_catalog_1245_pilot.stage.json",
     "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
     "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json",
@@ -53,7 +55,7 @@ def test_staged_identity_is_now_exact_live_pilot_catalog():
     release = json.loads((ROOT / "client/release/release-input.json").read_text())
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
     assert release["release_sequence"] == 1248  # unsigned candidate
-    assert catalog["catalog_sequence"] == 1247  # 1245 stable + 1246/1247 update-only
+    assert catalog["catalog_sequence"] == 1248  # 1245 stable + 1247/1248 update-only
     assert len(catalog["releases"]) == 3
     assert catalog["releases"][1]["installable"] is False
     assert catalog["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
@@ -94,7 +96,7 @@ def test_catalog_promotion_or_old_release_overwrite_is_rejected(tmp_path):
     path = repo / "backend/service1/clientflow_release_catalog.json"
     baseline = json.loads(path.read_text(encoding="utf-8"))
     modified = json.loads(path.read_text(encoding="utf-8"))
-    modified["catalog_sequence"] = 1248
+    modified["catalog_sequence"] = 1249
     modified["latest_stable"] = modified["default_install_version"] = "1.3.44"
     modified["releases"][0]["release_id"] = "clientflow-1.3.44-seq-1245"
     modified["releases"][0]["version"] = "1.3.44"

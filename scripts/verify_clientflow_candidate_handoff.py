@@ -91,6 +91,7 @@ def _verify_original_catalog(repo: Path, release_id: str, sequence: int) -> None
         "stable_1245_only": (1245, 1),
         "update_only_1246_pilot_catalog": (1246, 2),
         "update_only_1247_pilot_catalog": (1247, 3),
+        "update_only_1248_pilot_catalog": (1248, 3),
     }
     _require(mode in allowed, "stable_catalog_changed")
     catalog_sequence, release_count = allowed[mode]
@@ -105,7 +106,7 @@ def _verify_original_catalog(repo: Path, release_id: str, sequence: int) -> None
     # 1248 must follow the pinned, already approved 1247 pilot stage; do not
     # accept a source accidentally checked out with an older active catalog.
     if sequence == 1248:
-        _require(mode == "update_only_1247_pilot_catalog", "stable_catalog_changed")
+        _require(mode in {"update_only_1247_pilot_catalog", "update_only_1248_pilot_catalog"}, "stable_catalog_changed")
 
 
 def verify(repo: Path, handoff: Path, *, source_sha: str,

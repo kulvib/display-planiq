@@ -106,7 +106,7 @@ def test_rollout_admin_is_inert_and_legacy_gates_remain_untouched():
     maintenance = _source("backend/service1/clientflow_fresh_install_maintenance.py")
     active_catalog = json.loads(_source("backend/service1/clientflow_release_catalog.json"))
     assert len(active_catalog["releases"]) == 3
-    assert active_catalog["catalog_sequence"] == 1247
+    assert active_catalog["catalog_sequence"] == 1248
     assert active_catalog["releases"][1]["install_modes"] == ["in_place_update"]
     assert active_catalog["releases"][1]["installable"] is False
     assert active_catalog["releases"][2]["installable"] is False

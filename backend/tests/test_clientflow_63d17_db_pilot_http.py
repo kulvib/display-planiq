@@ -168,11 +168,11 @@ def test_mismatched_approved_artifact_denied(pilot_client, monkeypatch):
     assert session.exec(select(ClientFlowDeployment)).all() == []
 
 
-def test_staged_source_alone_never_authorizes_without_active_catalog(pilot_client, monkeypatch):
+def test_historical_1247_catalog_cannot_authorize_new_1248(pilot_client, monkeypatch):
     http, session = pilot_client
     from service1 import clientflow_releases
     from pathlib import Path
-    live = Path(__file__).resolve().parents[1] / "service1/clientflow_release_catalog.json"
+    live = Path(__file__).resolve().parents[1] / "service1/clientflow_release_catalog_1247_pilot.stage.json"
     monkeypatch.setattr(clientflow_releases, "CATALOG_PATH", live)
     clientflow_releases.load_catalog.cache_clear()
     result = post(http, payload())
