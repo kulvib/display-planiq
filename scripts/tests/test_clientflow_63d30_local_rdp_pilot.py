@@ -220,3 +220,69 @@ def test_no_public_gateway_no_paid_stack_no_unprotected_rdp_fallback():
     assert "OnCalendar=*-*-* *:*:00" in src
     assert "secret" in src
     assert "HTTPS_443_RELAY_TESTED=False" in src
+
+
+def test_local_x224_probe_only_uses_loopback_and_never_sends_credentials(monkeypatch):
+    observed = []
+    class Socket:
+        def __enter__(self):
+            return self
+        def __exit__(self, *ignored):
+            pass
+        def settimeout(self, value):
+            assert value == 3
+        def sendall(self, packet):
+            observed.append(packet)
+        def recv(self, count):
+            return bytes((3, 0, 0, 11, 6, 0xD0, 0, 0, 0, 0, 0))
+    def fake_connect(address, timeout):
+        assert address == ("127.0.0.1", 3389)
+        assert timeout == 3
+        return Socket()
+    monkeypatch.setattr(pilot.socket, "create_connection", fake_connect)
+    assert pilot.local_rdp_negotiation()
+    assert observed == [bytes.fromhex("030000130ee000000000000100080003000000")]
+
+
+def test_local_x224_probe_rejects_invalid_response_and_network_error(monkeypatch):
+    class BadSocket:
+        def __enter__(self):
+            return self
+        def __exit__(self, *ignored):
+            pass
+        def settimeout(self, value):
+            pass
+        def sendall(self, packet):
+            pass
+        def recv(self, count):
+            return bytes((3, 0, 0, 11, 6, 0xFF, 0, 0, 0, 0, 0))
+    monkeypatch.setattr(pilot.socket, "create_connection", lambda *a, **k: BadSocket())
+    assert not pilot.local_rdp_negotiation()
+    def no_connection(*a, **k):
+        raise ConnectionRefusedError()
+    monkeypatch.setattr(pilot.socket, "create_connection", no_connection)
+    assert not pilot.local_rdp_negotiation()
+
+
+def test_probe_refuses_unverified_guard_or_watchdog(monkeypatch):
+    monkeypatch.setattr(pilot, "target", lambda: (1000, Path("/tmp")))
+    monkeypatch.setattr(pilot, "state_load", lambda: {"phase": "63D-30"})
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: False)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: True)
+    with pytest.raises(RuntimeError, match="watchdog"):
+        pilot.probe()
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: False)
+    with pytest.raises(RuntimeError, match="Firewall"):
+        pilot.probe()
+
+
+def test_unstage_refuses_to_disarm_watchdog_if_rdp_guard_remains(monkeypatch):
+    monkeypatch.setattr(pilot, "state_load", lambda: None)
+    monkeypatch.setattr(pilot.guard, "ensure_rdp_off", lambda uid: None)
+    monkeypatch.setattr(pilot.guard, "guard_exists", lambda: True)
+    calls = []
+    monkeypatch.setattr(pilot, "run_ok", lambda *args, **kw: calls.append(args))
+    with pytest.raises(RuntimeError, match="Firewall"):
+        pilot.unstage(1000)
+    assert calls == []
