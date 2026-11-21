@@ -195,8 +195,20 @@ def test_admin_pilot_route_wiring_is_sequenced_before_database_write():
     assert "activate_release(" not in route
 
 
-def test_approved_1248_identity_cannot_be_rebuilt_from_new_source():
+def test_approved_1248_identity_cannot_be_rebuilt_from_new_source(tmp_path):
     from scripts.clientflow_63d11_prevent_duplicate_build import verify
+    # Preserve signed 1248 authority independently from current unsigned 1249.
+    fixture = tmp_path / "approved-1248"
+    (fixture / "client/release").mkdir(parents=True)
+    (fixture / "backend/service1").mkdir(parents=True)
+    (fixture / "client/VERSION").write_text("1.3.47\n")
+    (fixture / "client/release/release-input.json").write_text(
+        '{"schema_version":1,"release_sequence":1248}'
+    )
+    (fixture / "backend/service1/clientflow_pilot_1248_approval.json").write_bytes(
+        (SVC / "clientflow_pilot_1248_approval.json").read_bytes()
+    )
     with pytest.raises(ValueError, match="1248 is already approved"):
-        verify("f" * 40)
-    verify(SOURCE_COMMIT)
+        verify("f" * 40, root=fixture)
+    verify(SOURCE_COMMIT, root=fixture)
+    verify("f" * 40)  # 1249 is a distinct unsigned identity.

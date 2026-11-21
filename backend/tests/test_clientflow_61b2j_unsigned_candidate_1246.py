@@ -44,8 +44,8 @@ def _rehash(root: Path, name: str) -> None:
 
 
 def test_unsigned_candidate_has_new_source_identity_and_no_approval():
-    assert (ROOT / 'client/VERSION').read_text().strip() == '1.3.47'
-    assert json.loads((ROOT / 'client/release/release-input.json').read_text())['release_sequence'] == 1248
+    assert (ROOT / 'client/VERSION').read_text().strip() == '1.3.48'
+    assert json.loads((ROOT / 'client/release/release-input.json').read_text())['release_sequence'] == 1249
     result = gate.inspect(ROOT)
     assert result['source_verified'] is True, result['checks']
     assert result['candidate_identity_advanced'] is True
@@ -112,7 +112,7 @@ def test_rehashed_approval_or_acceptance_mutation_fails_closed(tmp_path, name, f
 
 @pytest.mark.parametrize('version,sequence', [
     ('1.3.44', 1245), ('1.3.44', 1246), ('1.3.45', 1245),
-    ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.47', 1247), ('1.3.48', 1249), ('1.3.43', 1246),
+    ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.47', 1247), ('1.3.48', 1248), ('1.3.43', 1246),
 ])
 def test_non_candidate_pair_cannot_pass_candidate_build_gate(tmp_path, version, sequence):
     root = _copy(tmp_path)
