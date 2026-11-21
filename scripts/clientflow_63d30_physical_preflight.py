@@ -60,15 +60,30 @@ def valid_target(host: str, uid: int, data: object) -> bool:
     )
 
 
-def credential_state(stdout: str) -> str:
-    """Accept GNOME's tab-indented fields, never echo credential values.
+def rdp_status_section(stdout: str) -> str | None:
+    """Return the user-mode RDP block only; ignore VNC Password fields."""
+    sections = 0
+    inside = False
+    captured = []
+    for line in stdout.splitlines():
+        if line == "RDP:":
+            sections += 1
+            inside = True
+            continue
+        if inside and line and not line.startswith((" ", "\t")):
+            inside = False
+        if inside:
+            captured.append(line)
+    return "\n".join(captured) if sections == 1 else None
 
-    Exactly one Username and one Password are required; an ambiguous,
-    duplicated, missing, or nonempty value is fail-closed.
-    """
+def credential_state(stdout: str) -> str:
+    """Fail closed unless both RDP-only credential fields are uniquely empty."""
+    rdp = rdp_status_section(stdout)
+    if rdp is None:
+        return "UNKNOWN"
     for key in ("Username", "Password"):
         values = re.findall(
-            rf"(?m)^[ \t]*{key}:[ \t]*([^\r\n]*)$", stdout
+            rf"(?m)^[ \t]*{key}:[ \t]*([^\r\n]*)$", rdp
         )
         if len(values) != 1:
             return "UNKNOWN"
