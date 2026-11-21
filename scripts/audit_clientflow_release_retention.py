@@ -151,6 +151,7 @@ def plan_publication(
     sha256: str,
     authorized_1243_transition: bool = False,
     authorized_1244_reset: bool = False,
+    authorized_1248_viborg1_fourth: bool = False,
 ) -> dict:
     """Fail-closed, read-only preflight for an immutable, forward-only publish.
 
@@ -202,9 +203,15 @@ def plan_publication(
         ]
 
     projected.sort(key=lambda item: item["release_sequence"], reverse=True)
-    if authorized_1243_transition and authorized_1244_reset:
+    if sum((authorized_1243_transition, authorized_1244_reset, authorized_1248_viborg1_fourth)) > 1:
         raise StoreAuditError("Only one pinned transition may be requested")
-    if authorized_1244_reset:
+    if authorized_1248_viborg1_fourth:
+        from scripts.clientflow_63d16_1248_storage_exception import require_preflight
+        try:
+            require_preflight(snapshot, release_id=release_id, disposition=disposition, projected=projected)
+        except ValueError as exc:
+            raise StoreAuditError(str(exc)) from exc
+    elif authorized_1244_reset:
         from scripts.clientflow_1244_transition_policy import require_admission
         require_admission(snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256)
         if disposition != "ready_to_publish" or len(projected) != 6:
@@ -228,9 +235,11 @@ def plan_publication(
         "disposition": disposition,
         "1243_transition": authorized_1243_transition,
         "1244_reset_admission": authorized_1244_reset,
+        "1248_viborg1_fourth_storage_only": authorized_1248_viborg1_fourth,
         "retention_target_unchanged": KEEP_LATEST_APPROVED,
         "cleanup_required_after_1243": authorized_1243_transition,
         "cleanup_required_after_1244": authorized_1244_reset,
+        "review_retention_after_1248_pilot": authorized_1248_viborg1_fourth,
         "incoming_release_id": release_id,
         "disk_available_bytes": snapshot["disk_available_bytes"],
         "required_available_bytes": needed,
@@ -250,12 +259,19 @@ def verify_publication(
     directory: Path, *, release_id: str, size_bytes: int, sha256: str,
     authorized_1243_transition: bool = False,
     authorized_1244_reset: bool = False,
+    authorized_1248_viborg1_fourth: bool = False,
 ) -> dict:
     """Independent postflight inspection; never modifies approved artifacts."""
     snapshot = inspect_store(directory, require_four=False)
-    if authorized_1243_transition and authorized_1244_reset:
+    if sum((authorized_1243_transition, authorized_1244_reset, authorized_1248_viborg1_fourth)) > 1:
         raise StoreAuditError("Only one pinned transition may be requested")
-    if authorized_1244_reset:
+    if authorized_1248_viborg1_fourth:
+        from scripts.clientflow_63d16_1248_storage_exception import require_postflight
+        try:
+            require_postflight(snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256)
+        except ValueError as exc:
+            raise StoreAuditError(str(exc)) from exc
+    elif authorized_1244_reset:
         from scripts.clientflow_1244_transition_policy import require_postflight
         require_postflight(
             snapshot, release_id=release_id, size_bytes=size_bytes, sha256=sha256,
