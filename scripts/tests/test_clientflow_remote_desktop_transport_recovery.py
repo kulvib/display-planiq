@@ -23,6 +23,8 @@ def _fixture():
     agent.logger = Logger()
     agent.stream_tasks = {'s1': object()}
     agent.stream_options = {'s1': {'fps': 10}}
+    agent.media_pressure = {}
+    agent.control_ws = None  # Simulated disconnected control transport.
     agent._event = AsyncMock()
     agent._stop_capture_if_idle = AsyncMock()
     agent._capture = AsyncMock()

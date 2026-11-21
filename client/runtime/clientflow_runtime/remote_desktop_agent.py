@@ -22,6 +22,7 @@ from .logging_utils import configure_logging
 from .remote_desktop_net import DomainTransport, TransportError, backoff_seconds
 from .remote_desktop_files import FileArea
 from .remote_desktop_input_queue import InputLaneQueue
+from .remote_desktop_media_pressure import MediaPressure, socket_send_queue_bytes
 from .status import report_status
 from .unix_rpc import RpcError, call
 
@@ -113,6 +114,7 @@ class RemoteDesktopAgent:
         self.media_telemetry: dict[str, dict[str, Any]] = {}
         self.pending_input_at: dict[str, float] = {}
         self._last_telemetry_write = 0.0
+        self.media_pressure: dict[str, MediaPressure] = {}
 
     def ssl_context(self) -> ssl.SSLContext | None:
         if not self.transport.websocket_url("/").startswith("wss:"):
@@ -210,6 +212,9 @@ class RemoteDesktopAgent:
                 row["input_to_frame_ms_avg"] = round(
                     float(row["input_to_frame_ms_total"]) / samples, 3
                 )
+        self._flush_media_telemetry()
+
+    def _flush_media_telemetry(self) -> None:
         now = time.monotonic()
         if now - self._last_telemetry_write >= 5.0:
             self._last_telemetry_write = now
@@ -225,6 +230,10 @@ class RemoteDesktopAgent:
 
     async def _capture(self, session_id: str, options: dict[str, Any] | None = None, *, force: bool = False) -> bool:
         selected = options or self.stream_options.get(session_id, {})
+        pressure = self.media_pressure.setdefault(session_id, MediaPressure())
+        quality = pressure.jpeg_quality(int(selected.get("quality", 85)), now=time.monotonic())
+        if isinstance(self.control_ws, _HttpRelaySocket):
+            quality = min(quality, 40)
         native = bool(selected.get("native", False))
         width = min(7680, max(320, int(selected.get("width", 1280))))
         height = min(4320, max(200, int(selected.get("height", 720))))
@@ -236,7 +245,7 @@ class RemoteDesktopAgent:
             "height": height,
             "screen_width": screen_width,
             "screen_height": screen_height,
-            "quality": min(95, max(35, int(selected.get("quality", 85)))),
+            "quality": min(95, max(35, quality)),
         }
         result, capture_ms = await self.media_transport.capture(capture_options)
         frame_data = str(result["data"])
@@ -246,6 +255,9 @@ class RemoteDesktopAgent:
         # Static desktops are the normal RD idle case. Keep a sparse keyframe
         # every five seconds for freshness, but don't relay identical JPEG bytes.
         frame_bytes = max(0, len(frame_data) * 3 // 4)
+        telemetry = self.media_telemetry.setdefault(session_id, self._new_media_row())
+        telemetry["jpeg_bytes_last"] = frame_bytes
+        telemetry["jpeg_quality_last"] = capture_options["quality"]
         if not force and unchanged and now - self.last_frame_sent_at.get(session_id, 0.0) < 5.0:
             self._record_media_telemetry(session_id, capture_ms=capture_ms, frame_bytes=frame_bytes, relayed=False, unchanged=True)
             return False
@@ -269,10 +281,12 @@ class RemoteDesktopAgent:
                 "deduplicated": True,
             }
         )
+        send_elapsed_ms = (time.monotonic() - relay_started) * 1000.0
+        pressure.observe_send(send_elapsed_ms, now=time.monotonic())
         self._record_media_telemetry(
             session_id, capture_ms=capture_ms, frame_bytes=frame_bytes,
             relayed=True, unchanged=unchanged,
-            relay_send_ms=(time.monotonic() - relay_started) * 1000.0,
+            relay_send_ms=send_elapsed_ms,
         )
         return True
 
@@ -290,9 +304,27 @@ class RemoteDesktopAgent:
                 "fps": float(options.get("fps", FPS)),
             })
             while True:
+                # Protect the actual TCP socket queue: backend latest-only
+                # cannot remove JPEG bytes already buffered on this client.
+                pressure = self.media_pressure.setdefault(session_id, MediaPressure())
+                pending = socket_send_queue_bytes(self.control_ws)
+                if pending is not None:
+                    row = self.media_telemetry.setdefault(session_id, self._new_media_row())
+                    row["control_tcp_sendq_bytes_last"] = pending
+                    row["control_tcp_sendq_bytes_max"] = max(
+                        int(row.get("control_tcp_sendq_bytes_max") or 0), pending
+                    )
+                if pressure.should_defer(pending, now=time.monotonic()):
+                    row = self.media_telemetry.setdefault(session_id, self._new_media_row())
+                    row["frames_deferred_for_control_sendq"] = pressure.deferred_frames
+                    self._flush_media_telemetry()
+                    await asyncio.sleep(0.06)
+                    continue
                 started = time.monotonic()
                 await self._capture(session_id, options)
                 fps = min(12.0, max(0.2, float(options.get("fps", FPS))))
+                if isinstance(self.control_ws, _HttpRelaySocket):
+                    fps = min(fps, 3.0)
                 await asyncio.sleep(max(0.0, 1.0 / fps - (time.monotonic() - started)))
         except asyncio.CancelledError:
             raise
@@ -372,6 +404,7 @@ class RemoteDesktopAgent:
 
     async def _stop_stream(self, session_id: str) -> None:
         self.stream_options.pop(session_id, None)
+        self.media_pressure.pop(session_id, None)
         self.last_frame_digest.pop(session_id, None)
         self.last_frame_sent_at.pop(session_id, None)
         self.pending_input_at.pop(session_id, None)
@@ -789,6 +822,7 @@ class RemoteDesktopAgent:
                         await asyncio.gather(*tasks, return_exceptions=True)
                     self.stream_tasks.clear()
                     self.stream_options.clear()
+                    self.media_pressure.clear()
                     for session_id in tuple(self.control_sessions):
                         await self._release_session_input(session_id)
                     self.control_sessions.clear()
