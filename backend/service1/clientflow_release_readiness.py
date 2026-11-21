@@ -68,6 +68,12 @@ def planning_readiness(
              and update_only(releases[2], "clientflow-1.3.46-seq-1247")
              and releases[2].get("min_current_version") == "1.3.45"
              and releases[2].get("max_current_version") == "1.3.45")
+            or
+            (catalog.get("catalog_sequence") == 1248 and len(releases) == 3
+             and update_only(releases[1], "clientflow-1.3.46-seq-1247")
+             and update_only(releases[2], "clientflow-1.3.47-seq-1248")
+             and releases[2].get("min_current_version") == "1.3.46"
+             and releases[2].get("max_current_version") == "1.3.46")
         )
     catalog_match = bool(
         match
