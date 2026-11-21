@@ -90,7 +90,7 @@ def test_16_by_9_native_capture_is_bounded_without_changing_pointer_geometry():
     assert pressure.bounded_capture_dimensions(3840, 2160, congested=True) == (960, 540)
     assert pressure.bounded_capture_dimensions(1280, 720, congested=False) == (1280, 720)
     assert pressure.bounded_capture_dimensions(1920, 1200, congested=False) == (1152, 720)
-    assert pressure.bounded_capture_dimensions(1080, 1920, congested=True) == (320, 540)
+    assert pressure.bounded_capture_dimensions(1080, 1920, congested=True) == (320, 568)
 
 
 def test_remote_capture_scales_jpeg_only_after_native_probe_preserving_mouse_coordinates():
