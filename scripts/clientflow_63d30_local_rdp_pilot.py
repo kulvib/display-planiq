@@ -149,15 +149,17 @@ def set_setting(uid: int, key: str, value: str) -> None:
 
 
 def credentials_empty(uid: int) -> bool:
+    """Check GNOME user-mode credentials without exposing secret values."""
     response = kiosk(uid, "grdctl", "status")
     if response.returncode:
         raise RuntimeError("STOP: kunne ikke læse credentials status")
-    result = {}
     for field in ("Username", "Password"):
-        match = re.search(rf"(?m)^ *{field}: *(.*?) *$", response.stdout)
-        result[field] = match.group(1) if match else None
-    return result == {"Username": "(empty)", "Password": "(empty)"}
-
+        values = re.findall(
+            rf"(?m)^[ \t]*{field}:[ \t]*([^\r\n]*)$", response.stdout
+        )
+        if len(values) != 1 or values[0].strip(" \t") != "(empty)":
+            return False
+    return True
 
 def read_baseline(uid: int) -> dict[str, str]:
     result = {key: get_setting(uid, key) for key in BASE_KEYS}
