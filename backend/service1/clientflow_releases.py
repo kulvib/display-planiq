@@ -303,6 +303,34 @@ def load_catalog() -> dict[str, Any]:
                 and newest.get("requires_reboot") is True
             ):
                 raise ClientFlowCatalogError("1247 skal være eksakt 1246→1247 Viborg1 update-only")
+        # 1248 may be a third selectable entry only by replacing the historical
+        # 1246 selector with its still-active 1247 source. The signed 1246 TAR
+        # remains in Render's immutable store, never deleted by catalog changes.
+        elif data["catalog_sequence"] == 1248 and newest.get("status") == "supported":
+            if not (
+                len(releases) == 3
+                and data.get("latest_stable") == "1.3.44"
+                and data.get("default_install_version") == "1.3.44"
+                and [item.get("release_id") for item in releases] == [
+                    "clientflow-1.3.44-seq-1245",
+                    "clientflow-1.3.46-seq-1247",
+                    "clientflow-1.3.47-seq-1248",
+                ]
+                and releases[0].get("status") == "stable"
+                and releases[0].get("installable") is True
+                and releases[0].get("install_modes") == ["fresh_install", "in_place_update"]
+                and releases[1].get("status") == "supported"
+                and releases[1].get("installable") is False
+                and releases[1].get("install_modes") == ["in_place_update"]
+                and newest.get("release_sequence") == 1248
+                and newest.get("installable") is False
+                and newest.get("update_allowed") is True
+                and newest.get("install_modes") == ["in_place_update"]
+                and newest.get("min_current_version") == "1.3.46"
+                and newest.get("max_current_version") == "1.3.46"
+                and newest.get("requires_reboot") is True
+            ):
+                raise ClientFlowCatalogError("1248 must be exact 1247->1248 Viborg1 update-only")
         elif (
             data.get("latest_stable") != newest.get("version")
             or data.get("default_install_version") != newest.get("version")
@@ -335,6 +363,16 @@ def load_catalog() -> dict[str, Any]:
             validated_catalog_mode_1247(active_catalog=data)
         except (PilotStage1247Denied, ClientFlowPilot1247Denied) as exc:
             raise ClientFlowCatalogError("1247-kataloget mangler præcist godkendt kildeautoritet") from exc
+
+    if data["catalog_sequence"] == 1248:
+        from .clientflow_release_pilot_stage_1248 import (
+            PilotStage1248Denied, validated_catalog_mode_1248,
+        )
+        from .clientflow_pilot_1248 import ClientFlowPilot1248Denied
+        try:
+            validated_catalog_mode_1248(active_catalog=data)
+        except (PilotStage1248Denied, ClientFlowPilot1248Denied) as exc:
+            raise ClientFlowCatalogError("1248 catalog lacks exact approved source authority") from exc
 
     if data["catalog_sequence"] >= 1244 and sum(
         item.get("status") == "stable" for item in releases
