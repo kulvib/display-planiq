@@ -50,7 +50,7 @@ test("63D21: 1248 UI is one-client, signed-source and backend authorization only
   assert.match(panel, /expected_policy_revision: status\.revision/);
   assert.match(panel, /Genbekræft superadministratorens adgangskode/);
   assert.match(panel, /starter IKKE updater-servicen/);
-  assert.match(panel, /setPassword\("")/);
+  assert.ok(panel.includes('setPassword("");'));
   assert.match(panel, /alreadyKnown/);
   assert.doesNotMatch(panel, /setInterval|setTimeout|useEffect\(|systemctl/);
   assert.match(route, /_reauth\(request, session, user, body\.password\)/);
