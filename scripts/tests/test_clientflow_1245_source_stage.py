@@ -19,6 +19,8 @@ REQUIRED = (
     "backend/service1/clientflow_pilot_1246_approval.json",
     "backend/service1/clientflow_release_catalog_1247_pilot.stage.json",
     "backend/service1/clientflow_pilot_1247_approval.json",
+    "backend/service1/clientflow_release_catalog_1248_pilot.stage.json",
+    "backend/service1/clientflow_pilot_1248_approval.json",
     "backend/service1/clientflow_release_catalog_1245_pilot.stage.json",
     "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
     "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json",
@@ -94,7 +96,7 @@ def test_catalog_promotion_or_old_release_overwrite_is_rejected(tmp_path):
     path = repo / "backend/service1/clientflow_release_catalog.json"
     baseline = json.loads(path.read_text(encoding="utf-8"))
     modified = json.loads(path.read_text(encoding="utf-8"))
-    modified["catalog_sequence"] = 1248
+    modified["catalog_sequence"] = 1249
     modified["latest_stable"] = modified["default_install_version"] = "1.3.44"
     modified["releases"][0]["release_id"] = "clientflow-1.3.44-seq-1245"
     modified["releases"][0]["version"] = "1.3.44"
