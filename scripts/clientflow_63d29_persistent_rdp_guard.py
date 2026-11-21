@@ -268,13 +268,19 @@ def status(uid: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="63D-29: persistent RDP network guard")
-    parser.add_argument("action", choices=["install", "status", "remove"])
+    parser.add_argument("action", choices=["install", "status", "remove", "drill"])
     args = parser.parse_args()
     print("===== 63D-29 · PERSISTENT RDP NETWORK GUARD =====", flush=True)
     try:
         uid = target()
         if args.action == "install":
             install_guard(uid)
+        elif args.action == "drill":
+            # Guard-only drill: no RDP activation, remove after kernel verification.
+            # If any unexpected state blocks removal, fail closed and retain guard.
+            install_guard(uid)
+            status(uid)
+            remove_guard(uid)
         elif args.action == "remove":
             remove_guard(uid)
         else:
