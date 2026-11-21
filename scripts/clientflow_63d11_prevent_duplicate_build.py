@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Refuse rebuilding approved 1247 identity from newer source bytes.
+"""Refuse rebuilding approved 1247 or 1248 identity from newer source bytes.
 
-The previously approved 1247 TAR is immutable; later backend policy changes
+The previously approved 1247 and 1248 TARs are immutable; later backend policy changes
 must not create a second bundle with the same release ID and different source.
 """
 from __future__ import annotations
@@ -24,6 +24,18 @@ def verify(expected_source_sha: str, root: Path = ROOT) -> None:
                 or locked.get('approved') is not True
                 or locked.get('source_commit') != expected_source_sha):
             raise ValueError('1247 is already approved: refuse changed-source duplicate build')
+
+
+    if (version, release.get("release_sequence")) == ("1.3.47", 1248):
+        locked = json.loads(
+            (root / "backend/service1/clientflow_pilot_1248_approval.json").read_text()
+        )
+        if (
+            locked.get("release_id") != "clientflow-1.3.47-seq-1248"
+            or locked.get("approved") is not True
+            or locked.get("source_commit") != expected_source_sha
+        ):
+            raise ValueError("1248 is already approved: refuse changed-source duplicate build")
 
 
 def main() -> int:
