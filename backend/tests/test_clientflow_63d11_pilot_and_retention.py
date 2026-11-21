@@ -238,7 +238,10 @@ def test_duplicate_1247_build_rejected_for_new_main(tmp_path):
     with pytest.raises(ValueError, match='already approved'):
         verify('f' * 40, root=fixture)
     verify(SOURCE_COMMIT, root=fixture)  # exact historical signed source
-    verify('f' * 40)  # new 1248 source is not a duplicate 1247 build
+    # The newly signed 1248 source is equally immutable.
+    with pytest.raises(ValueError, match='1248 is already approved'):
+        verify('f' * 40)
+    verify('c0d5a092efe0c4e8638866ad98621481d6f5d0e8')
     workflow = (ROOT / '.github/workflows/release-build.yml').read_text()
     assert 'clientflow_63d11_prevent_duplicate_build.py' in workflow
     assert '--expected-source-sha "$EXPECTED_SOURCE_SHA"' in workflow
