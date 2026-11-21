@@ -33,7 +33,7 @@ def manifest(first: int, *, offset: int = 0, count: int = 8,
 
 def output_dir(tmp_path: Path, raw: bytes) -> Path:
     out = tmp_path / "out"
-    out.mkdir()
+    out.mkdir(parents=True)
     (out / "index.m3u8").write_bytes(raw)
     for name in [
         line for line in raw.decode().splitlines()
