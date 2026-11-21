@@ -263,3 +263,27 @@ NO_RDP_SERVICE_WAS_STARTED_BY_THIS_TOOL=True
 Sandsynlig parserårsag: nftables skriver talprioriteten `-150` som det semantisk identiske nøgleord `mangle`, mens parseren kun accepterede `-150` eller `raw + 150`. Dette er verificeret som nft-prioritets-alias i den officielle manpage, men **den faktiske kerneregel på Viborg1 er endnu ikke læst**, og andre formatteringsafvigelser kan ikke udelukkes. Rettelsen tilføjer `mangle` med positiv og negativ regressionstest. Der er fortsat **ingen fysisk isolationstest, boot-failure-drill eller aktiv GNOME RDP-test**.
 
 **Recoverygate:** læs udelukkende den dedikerede `nft list table inet clientflow_63d29_rdp_guard`, `systemctl show/is-enabled/is-active` for den tilføjede unit og `display-manager.service`, de præcise oprettede filers tilstedeværelse, GNOME user/system service og GSettings `enable`. Først efter denne observation kan en præcist afgrænset, godkendt cleanup udføres, som ikke stopper display-manager eller fjerner anden firewallkonfiguration. Selv en grøn CI kan ikke erstatte denne efterkontrol.
+
+## Fysisk efterkontrol efter mislykket 63D-29 – verificeret 21. november 2026
+
+Operatøren udførte den skrivebeskyttede, whitelistede `nft/systemctl/GSettings/ss`-efterkontrol på Viborg1. Resultater:
+
+| Kontrol | Observeret |
+|---|---|
+| `clientflow-63d29-rdp-guard.service` | `active` og `enabled` |
+| `/etc/clientflow/rdp-guard-63d29/guard.nft` | Eksisterer |
+| Egen systemd-unitfil | Eksisterer |
+| `display-manager.service.d/clientflow-63d29-rdp-guard.conf` | Eksisterer |
+| Display-manager drop-in loaded / Requires guard | Begge true |
+| nft `table inet clientflow_63d29_rdp_guard` | Eksisterer |
+| nft INPUT priority | `mangle` (alias for -150) |
+| nft TCP-regel | `iifname != "lo" tcp dport 3389-3398 drop` |
+| nft UDP-regel | `iifname != "lo" udp dport 3389-3398 drop` |
+| GNOME system RDP | `inactive` |
+| GNOME user RDP | `inactive` og `disabled` |
+| GSettings `enable` | `false` |
+| TCP-/UDP-lyttere 3389–3398 | Ingen |
+
+**Konklusion:** Den mislykkede `drill` har efterladt guard-systemd/files og netværksregler aktive. Kernereglerne er faktisk korrekt installeret: parserens manglende `mangle` var fejlen. GNOME RDP er slukket. Der er ikke foretaget oprydning endnu.
+
+**Recovery-kandidat:** Kør kun `remove` fra kildehash-fastlåst repareret codebase, ikke `drill`. Ny sikkerhedshærdning verificerer, at display-manager er aktiv både før og efter `daemon-reload`, og at den ikke længere har `Requires=clientflow-63d29-rdp-guard.service` **før** guard unit stoppes. Hvis beviset fejler, **bevares nft firewalltable + unit**, og der udføres ingen reboot eller RDP-aktivering før manuel triage. Efter `remove` skal en separat read-only kontrol bevise nul guard-kerneregler, nul drop-in og nul relaterede enheder mens kiosk fortsat er aktiv. Alle CI-gates skal være grønne på præcis SHA for recovery-koden før fysisk handling.
