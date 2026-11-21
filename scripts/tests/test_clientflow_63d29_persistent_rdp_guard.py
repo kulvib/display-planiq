@@ -205,3 +205,62 @@ def test_remove_refuses_unknown_display_manager_dependency(monkeypatch, tmp_path
         guard.remove_guard("1000")
     assert not commands
     assert dropin_path.exists()
+
+
+@pytest.mark.parametrize("blocked", [
+    "system-active", "system-enabled", "user-active", "user-enabled",
+    "settings-enabled", "rdp-listener",
+])
+def test_unprotect_rejects_unexpected_rdp_activation_or_boot_enable(monkeypatch, blocked):
+    def fake_run(*args, **kwargs):
+        if args == ("systemctl", "is-active", "gnome-remote-desktop.service"):
+            return Result(code=0 if blocked == "system-active" else 3,
+                          stdout="active" if blocked == "system-active" else "inactive")
+        if args == ("systemctl", "is-enabled", "gnome-remote-desktop.service"):
+            return Result(stdout="enabled" if blocked == "system-enabled" else "disabled")
+        if args[:3] == ("ss", "-H", "-ltn"):
+            return Result(stdout=(
+                "LISTEN 0 128 0.0.0.0:3389 0.0.0.0:*" if blocked == "rdp-listener"
+                else "LISTEN 0 128 0.0.0.0:443 0.0.0.0:*"
+            ))
+        if args[:3] == ("ss", "-H", "-lun"):
+            return Result()
+        raise AssertionError(repr(args))
+    def fake_kiosk(*args, uid):
+        if args == ("systemctl", "--user", "is-active", "gnome-remote-desktop.service"):
+            return Result(stdout="active" if blocked == "user-active" else "inactive")
+        if args == ("systemctl", "--user", "is-enabled", "gnome-remote-desktop.service"):
+            return Result(stdout="enabled" if blocked == "user-enabled" else "disabled")
+        if args == ("gsettings", "get", "org.gnome.desktop.remote-desktop.rdp", "enable"):
+            return Result(stdout="true" if blocked == "settings-enabled" else "false")
+        raise AssertionError(repr(args))
+    monkeypatch.setattr(guard, "run", fake_run)
+    monkeypatch.setattr(guard, "kiosk", fake_kiosk)
+    with pytest.raises(RuntimeError, match="STOP"):
+        guard.ensure_rdp_off("1000")
+
+
+def test_unprotect_accepts_proven_disabled_rdp_without_other_network_changes(monkeypatch):
+    commands = []
+    def fake_run(*args, **kwargs):
+        commands.append(args)
+        if args == ("systemctl", "is-active", "gnome-remote-desktop.service"):
+            return Result(code=3, stdout="inactive")
+        if args == ("systemctl", "is-enabled", "gnome-remote-desktop.service"):
+            return Result(stdout="disabled")
+        if args[0] == "ss":
+            return Result(stdout="LISTEN 0 128 0.0.0.0:443 0.0.0.0:*")
+        raise AssertionError(repr(args))
+    def fake_kiosk(*args, uid):
+        commands.append(args)
+        if "is-active" in args:
+            return Result(code=3, stdout="inactive")
+        if "is-enabled" in args:
+            return Result(stdout="disabled")
+        if "gsettings" in args:
+            return Result(stdout="false")
+        raise AssertionError(repr(args))
+    monkeypatch.setattr(guard, "run", fake_run)
+    monkeypatch.setattr(guard, "kiosk", fake_kiosk)
+    guard.ensure_rdp_off("1000")
+    assert len(commands) == 7
