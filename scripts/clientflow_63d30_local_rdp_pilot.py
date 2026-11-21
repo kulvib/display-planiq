@@ -147,7 +147,7 @@ def credentials_empty(uid: int) -> bool:
         raise RuntimeError("STOP: kunne ikke læse credentials status")
     result = {}
     for field in ("Username", "Password"):
-        match = re.search(rf"(?m)^[ \\t]*{field}:[ \\t]*(.*?)[ \\t]*$", response.stdout)
+        match = re.search(rf"(?m)^ *{field}: *(.*?) *$", response.stdout)
         result[field] = match.group(1) if match else None
     return result == {"Username": "(empty)", "Password": "(empty)"}
 
