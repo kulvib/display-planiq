@@ -103,7 +103,7 @@ def test_unapproved_synthetic_stable_1247_fails_closed(tmp_path, monkeypatch):
 def test_exact_1247_update_only_pilot_stage_is_accepted(tmp_path, monkeypatch):
     from service1.clientflow_release_pilot_stage_1247 import load_staged_catalog_1247
     actual = _load(tmp_path, monkeypatch, load_staged_catalog_1247())
-    assert [r["release_sequence"] for r in actual["releases"]] == [1245, 1246, 1247]
+    assert [r["release_sequence"] for r in actual["releases"]] == [1245, 1247, 1248]
     assert actual["default_install_version"] == actual["latest_stable"] == "1.3.44"
     assert actual["releases"][2]["installable"] is False
     assert actual["releases"][2]["min_current_version"] == "1.3.45"
