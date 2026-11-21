@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from typing import Any
 
 from .clientflow_pilot_1248 import (
     PILOT_CLIENT_ID, PILOT_RELEASE_ID, PILOT_FROM_VERSIONS,
