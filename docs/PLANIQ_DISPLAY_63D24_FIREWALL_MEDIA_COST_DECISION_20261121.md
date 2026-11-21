@@ -287,3 +287,33 @@ Operatøren udførte den skrivebeskyttede, whitelistede `nft/systemctl/GSettings
 **Konklusion:** Den mislykkede `drill` har efterladt guard-systemd/files og netværksregler aktive. Kernereglerne er faktisk korrekt installeret: parserens manglende `mangle` var fejlen. GNOME RDP er slukket. Der er ikke foretaget oprydning endnu.
 
 **Recovery-kandidat:** Kør kun `remove` fra kildehash-fastlåst repareret codebase, ikke `drill`. Ny sikkerhedshærdning verificerer, at display-manager er aktiv både før og efter `daemon-reload`, og at den ikke længere har `Requires=clientflow-63d29-rdp-guard.service` **før** guard unit stoppes. Hvis beviset fejler, **bevares nft firewalltable + unit**, og der udføres ingen reboot eller RDP-aktivering før manuel triage. Efter `remove` skal en separat read-only kontrol bevise nul guard-kerneregler, nul drop-in og nul relaterede enheder mens kiosk fortsat er aktiv. Alle CI-gates skal være grønne på præcis SHA for recovery-koden før fysisk handling.
+
+## 63D-29 – fysisk recovery PASS, 21. november 2026
+
+Operatøren gentog den CI-gatede, SHA-256-fastlåste `remove`-recovery fra commit `cf8f02cd4c8d6e1519e7de759f820bc35ee3d36e`. CI og single-node PostgreSQL-smoketest var `PASS`; kildehash matchede.
+
+**Rapporteret resultat fra den fysiske Viborg1-terminal:**
+
+```text
+CI= PASS
+Display single-node PostgreSQL smoke= PASS
+PINNED_SOURCE_SHA256=PASS
+RDP_VERIFIED_OFF=True
+FIREWALL_GUARD_REMOVED=True
+REMOVE_RETURN_CODE= 0
+GUARD_SERVICE_INACTIVE= PASS
+GUARD_SERVICE_NOT_ENABLED= PASS
+DISPLAY_MANAGER_ACTIVE= PASS
+DISPLAY_MANAGER_REQUIRE_REMOVED= PASS
+NFT_TABLE_REMOVED= PASS
+GUARD_RULE_FILE_REMOVED= PASS
+GUARD_SERVICE_FILE_REMOVED= PASS
+DISPLAY_MANAGER_DROPIN_REMOVED= PASS
+RECOVERY_STATUS= PASS
+```
+
+**Disposition:** 63D-29's midlertidige nftables-regel, dedikerede systemd service og display-manager drop-in er fjernet; display-manager forblev aktiv. Ingen aktiv GNOME RDP-test blev udført. Den tidligere `mangle`-parserfejl blev rettet og recovery-verificeret. 63D-29 fysisk guard-only genkørsel er ikke nødvendig.
+
+**Fremadrettet sikkerhedsgate:** En ny *aktiv* GNOME RDP-pilot er en **særskilt godkendelses-/implementeringsfase** og skal have: boot-fail-closed netværksisolation, en reversibel tjeneste-/GSettings-/TLS-/credential-ændring, watchdog som deaktiverer RDP før firewall fjernes, localhost autentificeret TLS-klienttest, negativ LAN/WiFi-test, kioskfastholdelse, præcis mus/tekst, og senere HTTPS/443-only transport uden ekstra betalt infrastruktur. Fravær af credential baseline blev tidligere observeret; den skal revurderes inden mutation. Gammel 120-sekunders guard må aldrig beskytte aktiveret RDP.
+
+**Ingen merge til `main`, ingen Render-, database- eller ClientFlow release-ændringer blev foretaget af denne recovery.**
