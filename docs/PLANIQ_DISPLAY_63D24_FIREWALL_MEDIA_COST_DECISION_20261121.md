@@ -209,3 +209,28 @@ Den seneste skrivebeskyttede måling fra Viborg1 (CLIENT_ID=3) dokumenterer den 
 **Reboot-sikkerhed / rollback:** Den eksisterende 63D-25 guard-only timer **sletter** sin firewall-tabel efter 120 sekunder. Den er *kun* sikker, fordi den aldrig aktiverer RDP. Den må **aldrig genbruges** som failsafe for en aktiv RDP-pilot: Ved proceskrasj ville den efterlade RDP aktiv og fjerne beskyttelsen. En rigtig RDP-pilot skal have et selvstændigt watchdog-flow, der først stopper/disable RDP og verificerer lytteren lukket og alle GSettings restored, og **derefter** kan fjerne firewallreglen. Ved fejl skal firewallreglen bevares, og der skal findes beskyttelse ved reboot før GNOME-brugersessionen startes. Certifikat/private key og credentials må ikke logges eller sendes i argumenter/PR. Restore må ikke slette eksisterende secrets uden baseline og ejerskab.
 
 **Gate 63D-27:** GNOME var fortsat deaktiveret, og den primære session er korrekt type. En aktiv RDP-billed-/inputtest er endnu **ikke** udført, og HTTPS/443-transportsystemet er ikke design- eller lasttestet. PR #403 er draft, release 1248 uændret.
+
+## Fysisk 63D-28 credential-baseline – PASS, 21. november 2026
+
+Operatøren udførte en skrivebeskyttet `grdctl status` med eksplicit filtrering (ingen rå statusdump, ingen `--show-credentials`). Output:
+
+- `RDP_USERNAME_STATE=EMPTY`
+- `RDP_PASSWORD_STATE=EMPTY`
+- `SAFE_TO_CREATE_NEW_PILOT_CREDENTIALS=True`
+- `CREDENTIAL_VALUES_PRINTED=False`
+- `CONFIGURATION_CHANGED=False`
+- `READ_ONLY=True`
+
+Dette bekræfter, at *der ikke vises eksisterende credential-værdier i den undersøgte GNOME user-mode RDP status*. Det beviser ikke fremtidig write/clear-funktion, og almindelig `grdctl status`-output skal fortsat filtreres.
+
+### 63D-29 sikkerhedsgate
+
+Før nogen lokal RDP-start:
+1. Brug alene `clientflow-kiosk` user-mode `grdctl rdp` og `gnome-remote-desktop.service`; **aldrig** `--system`, Remote Login, xrdp eller --headless.
+2. TLS/private key må kun oprettes i et unikt, filrettighedsbeskyttet testkatalog. Credential må **ikke** optræde som command-line argument (GNOME 50.2 dokumenterer en stdin-variant), miljøvariabel, journal, GitHub eller delt rapport.
+3. Dokumentér en atomisk, persistent nft-beskyttelse af forhandlingsområdet på **TCP og UDP** for begge IP-versioner og verificér et boot-time fail-closed service dependency. Den gamle 63D-25 timer må ikke fjerne en aktiv RDP-guard.
+4. Implementér og test root-owned watchdog, som gendanner RDP `enable=false`, `view-only=true`, `negotiate-port=true`, TLS tomt, credentials tomme og `systemctl --user` disabled/inactive; fjern **først** firewallregler, når RDP beviseligt er stoppet, inklusive efter reboot. Ved uvished efterlades garderingen aktiv.
+5. Lokal forbindelse skal kun ske via loopback (eventuelt en særskilt godkendt, autentificeret SSH-forward til localhost); SSH-forward er en isoleret fysisk test, **ikke** den endelige kommunale HTTPS/443-transport.
+6. Remote Desktop skal observeres med **læsbar tekst ved skærmens faktiske opløsning**, input samt HLS-simultanitet, CPU/RAM, reconnect, netværksafbrydelse og rollback. Genbrug den eksisterende Render-server, hvis 512 MiB/CPU målinger består.
+
+**STOP:** 63D-28 PASS alene giver ikke tilladelse til at tænde RDP. PR #403 forbliver draft.
