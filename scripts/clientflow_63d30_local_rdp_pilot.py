@@ -30,8 +30,12 @@ import time
 
 # Avoid generating __pycache__ files in the temporary staged root bundle.
 sys.dont_write_bytecode = True
-# Imported from the same pinned pilot bundle, never from a mutable release.
-import clientflow_63d29_persistent_rdp_guard as guard
+# Both package-style CI imports and standalone root-staged execution must
+# resolve the *same adjacent* guard script, never a mutable production release.
+if __package__:
+    from . import clientflow_63d29_persistent_rdp_guard as guard
+else:
+    import clientflow_63d29_persistent_rdp_guard as guard
 
 SCHEMA = "org.gnome.desktop.remote-desktop.rdp"
 KIOSK = "clientflow-kiosk"
