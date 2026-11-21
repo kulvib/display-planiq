@@ -234,3 +234,15 @@ Før nogen lokal RDP-start:
 6. Remote Desktop skal observeres med **læsbar tekst ved skærmens faktiske opløsning**, input samt HLS-simultanitet, CPU/RAM, reconnect, netværksafbrydelse og rollback. Genbrug den eksisterende Render-server, hvis 512 MiB/CPU målinger består.
 
 **STOP:** 63D-28 PASS alene giver ikke tilladelse til at tænde RDP. PR #403 forbliver draft.
+
+## 63D-29 – boot-ordnet, ikke-destruktiv netværksbeskyttelse (kodekandidat)
+
+Fysisk credential-baseline er PASS, men GNOME RDP forbliver slukket.
+
+Ny kandidat: `scripts/clientflow_63d29_persistent_rdp_guard.py` med `install/status/remove`. Den opretter en dedikeret `nftables` `inet` INPUT drop-tabel for **TCP+UDP 3389–3398 på ikke-loopback** (både IPv4/IPv6), plus en uafhængig systemd boot-unit, som ordnes før `sysinit.target`, `network-pre.target` og `display-manager.service`. Ingen eksisterende nftables-tabel overskrives, og ingen GNOME RDP-login, TLS, GSettings, Sessioner, Render eller ClientFlow-release ændres.
+
+`remove` stopper ved en GNOME RDP system/user-service som er aktiv, `enable != false` eller en RDP TCP/UDP listener i den undersøgte port-range. Eksisterende guard skal matche den præcise dedikerede unit- og nft-fil, før fjernelse tillades.
+
+**Denne kode er ikke i sig selv en RDP-aktiveringsautorisation:** systemd `Before=` er **ordering, ikke en stærk failure dependency**; ved fejl i guard-unit kan display manager potentielt fortsætte med at starte. Inden en faktisk RDP-aktivering må der etableres og demonstreres en særskilt **fail-closed dependency** (fx en lille isoleret display-manager drop-in med `Requires=`+`After=`), og den må aldrig fjernes, før RDP er stoppet og alle credentials/TLS/portindstillinger restaureret. Prøv ikke at bruge 63D-25 den tidsstyrede guard, den sletter firewallreglen uden RDP-stop.
+
+**Fysisk rækkefølge:** 63D-29 skal først passere GitHub CI og isoleret boot-/failure-injection-test. Derefter er en *guard-only* installation på Viborg1 tilladt som separat observeret test – RDP forbliver slukket. En fremtidig aktiv RDP-pilot skal laves som en samlet kandidat med TLS, hemmeligheder via stdin (verificér den konkrete GRD 50.2 CLI), autonom watchdog som stopper GNOME først, fail-closed ved boot samt en autentificeret localhost testklient. Ekstern/kommunal browser-HTTPS/443 transport er en anden fase, ikke bevist her.
