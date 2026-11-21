@@ -244,3 +244,91 @@ def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1247()
     assert cat['releases'][2]['min_current_version'] == cat['releases'][2]['max_current_version'] == '1.3.45'
     fleet = json.loads((ROOT / 'backend/service1/clientflow_1245_fleet_acceptance.json').read_text())
     assert fleet['physical_pilot_accepted'] is False
+
+
+def test_current_unsigned_1248_accepts_only_exact_pinned_1247_catalog(tmp_path):
+    """Regression: current 3-entry 1247 stage must not fail the 1248 handoff."""
+    assert handoff_gate._verify_original_catalog(
+        ROOT, "clientflow-1.3.47-seq-1248", 1248,
+    ) is None
+
+    repo = tmp_path / "repo"
+    paths = [
+        'backend/service1/clientflow_release_catalog.json',
+        'backend/service1/clientflow_release_catalog_1246_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1246_approval.json',
+        'backend/service1/clientflow_release_catalog_1247_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1247_approval.json',
+    ]
+    for name in paths:
+        destination = repo / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / name, destination)
+
+    active_path = repo / paths[0]
+    catalog = json.loads(active_path.read_text())
+    catalog['releases'][2]['installable'] = True  # unauthorized promotion
+    _save(active_path, catalog)
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate._verify_original_catalog(repo, 'clientflow-1.3.47-seq-1248', 1248)
+
+    # A rollback to the valid 1246 pilot catalog is also not a valid base for 1248.
+    shutil.copy2(ROOT / paths[1], active_path)
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate._verify_original_catalog(repo, 'clientflow-1.3.47-seq-1248', 1248)
+
+
+def test_full_unsigned_1248_handoff_with_exact_active_1247_catalog(scenario):
+    """End-to-end reproduction of the gate reached in 1248 release-build CI."""
+    repo, handoff = scenario
+    for name in (
+        'backend/service1/clientflow_release_catalog.json',
+        'backend/service1/clientflow_release_catalog_1247_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1247_approval.json',
+    ):
+        shutil.copy2(ROOT / name, repo / name)
+    (repo / 'client/VERSION').write_text('1.3.47\n')
+    source_inputs = json.loads((repo / 'client/release/release-input.json').read_text())
+    source_inputs['release_sequence'] = 1248
+    _save(repo / 'client/release/release-input.json', source_inputs)
+
+    release_id = 'clientflow-1.3.47-seq-1248'
+    candidate = release_id + '-candidate.tar'
+    installer = 'clientflow-installer-1.3.47.pyz'
+    (handoff / INSTALLER).rename(handoff / installer)
+    (handoff / CANDIDATE).unlink()
+    manifest_path = handoff / 'manifest.candidate.json'
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(version='1.3.47', release_sequence=1248, release_id=release_id)
+    manifest['fresh_installer']['file'] = installer
+    _save(manifest_path, manifest)
+    with tarfile.open(handoff / candidate, 'w', format=tarfile.PAX_FORMAT) as archive:
+        for member, blob in (
+            ('manifest.json', manifest_path.read_bytes()),
+            ('clientflow-payload.tar', (handoff / 'clientflow-payload.tar').read_bytes()),
+            (installer, (handoff / installer).read_bytes()),
+        ):
+            _add_member(archive, member, blob)
+
+    artifact_names = sorted({candidate, installer, 'clientflow-payload.tar', 'manifest.candidate.json'})
+    sums = ''.join(f'{_hash((handoff / name).read_bytes())}  {name}\n' for name in artifact_names)
+    (handoff / 'SHA256SUMS').write_text(sums)
+    record_path = handoff / 'REPRODUCIBILITY.json'
+    record = json.loads(record_path.read_text())
+    record.update(version='1.3.47', release_sequence=1248, release_id=release_id)
+    record['artifacts'] = {
+        name: {'size': (handoff / name).stat().st_size, 'sha256': _hash((handoff / name).read_bytes())}
+        for name in artifact_names + ['SHA256SUMS']
+    }
+    _save(record_path, record)
+
+    verified = handoff_gate.verify(
+        repo, handoff, source_sha=SHA,
+        candidate_sha256=_hash((handoff / candidate).read_bytes()),
+        installer_sha256=_hash((handoff / installer).read_bytes()),
+        runtime_transport_sha256=TRANSPORT,
+    )
+    assert verified['result'] == 'VERIFIED_UNSIGNED_HANDOFF_ONLY'
+    assert verified['release_id'] == release_id
+    assert verified['release_approved'] is False
+    assert verified['deployment_authorized'] is False
