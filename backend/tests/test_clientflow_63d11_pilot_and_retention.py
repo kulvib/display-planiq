@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import pytest
 
 from service1.clientflow_pilot_1247 import (
@@ -223,11 +224,21 @@ def test_source_wiring_is_reauth_and_database_only():
     assert 'clientflow_release_pilot_63d11.router' in (SVC/'main.py').read_text()
 
 
-def test_duplicate_1247_build_rejected_for_new_main():
+def test_duplicate_1247_build_rejected_for_new_main(tmp_path):
     from scripts.clientflow_63d11_prevent_duplicate_build import verify
+    # The current unsigned source is 1248. Prove the 1247 anti-rebuild gate
+    # against a pinned historical identity, not against today's VERSION.
+    fixture = tmp_path / 'approved-1247'
+    (fixture / 'client/release').mkdir(parents=True)
+    (fixture / 'backend/service1').mkdir(parents=True)
+    (fixture / 'client/VERSION').write_text('1.3.46\n')
+    (fixture / 'client/release/release-input.json').write_text("""{\"schema_version\":1,\"release_sequence\":1247}""")
+    shutil.copy2(ROOT / 'backend/service1/clientflow_pilot_1247_approval.json',
+                 fixture / 'backend/service1/clientflow_pilot_1247_approval.json')
     with pytest.raises(ValueError, match='already approved'):
-        verify('f' * 40)
-    verify(SOURCE_COMMIT)  # historical, exact approved SHA is eligible
+        verify('f' * 40, root=fixture)
+    verify(SOURCE_COMMIT, root=fixture)  # exact historical signed source
+    verify('f' * 40)  # new 1248 source is not a duplicate 1247 build
     workflow = (ROOT / '.github/workflows/release-build.yml').read_text()
     assert 'clientflow_63d11_prevent_duplicate_build.py' in workflow
     assert '--expected-source-sha "$EXPECTED_SOURCE_SHA"' in workflow
