@@ -246,3 +246,20 @@ Ny kandidat: `scripts/clientflow_63d29_persistent_rdp_guard.py` med `install/sta
 **Denne kode er ikke i sig selv en RDP-aktiveringsautorisation:** En efterfølgende kildeaudit har nu tilføjet en særskilt `display-manager.service` drop-in med `Requires=clientflow-63d29-rdp-guard.service` og `After=...`, og den tidligere `ConditionPathExists=` er fjernet, så manglende firewallfil ikke blot får enheden til at blive sprunget over. `remove` kræver inaktiv RDP og fjerner drop-in **før** systemd-guard stoppes, ellers kan `Requires=` stoppe den aktive kiosk. Der er nu negative tests for både boot-afhængighed og ukendte drop-in-filer. Den faktiske boot-dependency, failure-injection og GPIO/sessionkæde er **ikke fysisk verificeret**, og en selvstændig RDP-first watchdog for credentials/TLS/portændringer mangler fortsat. Giv derfor ingen aktiv RDP-autorisation ud fra et PASS på firewalløvelsen alene. Prøv ikke at bruge 63D-25 den tidsstyrede guard, den sletter firewallreglen uden RDP-stop.
 
 **Fysisk rækkefølge:** 63D-29 skal først passere GitHub CI og isoleret boot-/failure-injection-test. Derefter er en *guard-only* installation på Viborg1 tilladt som separat observeret test – RDP forbliver slukket. En fremtidig aktiv RDP-pilot skal laves som en samlet kandidat med TLS, hemmeligheder via stdin (verificér den konkrete GRD 50.2 CLI), autonom watchdog som stopper GNOME først, fail-closed ved boot samt en autentificeret localhost testklient. Ekstern/kommunal browser-HTTPS/443 transport er en anden fase, ikke bevist her.
+
+## 63D-29 – fysisk fejl og sikkerhedsstop (21. november 2026)
+
+Operatøren udførte den kildehash-verificerede `drill` fra commit `c40c8784a9bce626d3a360be62f0ff1224c9a605`. Output:
+
+```text
+PINNED_SOURCE_SHA256=PASS
+PREFLIGHT=PASS
+STOP= RuntimeError STOP: Kernereglerne matcher ikke expected TCP/UDP drop
+NO_RDP_SERVICE_WAS_STARTED_BY_THIS_TOOL=True
+```
+
+**Dette er ikke en bestået firewalløvelse.** Koden installerede (eller forsøgte at installere) systemd-unit, display-manager `Requires=/After=` drop-in og nftables-regler **før** verifikationen. Da `guard_verified()` fejlede, stoppede `drill` inden `remove_guard()`. Eventuelt installeret firewall, unit og boot-afhængighed kan derfor være tilbage på Viborg1. Operatøren er instrueret i ikke at genstarte, aktivere RDP, installere igen eller slette filer før en read-only tilstandskontrol.
+
+Sandsynlig parserårsag: nftables skriver talprioriteten `-150` som det semantisk identiske nøgleord `mangle`, mens parseren kun accepterede `-150` eller `raw + 150`. Dette er verificeret som nft-prioritets-alias i den officielle manpage, men **den faktiske kerneregel på Viborg1 er endnu ikke læst**, og andre formatteringsafvigelser kan ikke udelukkes. Rettelsen tilføjer `mangle` med positiv og negativ regressionstest. Der er fortsat **ingen fysisk isolationstest, boot-failure-drill eller aktiv GNOME RDP-test**.
+
+**Recoverygate:** læs udelukkende den dedikerede `nft list table inet clientflow_63d29_rdp_guard`, `systemctl show/is-enabled/is-active` for den tilføjede unit og `display-manager.service`, de præcise oprettede filers tilstedeværelse, GNOME user/system service og GSettings `enable`. Først efter denne observation kan en præcist afgrænset, godkendt cleanup udføres, som ikke stopper display-manager eller fjerner anden firewallkonfiguration. Selv en grøn CI kan ikke erstatte denne efterkontrol.
