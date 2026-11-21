@@ -78,11 +78,11 @@ def test_cli_is_readonly_and_requires_explicit_candidate_gate():
 
 def test_new_unsigned_source_identity_can_pass_only_build_eligibility(tmp_path):
     root = _copy_repository(tmp_path)
-    (root / 'client/VERSION').write_text('1.3.47\n')
+    (root / 'client/VERSION').write_text('1.3.48\n')
     _rehash(root, 'client/VERSION')
     release_input = root / 'client/release/release-input.json'
     record = json.loads(release_input.read_text())
-    record['release_sequence'] = 1248
+    record['release_sequence'] = 1249
     release_input.write_text(json.dumps(record) + '\n')
     _rehash(root, 'client/release/release-input.json')
     result = gate.inspect(root)
@@ -95,7 +95,7 @@ def test_new_unsigned_source_identity_can_pass_only_build_eligibility(tmp_path):
     assert result['pilot_accepted'] is False
 
 
-@pytest.mark.parametrize('version,sequence', [('1.3.44', 1246), ('1.3.45', 1245), ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.43', 1246), ('1.3.47', 1247), ('1.3.48', 1249)])
+@pytest.mark.parametrize('version,sequence', [('1.3.44', 1246), ('1.3.45', 1245), ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.43', 1246), ('1.3.47', 1248), ('1.3.48', 1248)])
 def test_version_and_sequence_both_must_advance(tmp_path, version, sequence):
     root = _copy_repository(tmp_path)
     (root / 'client/VERSION').write_text(version + '\n')
