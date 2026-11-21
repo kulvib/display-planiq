@@ -22,6 +22,12 @@ def test_strict_machine_identity():
 
 @pytest.mark.parametrize("text, expected", [
     ("RDP:\n Username: (empty)\n Password: (empty)\n", "EMPTY"),
+    ("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\n", "EMPTY"),
+    ("\tUsername:\t(empty)\n\tPassword:\t(empty)\n", "EMPTY"),
+    (" Username: (empty)\r\n\tPassword: (empty) \r\n", "EMPTY"),
+    ("\tUsername: (empty)\n\tUsername: (empty)\n\tPassword: (empty)\n", "UNKNOWN"),
+    ("\tUsername: (empty)\n\tPassword: (empty)\n\tPassword: (empty)\n", "UNKNOWN"),
+
     (" Username: (hidden)\n Password: (hidden)", "NOT_EMPTY_OR_UNEXPECTED"),
     (" Username: (empty)\n Password: (hidden)", "NOT_EMPTY_OR_UNEXPECTED"),
     (" Username: remote-user\n Password: remote-secret", "NOT_EMPTY_OR_UNEXPECTED"),
