@@ -218,9 +218,9 @@ def staged_catalog(monkeypatch, tmp_path):
 
 def test_current_catalog_is_one_stable_1245_with_two_install_modes():
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert catalog["catalog_sequence"] == 1247
+    assert catalog["catalog_sequence"] == 1248
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.44"
-    assert [r["release_sequence"] for r in catalog["releases"]] == [1245, 1246, 1247]
+    assert [r["release_sequence"] for r in catalog["releases"]] == [1245, 1247, 1248]
     assert catalog["releases"][1]["install_modes"] == ["in_place_update"]
     assert catalog["releases"][1]["installable"] is False
     assert catalog["releases"][2]["installable"] is False
