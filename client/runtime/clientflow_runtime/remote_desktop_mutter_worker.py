@@ -324,7 +324,7 @@ class FramePipeline:
         self, node_id: int, width: int, height: int, quality: int,
         native: bool = False, source_mode: str = "normal",
     ) -> None:
-        if source_mode not in {"normal", "bounded"}:
+        if source_mode not in {"normal", "bounded", "copy"}:
             raise ValueError("Ukendt PipeWire source mode")
         spec = (node_id, width, height, quality, bool(native), source_mode)
         if self.pipeline is not None and self.spec == spec:
@@ -333,6 +333,7 @@ class FramePipeline:
         # Bound negotiated capture buffers only when the initial zero-frame
         # capture failed. Default preserves the native/fast capture path.
         source_options = (
+            " always-copy=true" if source_mode == "copy" else
             " min-buffers=2 max-buffers=4 use-bufferpool=false"
             if source_mode == "bounded" else ""
         )
@@ -477,14 +478,14 @@ class Worker:
                 }
             except RuntimeError as exc:
                 last_error = exc
-                # Recover one genuine zero-frame failure using an alternative
-                # bounded buffer negotiation. Other faults retain the existing
+                # Recover one genuine zero-frame failure using a copied
+                # system-memory buffer. Other faults retain the existing
                 # clean restart, but never change capture transport or auth.
                 fallback = attempt == 0 and "GStreamer returnerede ingen frame" in str(exc)
                 self.close()
                 if attempt == 0:
                     if fallback:
-                        self.source_mode = "bounded"
+                        self.source_mode = "copy"
                     continue
                 break
         raise RuntimeError(f"Mutter/PipeWire capture kunne ikke genetableres: {last_error}")
