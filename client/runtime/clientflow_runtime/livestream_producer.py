@@ -45,7 +45,7 @@ def retry_delay_seconds(attempt: int) -> int:
 
 def capture_source_mode(retries: int) -> str:
     """Keep the fast path; change PipeWire negotiation only after a failed attempt."""
-    return "normal" if retries <= 0 else "bounded"
+    return "normal" if retries <= 0 else "copy"
 
 
 class Producer:
@@ -338,7 +338,7 @@ class Producer:
         # /started. Do a single bounded fallback *within* this claim/lease;
         # deferring it to the next retry would fail the backend command first.
         retries = getattr(self, "_retry_attempts", 0)
-        modes = ("normal", "bounded") if retries == 0 else ("bounded",)
+        modes = ("normal", "copy") if retries == 0 else ("copy",)
         for source_mode in modes:
             output = self._prepare_output(generation_id, username, uid)
             command = [
@@ -379,9 +379,8 @@ class Producer:
                 segment_seconds=segment_seconds,
                 playlist_size=playlist_size,
             )
-            # A first cold boot should usually yield the first 2s segment
-            # quickly; reserve time for the bounded-mode attempt under the
-            # agent's command timeout and its existing 60s lease keeper.
+            # Preserve the original time budget. The copy-mode fallback only
+            # runs after a zero-frame startup, before the command lease expires.
             timeout = 12.0 if source_mode == "normal" else (14.0 if len(modes) == 2 else 25.0)
             try:
                 self._wait_ready(output, timeout=timeout)
@@ -396,8 +395,8 @@ class Producer:
                     and str(exc).startswith("Wayland capture blev ikke HLS-klar inden for")
                 ):
                     self.logger.warning(
-                        "capture_startup_bounded_fallback",
-                        extra={"event": "capture_fallback", "source_mode": "bounded"},
+                        "capture_startup_copy_fallback",
+                        extra={"event": "capture_fallback", "source_mode": "copy"},
                     )
                     continue
                 raise
