@@ -26,6 +26,10 @@ from ..clientflow_release_pilot_stage_1247 import (
     staged_pilot_summary_1247, validated_catalog_mode_1247, PilotStage1247Denied,
 )
 from ..clientflow_pilot_1247 import ClientFlowPilot1247Denied
+from ..clientflow_release_pilot_stage_1248 import (
+    validated_catalog_mode_1248, PilotStage1248Denied,
+)
+from ..clientflow_pilot_1248 import ClientFlowPilot1248Denied
 from ..clientflow_release_admin_models import (
     ClientFlowReleaseControl,
     ClientFlowRolloutTarget,
@@ -76,14 +80,17 @@ def _bound_control(session: Session, *, lock: bool = False) -> ClientFlowRelease
     try:
         catalog = load_catalog()
         catalog_mode = (
-            validated_catalog_mode_1247(active_catalog=catalog)
+            validated_catalog_mode_1248(active_catalog=catalog)
+            if catalog.get("catalog_sequence") == 1248
+            else validated_catalog_mode_1247(active_catalog=catalog)
             if catalog.get("catalog_sequence") == 1247
             else validated_catalog_mode(active_catalog=catalog)
         )
         approval = _approved_lock()
     except (ClientFlowCatalogError, ClientFlowPilot1245Denied,
             ClientFlowPilot1246Denied, PilotStageDenied,
-            ClientFlowPilot1247Denied, PilotStage1247Denied) as exc:
+            ClientFlowPilot1247Denied, PilotStage1247Denied,
+            ClientFlowPilot1248Denied, PilotStage1248Denied) as exc:
         raise HTTPException(status_code=503, detail="Releasekatalogets kryptografiske autoritet er utilgængelig") from exc
     stable = catalog.get("releases")
     if (
@@ -91,6 +98,7 @@ def _bound_control(session: Session, *, lock: bool = False) -> ClientFlowRelease
         or len(stable) != {
             "update_only_1246_pilot_catalog": 2,
             "update_only_1247_pilot_catalog": 3,
+            "update_only_1248_pilot_catalog": 3,
         }.get(catalog_mode, 1)
         or catalog.get("latest_stable") != "1.3.44"
         or catalog.get("default_install_version") != "1.3.44"
