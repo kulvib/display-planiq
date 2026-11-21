@@ -80,3 +80,25 @@ Test almindelig HTTPS uden WebSocket browser/klient, HLS-manifest & segment cont
 - Apache Guacamole Docker-komponenter og guacd sikkerhed: https://guacamole.apache.org/doc/gug/guacamole-docker.html
 - Guacamole WSS/HTTP-tunnel og proxybuffering: https://guacamole.apache.org/doc/gug/reverse-proxy.html
 - Apple HTTP Live Streaming: https://developer.apple.com/documentation/HTTP-Live-Streaming
+
+## Fysisk Viborg1-preflight – bekræftet 21. november 2026
+
+Operatøren udførte den skrivebeskyttede fase-63D-24 kontrol på `viborg1-NUC14MNK-B2` (CLIENT_ID 3). Output:
+
+| Observation | Fysisk resultat |
+|---|---|
+| Root, host og client ID | PASS |
+| `gnome-remote-desktop` installeret | true |
+| `grdctl` tilgængelig | true |
+| `clientflow-kiosk` user D-Bus | true |
+| `clientflow-kiosk` GNOME shell | true |
+| GNOME Remote Desktop user service | inactive |
+| Existing ClientFlow Remote Desktop agent | active |
+| RDP listener ports 3389/3390 | 0 |
+| Ikke-loopback RDP listener | false |
+| Konfiguration ændret | false |
+| Netværks-/RDP-forbindelse testet | false |
+
+**Gate A godkendt som inventar, ikke som RDP-feature.** Ubuntu/GNOME-dokumentationen bekræfter, at `Desktop Sharing` knytter til eksisterende session, men GNOME Desktop Sharing kan som standard åbne en RDP TCP-port (3389/3390). Derfor må hverken `grdctl rdp enable`, `systemctl --user enable --now gnome-remote-desktop.service` eller udlevering af RDP credentials udføres før et specifikt, fysisk rollback- og host-firewall-gate; en kommunal browser kan ikke kommunikere direkte til RDP bag NAT.
+
+Næste fasegate er derfor et særskilt **skrivebeskyttet kontroltrin af installeret GNOME version, dækkende host firewall-regler og sikker isolation af RDP til loopback**. En eventuel RDP-start skal være tidsbegrænset og skal verificere, at porten aldrig er eksponeret på Wi-Fi/Ethernet/LAN. Dette er endnu ikke gennemført. Behold 1248 og draft PR #402 uændret.
