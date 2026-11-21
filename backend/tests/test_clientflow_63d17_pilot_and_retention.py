@@ -178,3 +178,25 @@ def test_legacy_flags_and_fresh_install_gate_denied(closed_pilot, monkeypatch):
     monkeypatch.delenv("CLIENTFLOW_FRESH_INSTALL_SUSPENDED")
     with pytest.raises(DatabasePilot1248Denied):
         require_database_pilot_1248(**payload())
+
+
+def test_admin_pilot_route_wiring_is_sequenced_before_database_write():
+    route = (SVC / "routers/clientflow_release_pilot_63d17.py").read_text()
+    assert "_reauth(request, session, user, body.password)" in route
+    assert "lock_system_client(session, 3)" in route
+    assert "control = _bound_control(session, lock=True)" in route
+    assert route.index("deployment_release_snapshot(release)") < route.index("require_database_pilot_1248(")
+    assert route.index("require_database_pilot_1248(") < route.index("create_authorized_deployment(")
+    assert "confirmed_single_pilot is not True" in route
+    assert "prior is not None" in route
+    assert 'version != "1.3.46"' in route
+    assert "clientflow_release_pilot_63d17.router" in (SVC / "main.py").read_text()
+    assert "systemctl" not in route
+    assert "activate_release(" not in route
+
+
+def test_approved_1248_identity_cannot_be_rebuilt_from_new_source():
+    from scripts.clientflow_63d11_prevent_duplicate_build import verify
+    with pytest.raises(ValueError, match="1248 is already approved"):
+        verify("f" * 40)
+    verify(SOURCE_COMMIT)
