@@ -49,7 +49,7 @@ def test_actual_socket_pressure_defers_only_video_and_recovers():
     assert not controller.should_defer(limit - 1, now=2.0)
     assert controller.should_defer(limit, now=3.0)
     assert controller.deferred_frames == 1
-    assert controller.jpeg_quality(72, now=4.0) == 40
+    assert controller.jpeg_quality(72, now=4.0) == 68
     assert not controller.should_defer(0, now=4.0)
     assert controller.jpeg_quality(72, now=18.1) == 72
     assert controller.jpeg_quality(35, now=5.0) == 35
@@ -60,9 +60,9 @@ def test_slow_write_triggers_jpeg_quality_reduction_without_socket_telemetry():
     controller.observe_send(349.9, now=1.0)
     assert controller.jpeg_quality(72, now=2.0) == 72
     controller.observe_send(350.0, now=3.0)
-    assert controller.jpeg_quality(72, now=4.0) == 40
+    assert controller.jpeg_quality(72, now=4.0) == 68
     controller.observe_send(450.0, now=15.0)
-    assert controller.jpeg_quality(72, now=29.0) == 40
+    assert controller.jpeg_quality(72, now=29.0) == 68
     assert controller.jpeg_quality(72, now=30.0) == 72
 
 
@@ -86,11 +86,11 @@ def test_video_is_gated_before_capture_and_input_lane_untouched():
 
 
 def test_16_by_9_native_capture_is_bounded_without_changing_pointer_geometry():
-    assert pressure.bounded_capture_dimensions(3840, 2160, congested=False) == (1280, 720)
-    assert pressure.bounded_capture_dimensions(3840, 2160, congested=True) == (960, 540)
+    assert pressure.bounded_capture_dimensions(3840, 2160, congested=False) == (1920, 1080)
+    assert pressure.bounded_capture_dimensions(3840, 2160, congested=True) == (1600, 900)
     assert pressure.bounded_capture_dimensions(1280, 720, congested=False) == (1280, 720)
-    assert pressure.bounded_capture_dimensions(1920, 1200, congested=False) == (1152, 720)
-    assert pressure.bounded_capture_dimensions(1080, 1920, congested=True) == (320, 568)
+    assert pressure.bounded_capture_dimensions(1920, 1200, congested=False) == (1728, 1080)
+    assert pressure.bounded_capture_dimensions(1080, 1920, congested=True) == (506, 900)
 
 
 def test_remote_capture_scales_jpeg_only_after_native_probe_preserving_mouse_coordinates():
@@ -143,17 +143,17 @@ def test_remote_capture_scales_jpeg_only_after_native_probe_preserving_mouse_coo
         first, stressed, restored = agent.media_transport.calls
         assert first["native"] is True
         assert stressed["native"] is False
-        assert (stressed["width"], stressed["height"], stressed["quality"]) == (960, 540, 40)
+        assert (stressed["width"], stressed["height"], stressed["quality"]) == (1600, 900, 68)
         assert restored["native"] is False
-        assert (restored["width"], restored["height"], restored["quality"]) == (1280, 720, 72)
+        assert (restored["width"], restored["height"], restored["quality"]) == (1920, 1080, 72)
         assert [(item["width"], item["height"]) for item in outbound] == [
-            (3840, 2160), (960, 540), (1280, 720)
+            (3840, 2160), (1600, 900), (1920, 1080)
         ]
         assert all(
             (item["screen_width"], item["screen_height"]) == (3840, 2160)
             for item in outbound
         )
         assert agent.media_telemetry["session-test"]["native_screen_width"] == 3840
-        assert agent.media_telemetry["session-test"]["capture_width_last"] == 1280
+        assert agent.media_telemetry["session-test"]["capture_width_last"] == 1920
 
     asyncio.run(scenario())
