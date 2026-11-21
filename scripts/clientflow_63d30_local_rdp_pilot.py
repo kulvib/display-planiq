@@ -25,8 +25,11 @@ import re
 import secrets
 import socket
 import subprocess
+import sys
 import time
 
+# Avoid generating __pycache__ files in the temporary staged root bundle.
+sys.dont_write_bytecode = True
 # Imported from the same pinned pilot bundle, never from a mutable release.
 import clientflow_63d29_persistent_rdp_guard as guard
 
@@ -447,6 +450,41 @@ def tick() -> None:
         print("WATCHDOG=ARMED", flush=True)
 
 
+
+def local_rdp_negotiation() -> bool:
+    """Prove only TCP loopback X.224 RDP negotiation, not authentication/video."""
+    packet = bytes.fromhex("030000130ee000000000000100080003000000")
+    try:
+        with socket.create_connection(("127.0.0.1", 3389), timeout=3) as connection:
+            connection.settimeout(3)
+            connection.sendall(packet)
+            response = connection.recv(64)
+    except (OSError, TimeoutError):
+        return False
+    return (
+        len(response) >= 11 and response[0:2] == b"\\x03\\x00"
+        and response[5] == 0xD0
+    )
+
+
+def probe() -> None:
+    uid, _ = target()
+    if state_load() is None or not watchdog_verified():
+        raise RuntimeError("STOP: Pilot eller watchdog ikke aktiv")
+    if not guard.guard_verified():
+        raise RuntimeError("STOP: Firewall ikke verificeret")
+    if get_setting(uid, "enable") != "true":
+        raise RuntimeError("STOP: GNOME RDP er ikke aktiv")
+    if listeners() != [3389]:
+        raise RuntimeError("STOP: RDP port afviger")
+    result = local_rdp_negotiation()
+    print("LOCAL_RDP_X224_NEGOTIATION=", "PASS" if result else "FAIL")
+    print("RDP_AUTHENTICATION_TESTED=False")
+    print("DESKTOP_PIXELS_TESTED=False")
+    if not result:
+        raise RuntimeError("STOP: Local RDP X.224 negotiation fejlede")
+
+
 def status() -> None:
     uid, _ = target()
     data = state_load()
@@ -462,7 +500,7 @@ def status() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="63D-30 local GNOME screen-sharing pilot")
-    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage"])
+    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage", "probe"])
     args = parser.parse_args()
     print("===== CLIENTFLOW 63D-30 · LOCAL GNOME RDP PILOT =====", flush=True)
     try:
@@ -476,7 +514,8 @@ def main() -> int:
                 raise RuntimeError("STOP: Anden pilotoperation kører allerede") from exc
             {"stage": stage, "start": start, "stop": stop,
              "tick": tick, "status": status,
-             "unstage": lambda: unstage(target()[0])}[args.action]()
+             "unstage": lambda: unstage(target()[0]),
+             "probe": probe}[args.action]()
         return 0
     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print("PILOT=STOP", type(exc).__name__, str(exc), flush=True)
