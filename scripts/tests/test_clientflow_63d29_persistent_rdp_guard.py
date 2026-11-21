@@ -139,3 +139,30 @@ def test_source_never_starts_rdp_or_exposes_credentials():
         "ufw allow", "nft flush ruleset", "socket.connect(", "urlopen(",
     )
     assert not any(value in source for value in forbidden)
+
+
+def test_guard_only_drill_installs_and_removes_without_starting_rdp(monkeypatch):
+    import sys
+    events = []
+    monkeypatch.setattr(guard, "target", lambda: "1000")
+    monkeypatch.setattr(guard, "install_guard", lambda uid: events.append("install"))
+    monkeypatch.setattr(guard, "status", lambda uid: events.append("status"))
+    monkeypatch.setattr(guard, "remove_guard", lambda uid: events.append("remove"))
+    monkeypatch.setattr(sys, "argv", ["rdp-guard", "drill"])
+    assert guard.main() == 0
+    assert events == ["install", "status", "remove"]
+
+
+def test_guard_only_drill_refuses_cleanup_if_state_cannot_be_proven(monkeypatch):
+    import sys
+    events = []
+    monkeypatch.setattr(guard, "target", lambda: "1000")
+    monkeypatch.setattr(guard, "install_guard", lambda uid: events.append("install"))
+    monkeypatch.setattr(
+        guard, "status",
+        lambda uid: (_ for _ in ()).throw(RuntimeError("unknown kernel state")),
+    )
+    monkeypatch.setattr(guard, "remove_guard", lambda uid: events.append("remove"))
+    monkeypatch.setattr(sys, "argv", ["rdp-guard", "drill"])
+    assert guard.main() == 2
+    assert events == ["install"]
