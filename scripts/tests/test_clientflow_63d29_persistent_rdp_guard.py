@@ -98,7 +98,7 @@ def test_remove_requires_exact_owned_unit_and_valid_kernel_rules(monkeypatch, tm
     monkeypatch.setattr(guard, "guard_verified", lambda: True)
     calls = []
     monkeypatch.setattr(guard, "run", lambda *a, **kw: calls.append(a) or Result())
-    with pytest.raises(RuntimeError, match="Ukendt guard"):
+    with pytest.raises(RuntimeError, match="Guard service ikke identisk"):
         guard.remove_guard("1000")
     assert calls == []
 
