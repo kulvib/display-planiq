@@ -92,3 +92,13 @@ Preflight rapporterer også om SSH-serveren kører og om `xfreerdp3`/`xfreerdp` 
 Prøven udfører kun read-only kommandoer og skriver ikke credential- eller TLS-stier. Den kræver grøn fuld CI og grøn PostgreSQL-smoke på den eksakte SHA samt SHA-256-kontrol af preflight-kildefilen, før fysisk kørsel. `PHYSICAL_PREFLIGHT=PASS` er nødvendig, **men ikke tilstrækkelig**, til at tillade RDP-aktivering: boot-fail-closed, watchdog-rollback og fysisk autentificeret RDP-klient skal stadig have en godkendt lokal testplan.
 
 Ingen `stage/start`-kommandoer må sendes til operatøren, før den sidste sikkerhedsgate er dokumenteret.
+
+## Fysisk 63D-30 preflight: credential parser STOP og rettelse (21. november 2026)
+
+Operatøren kørte den SHA-256-fastlåste preflight fra commit `fa343c5b22627b74223de6a515c73a0835b8ba7b`. Både `CI` og `Display single-node PostgreSQL smoke` var PASS, ligesom kildehash. Fysisk resultat: **Alle kontroller undtagen `RDP_CREDENTIALS_EMPTY` viste PASS**; den ene viste `FAIL / UNKNOWN`, og totalen var `PHYSICAL_PREFLIGHT=STOP`. Ingen ændringer i GNOME RDP, systemd, firewall eller netværk. `SSH_SERVER_RUNNING=False`, `FREERDP_CLIENT_INSTALLED=False` (ingen autentificeret RDP-klient klar).
+
+**Konkrete parserfejl identificeret:** GNOME Remote Desktop `grdctl status` udskriver `\tUsername:` og `\tPassword:` (GNOME-kilde, `printf("\\tUsername: %s\\n", ...)`), mens den nye preflight og pilotens credential checker kun accepterede en linjestart med ASCII-mellemrum (`^ *`). Den tidligere fysiske 63D-28-kontrol brugte `^\\s*` og viste tomme credentials. Derfor blev `UNKNOWN` **ikke** et bevis på gemte oplysninger, men en fejl i indrykningsparseren.
+
+**Rettelse:** Begge parserfunktioner accepterer nu kun afgrænset vandret indrykning `[ \\t]*`, kræver præcis ét felt hver for Username og Password og accepterer kun literal `(empty)` som tomt. Enhver duplikat, manglende felt eller `(hidden)` afvises. Negative CI-tests dækker GNOMEs tabulator-indrykning, blandet mellemrum/tab, CRLF, duplikater, skjult/password-nonempty og manglende felter. Ingen rå credential-værdier logges.
+
+**Næste gate:** Fuld CI og PostgreSQL smoke på den nye commit, derefter fysisk **read-only** preflight igen. Først hvis `PHYSICAL_PREFLIGHT=PASS`, kan vi gennemgå `stage/start`-gate og fysisk klientadgang. Der er fortsat **ingen autorisation til at aktivere RDP**.
