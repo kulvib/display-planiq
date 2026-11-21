@@ -83,3 +83,77 @@ def test_video_is_gated_before_capture_and_input_lane_untouched():
     assert 'self.media_pressure.pop(session_id, None)' in source
     assert "if message_type not in {\"mouse\", \"key\", \"text\"}:" in source
     assert "await self._input_rpc(socket, request)" in source
+
+
+def test_16_by_9_native_capture_is_bounded_without_changing_pointer_geometry():
+    assert pressure.bounded_capture_dimensions(3840, 2160, congested=False) == (1280, 720)
+    assert pressure.bounded_capture_dimensions(3840, 2160, congested=True) == (960, 540)
+    assert pressure.bounded_capture_dimensions(1280, 720, congested=False) == (1280, 720)
+    assert pressure.bounded_capture_dimensions(1920, 1200, congested=False) == (1152, 720)
+    assert pressure.bounded_capture_dimensions(1080, 1920, congested=True) == (320, 540)
+
+
+def test_remote_capture_scales_jpeg_only_after_native_probe_preserving_mouse_coordinates():
+    import asyncio
+    import time
+    from clientflow_runtime import remote_desktop_agent as runtime
+
+    class Media:
+        name = "fake_jpeg"
+        def __init__(self):
+            self.calls = []
+
+        async def capture(self, settings):
+            self.calls.append(dict(settings))
+            # Native GStreamer mode ignores capture width and height settings.
+            w, h = (
+                (3840, 2160) if settings["native"]
+                else (settings["width"], settings["height"])
+            )
+            return {
+                "data": "YWJj",
+                "width": w, "height": h,
+                "screen_width": w, "screen_height": h,
+                "encoding": "base64", "mime_type": "image/jpeg",
+            }, 12.0
+
+    async def scenario():
+        agent = object.__new__(runtime.RemoteDesktopAgent)
+        agent.media_transport = Media()
+        agent.media_pressure = {}
+        agent.native_screen_geometry = {}
+        agent.media_telemetry = {}
+        agent.last_frame_digest = {}
+        agent.last_frame_sent_at = {}
+        agent.pending_input_at = {}
+        agent.control_ws = object()
+        agent._record_media_telemetry = lambda *args, **kwargs: None
+        outbound = []
+        async def send(message):
+            outbound.append(message)
+        agent._send_control = send
+        options = {"native": True, "width": 1280, "height": 720, "quality": 72, "fps": 8}
+        await agent._capture("session-test", options, force=True)
+        assert agent.native_screen_geometry["session-test"] == (3840, 2160)
+        agent.media_pressure["session-test"].congested_until = time.monotonic() + 100
+        await agent._capture("session-test", options, force=True)
+        agent.media_pressure["session-test"].congested_until = 0
+        await agent._capture("session-test", options, force=True)
+
+        first, stressed, restored = agent.media_transport.calls
+        assert first["native"] is True
+        assert stressed["native"] is False
+        assert (stressed["width"], stressed["height"], stressed["quality"]) == (960, 540, 40)
+        assert restored["native"] is False
+        assert (restored["width"], restored["height"], restored["quality"]) == (1280, 720, 72)
+        assert [(item["width"], item["height"]) for item in outbound] == [
+            (3840, 2160), (960, 540), (1280, 720)
+        ]
+        assert all(
+            (item["screen_width"], item["screen_height"]) == (3840, 2160)
+            for item in outbound
+        )
+        assert agent.media_telemetry["session-test"]["native_screen_width"] == 3840
+        assert agent.media_telemetry["session-test"]["capture_width_last"] == 1280
+
+    asyncio.run(scenario())
