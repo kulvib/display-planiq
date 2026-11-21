@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""63D-30 physical GNOME screen-sharing pilot; not a production RDP gateway.
+
+No Render, backend API, release catalogue, database or ClientFlow agent changes.
+Use only with the independently reviewed 63D-29 persistent nftables boot guard.
+
+Security invariants:
+- Root + verified Viborg1 (client id 3) only; existing user GNOME desktop
+- Firewall and root timer active BEFORE any GNOME RDP change
+- No RDP secret in argv/env/logs; generated credentials pass via stdin
+- On timeout/boot restart: stop RDP, verify no listeners, restore settings;
+  only then remove the guard. On doubt, retain guard and retry.
+- No public RDP or municipal HTTPS/443 relay is provided by this pilot.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import secrets
+import shutil
+import socket
+import subprocess
+import sys
+import time
+
+# Imported from the same pinned pilot bundle, never from a mutable release.
+import clientflow_63d29_persistent_rdp_guard as guard
+
+SCHEMA = "org.gnome.desktop.remote-desktop.rdp"
+KIOSK = "clientflow-kiosk"
+STATE_ROOT = Path("/var/lib/clientflow/rdp-pilot-63d30")
+STATE_FILE = STATE_ROOT / "state.json"
+STAGE_ROOT = Path("/usr/local/libexec/clientflow-63d30")
+STAGED_RUNNER = STAGE_ROOT / "clientflow_63d30_local_rdp_pilot.py"
+STAGED_GUARD = STAGE_ROOT / "clientflow_63d29_persistent_rdp_guard.py"
+TIMER_NAME = "clientflow-63d30-rdp-watchdog.timer"
+SERVICE_NAME = "clientflow-63d30-rdp-watchdog.service"
+TIMER_PATH = Path("/etc/systemd/system") / TIMER_NAME
+SERVICE_PATH = Path("/etc/systemd/system") / SERVICE_NAME
+SECRET_ROOT = Path("/run/clientflow-rdp-63d30")
+SECRET_FILE = SECRET_ROOT / "credentials"
+MAX_SECONDS = 6 * 60
+BASE_KEYS = (
+    "port", "negotiate-port", "screen-share-mode", "view-only",
+    "enable", "auth-methods", "tls-cert", "tls-key",
+)
+EXPECTED_BASE = {
+    "port": "uint16 3389",
+    "negotiate-port": "true",
+    "screen-share-mode": "'mirror-primary'",
+    "view-only": "true",
+    "enable": "false",
+    "auth-methods": "['credentials']",
+    "tls-cert": "''",
+    "tls-key": "''",
+}
+TIMER = """[Unit]
+Description=ClientFlow GNOME RDP physical pilot expiry monitor
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=10s
+Unit=clientflow-63d30-rdp-watchdog.service
+
+[Install]
+WantedBy=timers.target
+"""
+SERVICE = f"""[Unit]
+Description=ClientFlow 63D-30 fail-closed RDP cleanup worker
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {STAGED_RUNNER} tick
+TimeoutStartSec=50
+UMask=0077
+"""
+
+
+def run(*args: str, input: str | None = None, timeout: int = 15) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(args), input=input, capture_output=True, text=True,
+        timeout=timeout, check=False,
+    )
+
+
+def run_ok(*args: str, input: str | None = None, timeout: int = 15) -> None:
+    result = run(*args, input=input, timeout=timeout)
+    if result.returncode:
+        # Never display stderr/stdout of credential- or key-bearing commands.
+        raise RuntimeError("STOP: Kommando mislykkedes: " + args[0])
+
+
+def target() -> tuple[int, Path]:
+    identity = json.loads(guard.IDENTITY.read_text(encoding="utf-8"))
+    if not guard.identity_verified(socket.gethostname(), os.geteuid(), identity):
+        raise RuntimeError("STOP: forkert root/host/klient")
+    entry = pwd.getpwnam(KIOSK)
+    runtime = Path("/run/user") / str(entry.pw_uid)
+    if not (runtime / "bus").is_socket():
+        raise RuntimeError("STOP: kiosk-D-Bus ikke tilgængelig; behold firewall")
+    return entry.pw_uid, runtime
+
+
+def kiosk(uid: int, *args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    return run(
+        "runuser", "-u", KIOSK, "--", "env",
+        f"XDG_RUNTIME_DIR=/run/user/{uid}",
+        f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+        "LC_ALL=C", *args, input=input,
+    )
+
+
+def kiosk_ok(uid: int, *args: str, input: str | None = None) -> None:
+    result = kiosk(uid, *args, input=input)
+    if result.returncode:
+        raise RuntimeError("STOP: GNOME user kommando mislykkedes: " + args[0])
+
+
+def get_setting(uid: int, key: str) -> str:
+    if key not in BASE_KEYS:
+        raise RuntimeError("STOP: Ukendt GNOME setting")
+    response = kiosk(uid, "gsettings", "get", SCHEMA, key)
+    if response.returncode != 0:
+        raise RuntimeError("STOP: Kunne ikke læse GNOME setting")
+    return response.stdout.strip()
+
+
+def set_setting(uid: int, key: str, value: str) -> None:
+    if key not in BASE_KEYS:
+        raise RuntimeError("STOP: Ukendt GNOME setting")
+    kiosk_ok(uid, "gsettings", "set", SCHEMA, key, value)
+    if get_setting(uid, key) != value:
+        raise RuntimeError("STOP: GNOME setting ikke bekræftet: " + key)
+
+
+def credentials_empty(uid: int) -> bool:
+    response = kiosk(uid, "grdctl", "status")
+    if response.returncode:
+        raise RuntimeError("STOP: kunne ikke læse credentials status")
+    result = {}
+    for field in ("Username", "Password"):
+        match = re.search(rf"(?mi)^\\s*{field}:\\s*(.*?)\\s*$", response.stdout)
+        result[field] = match.group(1) if match else None
+    return result == {"Username": "(empty)", "Password": "(empty)"}
+
+
+def read_baseline(uid: int) -> dict[str, str]:
+    result = {key: get_setting(uid, key) for key in BASE_KEYS}
+    if result != EXPECTED_BASE:
+        raise RuntimeError("STOP: GNOME har ændret indstillinger; afbryd uden overskrivning")
+    if not credentials_empty(uid):
+        raise RuntimeError("STOP: eksisterende RDP-credentials må ikke overskrives")
+    guard.ensure_rdp_off(str(uid))
+    return result
+
+
+def write_private(path: Path, text: str, mode: int = 0o600) -> None:
+    with path.open("x", encoding="utf-8") as file:
+        os.fchmod(file.fileno(), mode)
+        file.write(text)
+        file.flush()
+        os.fsync(file.fileno())
+
+
+def state_load() -> dict | None:
+    if not STATE_FILE.is_file() or STATE_FILE.is_symlink():
+        return None
+    data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("phase") != "63D-30":
+        raise RuntimeError("STOP: Ukendt pilot-state")
+    return data
+
+
+def boot_id() -> str:
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
+def deadline_expired(data: dict) -> bool:
+    if data.get("boot_id") != boot_id():
+        return True
+    return (
+        time.time() >= float(data.get("deadline_wall", 0))
+        or time.monotonic() >= float(data.get("deadline_mono", 0))
+    )
+
+
+def watchdog_verified() -> bool:
+    enabled = run("systemctl", "is-enabled", TIMER_NAME)
+    active = run("systemctl", "is-active", TIMER_NAME)
+    files = (
+        SERVICE_PATH.is_file() and not SERVICE_PATH.is_symlink()
+        and TIMER_PATH.is_file() and not TIMER_PATH.is_symlink()
+        and SERVICE_PATH.read_text() == SERVICE
+        and TIMER_PATH.read_text() == TIMER
+    )
+    return (
+        files and enabled.stdout.strip() == "enabled"
+        and active.stdout.strip() == "active"
+    )
+
+
+def stage() -> None:
+    uid, _ = target()
+    guard.ensure_rdp_off(str(uid))
+    if STAGE_ROOT.exists() or TIMER_PATH.exists() or SERVICE_PATH.exists():
+        raise RuntimeError("STOP: Pilotfiler findes allerede")
+    if STATE_ROOT.exists() or SECRET_ROOT.exists():
+        raise RuntimeError("STOP: Pilot-state findes allerede")
+    source = Path(__file__).resolve()
+    other = source.parent / "clientflow_63d29_persistent_rdp_guard.py"
+    if not other.is_file():
+        raise RuntimeError("STOP: 63D-29 guard-kilden mangler i samme mappe")
+    # Source is to be checksum-pinned by the user before any physical stage.
+    if source.is_symlink() or other.is_symlink():
+        raise RuntimeError("STOP: Symlink til kilde er ikke tilladt")
+    STAGE_ROOT.mkdir(mode=0o700, parents=False)
+    write_private(STAGED_RUNNER, source.read_text(encoding="utf-8"), 0o700)
+    write_private(STAGED_GUARD, other.read_text(encoding="utf-8"), 0o600)
+    write_private(SERVICE_PATH, SERVICE, 0o644)
+    write_private(TIMER_PATH, TIMER, 0o644)
+    run_ok("systemctl", "daemon-reload")
+    run_ok("systemctl", "enable", "--now", TIMER_NAME)
+    if not watchdog_verified():
+        raise RuntimeError("STOP: Persistent root watchdog ikke verificeret")
+    print("WATCHDOG_STAGED=True")
+    print("RDP_ENABLED=False")
+    print("FIREWALL_INSTALLED=False")
+
+
+def tls_directory(uid: int) -> Path:
+    return Path("/run/user") / str(uid) / "clientflow-rdp-pilot-63d30"
+
+
+def stage_tls(uid: int) -> tuple[Path, Path]:
+    directory = tls_directory(uid)
+    directory.mkdir(mode=0o700, exist_ok=False)
+    os.chown(directory, uid, pwd.getpwnam(KIOSK).pw_gid)
+    cert = directory / "tls.crt"
+    key = directory / "tls.key"
+    # OpenSSL creates a one-day self-signed certificate with 3072-bit RSA.
+    run_ok(
+        "openssl", "req", "-new", "-newkey", "rsa:3072",
+        "-sha256", "-nodes", "-x509", "-days", "1",
+        "-subj", "/CN=clientflow-63d30-local",
+        "-keyout", str(key), "-out", str(cert), timeout=30,
+    )
+    for p in (cert, key):
+        if p.is_symlink() or not p.is_file():
+            raise RuntimeError("STOP: TLS-fil mangler eller er symlink")
+        os.chmod(p, 0o600)
+        os.chown(p, uid, pwd.getpwnam(KIOSK).pw_gid)
+    return cert, key
+
+
+def listeners() -> list[int]:
+    ports = set()
+    for arguments in (("ss", "-H", "-ltn"), ("ss", "-H", "-lun")):
+        result = run(*arguments)
+        if result.returncode:
+            raise RuntimeError("STOP: Kan ikke undersøge RDP listeners")
+        for row in result.stdout.splitlines():
+            fields = row.split()
+            if len(fields) >= 5 and ":" in fields[3]:
+                field = fields[3].rsplit(":", 1)[1]
+                if field.isdecimal() and 3389 <= int(field) <= 3398:
+                    ports.add(int(field))
+    return sorted(ports)
+
+
+def start() -> None:
+    uid, _ = target()
+    if Path(__file__).resolve() != STAGED_RUNNER:
+        raise RuntimeError("STOP: kør kun root-staged kilde")
+    if state_load() is not None:
+        raise RuntimeError("STOP: eksisterende eller uafsluttet RDP-pilot")
+    if not watchdog_verified():
+        raise RuntimeError("STOP: Boot-watchdog ikke aktiv")
+    baseline = read_baseline(uid)
+    if guard.guard_exists():
+        raise RuntimeError("STOP: ukendt eksisterende firewall-guard")
+    STATE_ROOT.mkdir(mode=0o700, parents=True, exist_ok=False)
+    data = {
+        "phase": "63D-30",
+        "baseline": baseline,
+        "boot_id": boot_id(),
+        "deadline_wall": time.time() + MAX_SECONDS,
+        "deadline_mono": time.monotonic() + MAX_SECONDS,
+    }
+    write_private(STATE_FILE, json.dumps(data), 0o600)
+    try:
+        guard.install_guard(str(uid))
+        if not guard.guard_verified():
+            raise RuntimeError("STOP: Firewall ikke verificeret")
+        print("RDP_FIREWALL_VERIFIED=True", flush=True)
+        # The timer has been armed before any GNOME mutation.
+        if not watchdog_verified():
+            raise RuntimeError("STOP: Watchdog ikke aktiv")
+        cert, key = stage_tls(uid)
+        SECRET_ROOT.mkdir(mode=0o700, exist_ok=False)
+        username = "cfpilot" + secrets.token_hex(4)
+        password = secrets.token_urlsafe(36)
+        write_private(SECRET_FILE, username + "\n" + password + "\n")
+        kiosk_ok(uid, "grdctl", "rdp", "set-tls-key", str(key))
+        kiosk_ok(uid, "grdctl", "rdp", "set-tls-cert", str(cert))
+        kiosk_ok(uid, "grdctl", "rdp", "set-credentials",
+                 input=username + "\n" + password + "\n")
+        # Avoid service moving to another RDP port while only one is tested.
+        kiosk_ok(uid, "grdctl", "rdp", "disable-port-negotiation")
+        kiosk_ok(uid, "grdctl", "rdp", "disable-view-only")
+        if get_setting(uid, "screen-share-mode") != "'mirror-primary'":
+            raise RuntimeError("STOP: Ikke eksisterende primary GNOME session")
+        if get_setting(uid, "port") != "uint16 3389":
+            raise RuntimeError("STOP: RDP port ændret")
+        kiosk_ok(uid, "grdctl", "rdp", "enable")
+        kiosk_ok(uid, "systemctl", "--user", "enable", "--now",
+                 "gnome-remote-desktop.service")
+        for _ in range(15):
+            if 3389 in listeners():
+                break
+            time.sleep(1)
+        if listeners() != [3389]:
+            raise RuntimeError("STOP: RDP listener ikke entydigt TCP/UDP 3389")
+        if not guard.guard_verified():
+            raise RuntimeError("STOP: Firewall ændret under start")
+        print("RDP_EXISTING_SESSION_PILOT_ACTIVE=True")
+        print("RDP_LOCAL_PORT=3389")
+        print("REMOTE_LOGIN_MODE_USED=False")
+        print("CREDENTIALS_ONLY_IN_ROOT_TMPFS=True")
+        print("TIMEOUT_MINUTES=6")
+        print("AUTHENTICATED_RDP_DESKTOP_TESTED=False")
+        print("HTTPS_443_RELAY_TESTED=False")
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        print("START_FAILED=TRUE; ATTEMPTING_RDP_FIRST_ROLLBACK", flush=True)
+        try:
+            stop()
+        except (RuntimeError, OSError, subprocess.TimeoutExpired):
+            print("ROLLBACK_UNCERTAIN=TRUE; KEEP_GUARD_AND_WATCHDOG", flush=True)
+        raise
+
+
+def stop() -> None:
+    uid, _ = target()
+    data = state_load()
+    if data is None:
+        raise RuntimeError("STOP: Intet pilot-state; manuel audit før sletning")
+    original = data.get("baseline")
+    if original != EXPECTED_BASE:
+        raise RuntimeError("STOP: Ukendt baseline; behold firewall")
+    # Disarm GNOME access first, before any guard changes.
+    # All GNOME commands run only in clientflow-kiosk's user session.
+    kiosk_ok(uid, "gsettings", "set", SCHEMA, "enable", "false")
+    kiosk_ok(uid, "grdctl", "rdp", "disable")
+    kiosk_ok(uid, "systemctl", "--user", "disable", "--now",
+             "gnome-remote-desktop.service")
+    for _ in range(8):
+        if not listeners():
+            break
+        time.sleep(1)
+    if listeners():
+        raise RuntimeError("STOP: RDP listener eksisterer; behold firewall")
+    kiosk_ok(uid, "grdctl", "rdp", "clear-credentials")
+    # Restore all original GNOME RDP settings without echoing TLS paths.
+    for key in BASE_KEYS:
+        set_setting(uid, key, original[key])
+    if not credentials_empty(uid):
+        raise RuntimeError("STOP: GNOME RDP credentials blev ikke slettet")
+    guard.ensure_rdp_off(str(uid))
+    if guard.guard_exists():
+        guard.remove_guard(str(uid))
+    elif guard.DIRECTORY.exists() or guard.UNIT_PATH.exists() or guard.DROPIN_PATH.exists():
+        raise RuntimeError("STOP: Delvist guard-state kræver manuel audit")
+    # Only now remove private pilot artifacts.
+    for file in (SECRET_FILE,):
+        if file.exists():
+            if file.is_symlink():
+                raise RuntimeError("STOP: Credential-sti er symlink")
+            file.unlink()
+    if SECRET_ROOT.exists():
+        SECRET_ROOT.rmdir()
+    directory = tls_directory(uid)
+    if directory.exists():
+        for file in (directory / "tls.key", directory / "tls.crt"):
+            if file.exists():
+                if file.is_symlink():
+                    raise RuntimeError("STOP: TLS-sti er symlink")
+                file.unlink()
+        directory.rmdir()
+    STATE_FILE.unlink()
+    STATE_ROOT.rmdir()
+    print("RDP_STOPPED_AND_VERIFIED=True", flush=True)
+    print("RDP_ORIGINAL_GSETTINGS_RESTORED=True", flush=True)
+    print("RDP_CREDENTIALS_AND_TLS_REMOVED=True", flush=True)
+    print("FIREWALL_GUARD_REMOVED=True", flush=True)
+
+
+def tick() -> None:
+    data = state_load()
+    if data is None:
+        return
+    if deadline_expired(data):
+        print("PILOT_TIMEOUT_OR_REBOOT=TRUE", flush=True)
+        stop()
+    else:
+        print("WATCHDOG=ARMED", flush=True)
+
+
+def status() -> None:
+    uid, _ = target()
+    data = state_load()
+    print("PILOT_STATE_EXISTS=", data is not None)
+    print("GUARD_KERNEL_VERIFIED=", guard.guard_verified())
+    print("ROOT_WATCHDOG_VERIFIED=", watchdog_verified())
+    print("GNOME_RDP_SETTING=", get_setting(uid, "enable"))
+    print("RDP_LISTENERS_3389_3398=", listeners())
+    if data is not None:
+        print("PILOT_EXPIRED=", deadline_expired(data))
+    print("NO_CREDENTIALS_PRINTED=True")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="63D-30 local GNOME screen-sharing pilot")
+    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status"])
+    args = parser.parse_args()
+    print("===== CLIENTFLOW 63D-30 · LOCAL GNOME RDP PILOT =====", flush=True)
+    try:
+        {"stage": stage, "start": start, "stop": stop,
+         "tick": tick, "status": status}[args.action]()
+        return 0
+    except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        print("PILOT=STOP", type(exc).__name__, str(exc), flush=True)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
