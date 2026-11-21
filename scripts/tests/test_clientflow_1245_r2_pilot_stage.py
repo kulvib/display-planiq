@@ -17,6 +17,8 @@ FILES = (
     "backend/service1/clientflow_release_catalog_1246_pilot.stage.json",
     "backend/service1/clientflow_release_catalog_1247_pilot.stage.json",
     "backend/service1/clientflow_pilot_1247_approval.json",
+    "backend/service1/clientflow_release_catalog_1248_pilot.stage.json",
+    "backend/service1/clientflow_pilot_1248_approval.json",
     "backend/service1/clientflow_pilot_1246_approval.json",
     "scripts/tests/fixtures/clientflow_1244_pre_1245_pilot_catalog.json",
     "backend/service1/clientflow_release_catalog_1245_pilot.stage.json",
