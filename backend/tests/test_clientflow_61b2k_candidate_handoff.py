@@ -246,8 +246,8 @@ def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1248()
     assert fleet['physical_pilot_accepted'] is False
 
 
-def test_current_unsigned_1248_accepts_only_exact_pinned_1247_catalog(tmp_path):
-    """Regression: current 3-entry 1247 stage must not fail the 1248 handoff."""
+def test_current_approved_1248_handoff_accepts_only_exact_pinned_1248_catalog(tmp_path):
+    """Regression: exact current 1248 stage may verify 1248 source provenance."""
     assert handoff_gate._verify_original_catalog(
         ROOT, "clientflow-1.3.47-seq-1248", 1248,
     ) is None
@@ -259,6 +259,8 @@ def test_current_unsigned_1248_accepts_only_exact_pinned_1247_catalog(tmp_path):
         'backend/service1/clientflow_pilot_1246_approval.json',
         'backend/service1/clientflow_release_catalog_1247_pilot.stage.json',
         'backend/service1/clientflow_pilot_1247_approval.json',
+        'backend/service1/clientflow_release_catalog_1248_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1248_approval.json',
     ]
     for name in paths:
         destination = repo / name
@@ -278,13 +280,15 @@ def test_current_unsigned_1248_accepts_only_exact_pinned_1247_catalog(tmp_path):
         handoff_gate._verify_original_catalog(repo, 'clientflow-1.3.47-seq-1248', 1248)
 
 
-def test_full_unsigned_1248_handoff_with_exact_active_1247_catalog(scenario):
+def test_full_unsigned_1248_handoff_with_exact_active_1248_catalog(scenario):
     """End-to-end reproduction of the gate reached in 1248 release-build CI."""
     repo, handoff = scenario
     for name in (
         'backend/service1/clientflow_release_catalog.json',
         'backend/service1/clientflow_release_catalog_1247_pilot.stage.json',
         'backend/service1/clientflow_pilot_1247_approval.json',
+        'backend/service1/clientflow_release_catalog_1248_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1248_approval.json',
     ):
         shutil.copy2(ROOT / name, repo / name)
     (repo / 'client/VERSION').write_text('1.3.47\n')
