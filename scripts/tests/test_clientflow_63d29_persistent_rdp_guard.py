@@ -35,6 +35,14 @@ def test_nft_policy_covers_ipv4_ipv6_tcp_udp_and_entire_negotiation_range():
     assert "hook input priority -150" in rules
     assert "policy accept;" in rules
     assert guard.canonical_installed_rules(rules)
+    # Linux nft pretty-prints priority -150 using the predefined alias "mangle".
+    # This was the regression that caused the physical guard-only drill to stop.
+    assert guard.canonical_installed_rules(
+        rules.replace("priority -150;", "priority mangle;")
+    )
+    assert not guard.canonical_installed_rules(
+        rules.replace("priority -150;", "priority filter;")
+    )
     assert not guard.canonical_installed_rules(
         rules.replace("udp dport 3389-3398 drop", "udp dport 3389-3398 accept")
     )
