@@ -129,3 +129,17 @@ Dokumenteret tilgang før en ændrende pilot:
 6. Mål læsbar tekst, mus/drag, input-to-painted-frame, CPU/RAM, 443-proxykompatibilitet, trafik og 2 GB disksikkerhed; behold 1248 indtil godkendt.
 
 Officiel dokumentation: https://ubuntu.com/desktop/docs/en/26.04/how-to/share-your-desktop-remotely/ (Desktop Sharing 3389/3390 og Remote Login forskel), https://documentation.ubuntu.com/security/security-features/network/firewall/nftables/ (nft rulesets), https://netfilter.org/projects/nftables/manpage.html (INPUT hooks og regeltraversal).
+
+## Fysisk nftables-dry-run – 21. november 2026
+
+Operatøren har udført `sudo nft --check --file -` på Viborg1 med en specifik `table inet clientflow_rdp_preflight`, en `input`-hook ved priority `-100` og `iifname != "lo" tcp dport {3389,3390} drop`.
+
+Output:
+- `NFT_SYNTAX_VALID=True`
+- `RULES_INSTALLED=False`
+- `RDP_ENABLED=False`
+- `READ_ONLY=True`
+
+**Resultat:** Syntaksgate PASS. Dette er *ikke* bevis for, at fremtidigt installerede regler faktisk beskytter RDP, eller at en HTTPS-only reverse tunnel findes.
+
+**Næste ændrende gate:** En isoleret nft guard-only øvelse kan installere denne *dedikerede* inet-tabel kortvarigt, verificere den installerede regel og derefter fjerne netop den, med watchdog-rollback. GNOME RDP skal fortsat være deaktiveret i denne øvelse. Først derefter kan der udarbejdes en særskilt fuld RDP-pilot, hvor en autoriseret, krypteret localhost RDP-session og sikker udgående HTTPS/443 transport verificeres uden at åbne LAN-port. En RDP/guacd implementation er ikke automatisk berettiget af denne PASS.
