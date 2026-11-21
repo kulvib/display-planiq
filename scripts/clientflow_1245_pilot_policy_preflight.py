@@ -53,7 +53,7 @@ def inspect(repo: Path) -> dict:
         in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247), ("1.3.47", 1248))
     )
     checks["one_stable_1245_catalog"] = (
-        catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog", "update_only_1247_pilot_catalog")
+        catalog_mode in ("stable_1245_only", "update_only_1246_pilot_catalog", "update_only_1247_pilot_catalog", "update_only_1248_pilot_catalog")
         and cat.get("catalog_sequence") == 1245
         and cat.get("latest_stable") == cat.get("default_install_version") == "1.3.44"
         and isinstance(releases, list) and len(releases) == 1
