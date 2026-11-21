@@ -25,6 +25,9 @@ DIRECTORY = Path("/etc/clientflow/rdp-guard-63d29")
 RULE_PATH = DIRECTORY / "guard.nft"
 UNIT_NAME = "clientflow-63d29-rdp-guard.service"
 UNIT_PATH = Path("/etc/systemd/system") / UNIT_NAME
+DROPIN_DIR = Path("/etc/systemd/system/display-manager.service.d")
+DROPIN_PATH = DROPIN_DIR / "clientflow-63d29-rdp-guard.conf"
+DROPIN = f"""[Unit]\nRequires={UNIT_NAME}\nAfter={UNIT_NAME}\n"""
 TABLE_NAME = "clientflow_63d29_rdp_guard"
 PORT_LOW, PORT_HIGH = 3389, 3398
 
@@ -42,7 +45,6 @@ Description=ClientFlow 63D-29 fail-closed RDP pilot network guard (TCP/UDP)
 DefaultDependencies=no
 After=local-fs.target
 Before=sysinit.target network-pre.target display-manager.service
-ConditionPathExists={RULE_PATH}
 
 [Service]
 Type=oneshot
@@ -173,6 +175,11 @@ def guard_verified() -> bool:
 def require_clean_install() -> None:
     if DIRECTORY.exists() or UNIT_PATH.exists() or UNIT_PATH.is_symlink():
         raise RuntimeError("STOP: Guard-filer eksisterer allerede")
+    if DROPIN_PATH.exists() or DROPIN_PATH.is_symlink() or DROPIN_DIR.is_symlink():
+        raise RuntimeError("STOP: Display manager drop-in eksisterer allerede")
+    display_manager = run("systemctl", "show", "--property=LoadState", "--value", "display-manager.service")
+    if display_manager.returncode != 0 or display_manager.stdout.strip() != "loaded":
+        raise RuntimeError("STOP: Display manager service er ikke verificeret")
     if guard_exists():
         raise RuntimeError("STOP: Guard-tabel eksisterer allerede")
     if shutil.which("nft") != "/usr/sbin/nft":
@@ -202,6 +209,8 @@ def install_guard(uid: str) -> None:
     DIRECTORY.mkdir(mode=0o700, parents=False, exist_ok=False)
     write_exclusive(RULE_PATH, RULES, 0o600)
     write_exclusive(UNIT_PATH, UNIT, 0o644)
+    DROPIN_DIR.mkdir(mode=0o755, parents=True, exist_ok=True)
+    write_exclusive(DROPIN_PATH, DROPIN, 0o644)
     if run("systemctl", "daemon-reload").returncode != 0:
         raise RuntimeError("STOP: systemd daemon-reload fejlede")
     # Enable on sysinit.target, BEFORE display-manager and the kiosk login.
@@ -214,7 +223,11 @@ def install_guard(uid: str) -> None:
         raise RuntimeError("STOP: Guard er ikke aktiv og enabled")
     if not guard_verified():
         raise RuntimeError("STOP: Kernereglerne matcher ikke expected TCP/UDP drop")
+    dependency = run("systemctl", "show", "--property=DropInPaths", "--value", "display-manager.service")
+    if dependency.returncode != 0 or str(DROPIN_PATH) not in dependency.stdout.split():
+        raise RuntimeError("STOP: Display manager fail-closed dependency ikke aktiveret")
     print("BOOT_GUARD_ENABLED=True")
+    print("DISPLAY_MANAGER_REQUIRES_GUARD=True")
     print("KERNEL_IPV4_IPV6_TCP_UDP_GUARD=VERIFIED")
     print("RDP_ENABLED_BY_TEST=False")
     print("GUARD_PERSISTS_UNTIL_EXPLICIT_SAFE_REMOVE=True")
@@ -232,7 +245,17 @@ def remove_guard(uid: str) -> None:
         raise RuntimeError("STOP: Guard service ikke identisk")
     if RULE_PATH.read_text(encoding="utf-8") != RULES:
         raise RuntimeError("STOP: Guard regler ikke identiske")
+    if not DROPIN_PATH.is_file() or DROPIN_PATH.is_symlink():
+        raise RuntimeError("STOP: Display manager dependency mangler")
+    if DROPIN_PATH.read_text(encoding="utf-8") != DROPIN:
+        raise RuntimeError("STOP: Display manager dependency er ændret")
     # Verify off AGAIN immediately before unprotecting network.
+    ensure_rdp_off(uid)
+    # Remove the strong dependency first. Otherwise stopping the guard can
+    # stop the running display manager via Requires=, disrupting the kiosk.
+    DROPIN_PATH.unlink()
+    if run("systemctl", "daemon-reload").returncode != 0:
+        raise RuntimeError("STOP: Kunne ikke genindlæse display manager dependency")
     ensure_rdp_off(uid)
     if run("systemctl", "disable", "--now", UNIT_NAME, timeout=20).returncode != 0:
         raise RuntimeError("STOP: Kunne ikke deaktivere boot-guard")
@@ -242,6 +265,10 @@ def remove_guard(uid: str) -> None:
     UNIT_PATH.unlink()
     RULE_PATH.unlink()
     DIRECTORY.rmdir()
+    try:
+        DROPIN_DIR.rmdir()
+    except OSError:
+        pass  # Preserve any other existing display-manager drop-ins.
     run("systemctl", "daemon-reload")
     print("RDP_VERIFIED_OFF=True")
     print("FIREWALL_GUARD_REMOVED=True")
@@ -258,6 +285,8 @@ def status(uid: str) -> None:
     print("BOOT_GUARD_ENABLED=", enabled == "enabled")
     print("BOOT_GUARD_ACTIVE=", active == "active")
     print("KERNEL_DROP_RULES_MATCH=", guard)
+    dep = run("systemctl", "show", "--property=DropInPaths", "--value", "display-manager.service")
+    print("DISPLAY_MANAGER_REQUIRES_GUARD=", dep.returncode == 0 and str(DROPIN_PATH) in dep.stdout.split())
     try:
         ensure_rdp_off(uid)
         print("GNOME_RDP_OFF= True")
