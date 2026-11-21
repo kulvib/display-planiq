@@ -260,11 +260,25 @@ def remove_guard(uid: str) -> None:
         raise RuntimeError("STOP: Display manager dependency er ændret")
     # Verify off AGAIN immediately before unprotecting network.
     ensure_rdp_off(uid)
+    # Make sure the session service is active before touching dependencies.
+    manager_before = run("systemctl", "is-active", "display-manager.service")
+    if manager_before.stdout.strip() != "active":
+        raise RuntimeError("STOP: display-manager er ikke aktiv før guard-oprydning")
     # Remove the strong dependency first. Otherwise stopping the guard can
     # stop the running display manager via Requires=, disrupting the kiosk.
     DROPIN_PATH.unlink()
     if run("systemctl", "daemon-reload").returncode != 0:
         raise RuntimeError("STOP: Kunne ikke genindlæse display manager dependency")
+    # Explicitly prove that systemd unloaded the dependency before stopping
+    # the guard. On uncertainty retain the active guard and stop.
+    manager_requires = run(
+        "systemctl", "show", "--property=Requires", "--value", "display-manager.service",
+    )
+    if manager_requires.returncode != 0 or UNIT_NAME in manager_requires.stdout.split():
+        raise RuntimeError("STOP: display-manager kræver stadig guard; beholder firewall")
+    manager_after = run("systemctl", "is-active", "display-manager.service")
+    if manager_after.stdout.strip() != "active":
+        raise RuntimeError("STOP: display-manager er ikke aktiv efter daemon-reload")
     ensure_rdp_off(uid)
     if run("systemctl", "disable", "--now", UNIT_NAME, timeout=20).returncode != 0:
         raise RuntimeError("STOP: Kunne ikke deaktivere boot-guard")
