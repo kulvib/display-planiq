@@ -265,9 +265,14 @@ def _build_pipeline(
     # The first attempt preserves the established fast path. When a verified
     # zero-buffer startup times out, the producer may try a bounded, non-pool
     # PipeWire negotiation on its next attempt. Do not copy pixels by default.
-    if source_mode not in {"normal", "bounded"}:
+    if source_mode not in {"normal", "bounded", "copy"}:
         raise ValueError("Unknown PipeWire source mode")
+    # GNOME 50 / PipeWire may advertise valid caps and link video nodes but
+    # deliver no buffer to a downstream zero-copy GStreamer pipeline. Keep the
+    # normal path untouched; on a proven zero-buffer startup, request an owned
+    # system-memory buffer instead of retaining the compositor's backing data.
     source_options = (
+        " always-copy=true" if source_mode == "copy" else
         " min-buffers=2 max-buffers=4 use-bufferpool=false"
         if source_mode == "bounded" else ""
     )
