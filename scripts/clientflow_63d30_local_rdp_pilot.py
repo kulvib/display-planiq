@@ -462,7 +462,7 @@ def local_rdp_negotiation() -> bool:
     except (OSError, TimeoutError):
         return False
     return (
-        len(response) >= 11 and response[0:2] == b"\\x03\\x00"
+        len(response) >= 11 and response[0:2] == bytes((3, 0))
         and response[5] == 0xD0
     )
 
