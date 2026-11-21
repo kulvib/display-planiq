@@ -48,14 +48,14 @@ CLI-kommandoer:
 - `probe`: Kontroller egen root-watchdog, RDP-setting, nft-guard, præcis port 3389 og **kun** loopback TCP X.224-negotiation. **Bestået probe er ikke bevis for fuld RDP TLS-login, billedpixels eller latency.**
 - `status`: Redigeringsfri status uden følsomme værdier.
 - `stop`: Slå user-GNOME RDP fra, stop/disable user service, verificér nul TCP/UDP-portlyttere, ryd credentials, gendan alle otte baseline-GSettings og verificér dem, kontrollér system-/user-RDP inaktivt og disabled. **Først derefter** fjern 63D-29-guard med den fysisk recoverytestede `remove`-metode. Slet TLS, credential-file og pilotstate; afmontér root-watchdog.
-- `tick`: Minutlig persistent timer. Hvis deadline er udløbet eller boot-ID har skiftet, udfør samme sikre `stop`. Hvis kioskens user-D-Bus ikke er tilgængelig ved reboot, stop **uden at fjerne firewall**, og prøv igen ved næste minut.
+- `tick`: Persistent root-timer med en planlagt 10-sekunders kadence. Hvis deadline er udløbet, boot-ID har skiftet **eller den faktiske kernel-firewall ikke kan verificeres**, udføres straks samme sikre `stop`. Hvis kioskens user-D-Bus mangler ved reboot, bevares firewall og der forsøges igen ved næste timer-trigger. Kadencen garanterer ikke absolut responstid.
 - `unstage`: Kun efter bevisligt ingen aktiv pilot og ingen guard.
 
 Pilotens maksimale normale vindue er **6 minutter**. Den gemmer både wallclock, monotont tidspunkt og boot-ID og har en eksklusiv root-lock mod samtidig start/stop/timer. En fejl i cleanup må ikke åbne netværksadgang.
 
 ### Vigtigt om at validere watchdog og boot
 
-En systemd-timer alene giver ikke en absolut garanti for timeout/oprydning. Kombinationen af boot-ordnet nftables-service, display-manager `Requires/After`, permanent timer, boot-ID-tjek, fysisk negativ network test og root stop-rækkefølge skal gennemgås og testes – især *guard service failure* mens systemet genstarter. Måles dette ikke, **ingen aktiv RDP-autorisation**.
+En systemd-timer alene giver ikke en absolut garanti for timeout/oprydning. Kombinationen af boot-ordnet nftables-service, display-manager `Requires/After`, persistent 10-sekunders timer, kernel-drop-rule-verifikation, boot-ID-tjek, fysisk negativ network test og root stop-rækkefølge skal gennemgås og testes – især *guard service failure* mens systemet genstarter. Måles dette ikke, **ingen aktiv RDP-autorisation**.
 
 ### Sikkerhedsgrænser
 
