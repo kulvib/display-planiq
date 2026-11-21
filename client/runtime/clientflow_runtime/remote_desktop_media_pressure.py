@@ -15,9 +15,9 @@ from typing import Any
 # TIOCOUTQ/SIOCOUTQ on Linux: bytes waiting in the TCP send queue.
 _LINUX_SIOCOUTQ = 0x5411
 MAX_CONTROL_SENDQ_BYTES = 192 * 1024
-PRESSURE_HOLD_SECONDS = 15.0
+PRESSURE_HOLD_SECONDS = 8.0
 SLOW_SEND_MILLISECONDS = 350.0
-CONGESTED_JPEG_QUALITY = 40
+CONGESTED_JPEG_QUALITY = 68
 
 
 def socket_send_queue_bytes(websocket: Any) -> int | None:
@@ -67,11 +67,11 @@ class MediaPressure:
         return int(requested)
 
 # Keep native desktop coordinates independent of encoded JPEG size.
-# Normal preview is at most 1280x720; under pressure prefer 960x540.
-NORMAL_MAX_FRAME_WIDTH = 1280
-NORMAL_MAX_FRAME_HEIGHT = 720
-CONGESTED_MAX_FRAME_WIDTH = 960
-CONGESTED_MAX_FRAME_HEIGHT = 540
+# Preserve readable UI text: 1920px normal, at least 1600px under pressure.
+NORMAL_MAX_FRAME_WIDTH = 1920
+NORMAL_MAX_FRAME_HEIGHT = 1080
+CONGESTED_MAX_FRAME_WIDTH = 1600
+CONGESTED_MAX_FRAME_HEIGHT = 900
 
 
 def bounded_capture_dimensions(
