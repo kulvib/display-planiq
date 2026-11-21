@@ -95,7 +95,7 @@ def canonical_installed_rules(text: str) -> bool:
     if not re.search(rf"\btable inet {TABLE_NAME}\s*\{{", text):
         return False
     if not re.search(
-        r"\btype filter hook input priority (?:-150|raw \+ 150); policy accept;",
+        r"\btype filter hook input priority (?:-150|mangle|raw \+ 150); policy accept;",
         text,
     ):
         return False
