@@ -140,12 +140,21 @@ def ensure_rdp_off(uid: str) -> None:
     system = run("systemctl", "is-active", "gnome-remote-desktop.service")
     if system.stdout.strip() != "inactive":
         raise RuntimeError("STOP: System Remote Login ikke bevisligt inaktiv")
+    system_enable = run("systemctl", "is-enabled", "gnome-remote-desktop.service")
+    if system_enable.stdout.strip() != "disabled":
+        raise RuntimeError("STOP: System Remote Login er ikke bevisligt disabled")
     user = kiosk(
         "systemctl", "--user", "is-active", "gnome-remote-desktop.service",
         uid=uid,
     )
     if user.stdout.strip() != "inactive":
         raise RuntimeError("STOP: GNOME Desktop Sharing ikke bevisligt inaktiv")
+    user_enable = kiosk(
+        "systemctl", "--user", "is-enabled", "gnome-remote-desktop.service",
+        uid=uid,
+    )
+    if user_enable.stdout.strip() != "disabled":
+        raise RuntimeError("STOP: GNOME Desktop Sharing er ikke bevisligt disabled")
     enabled = kiosk(
         "gsettings", "get", "org.gnome.desktop.remote-desktop.rdp", "enable",
         uid=uid,
