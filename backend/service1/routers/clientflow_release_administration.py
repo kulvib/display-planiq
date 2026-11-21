@@ -27,7 +27,7 @@ from ..clientflow_release_pilot_stage_1247 import (
 )
 from ..clientflow_pilot_1247 import ClientFlowPilot1247Denied
 from ..clientflow_release_pilot_stage_1248 import (
-    validated_catalog_mode_1248, PilotStage1248Denied,
+    staged_pilot_summary_1248, validated_catalog_mode_1248, PilotStage1248Denied,
 )
 from ..clientflow_pilot_1248 import ClientFlowPilot1248Denied
 from ..clientflow_release_admin_models import (
@@ -306,19 +306,24 @@ def read_release_administration(
         fresh_install_open=control.fresh_install_open,
         physical_acceptance=False,
         exact_update_only_pilot_catalog=(
-            validated_catalog_mode_1247(active_catalog=load_catalog()) == "update_only_1247_pilot_catalog"
+            validated_catalog_mode_1248(active_catalog=load_catalog()) == "update_only_1248_pilot_catalog"
+            if load_catalog().get("catalog_sequence") == 1248
+            else validated_catalog_mode_1247(active_catalog=load_catalog()) == "update_only_1247_pilot_catalog"
             if load_catalog().get("catalog_sequence") == 1247
             else validated_catalog_mode(active_catalog=load_catalog()) == "update_only_1246_pilot_catalog"
         ),
     )
     try:
         staged_pilot = (
-            staged_pilot_summary_1247(active_catalog=load_catalog())
+            staged_pilot_summary_1248(active_catalog=load_catalog())
+            if load_catalog().get("catalog_sequence") == 1248
+            else staged_pilot_summary_1247(active_catalog=load_catalog())
             if load_catalog().get("catalog_sequence") == 1247
             else staged_pilot_summary(active_catalog=load_catalog())
         )
     except (PilotStageDenied, ClientFlowPilot1246Denied,
-            PilotStage1247Denied, ClientFlowPilot1247Denied) as exc:
+            PilotStage1247Denied, ClientFlowPilot1247Denied,
+            PilotStage1248Denied, ClientFlowPilot1248Denied) as exc:
         raise HTTPException(status_code=503, detail="Pilotkandidatens godkendte kildestatus kan ikke verificeres") from exc
     waves = session.exec(
         select(ClientFlowRolloutWave)
