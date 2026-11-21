@@ -65,12 +65,12 @@ def test_next_source_is_build_eligible_but_never_authorized():
         assert report[key] is False
 
 
-def test_current_release_catalog_promotes_only_approved_update_only_1247():
+def test_current_release_catalog_promotes_only_approved_update_only_1248():
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
-    assert catalog["catalog_sequence"] == 1247
+    assert catalog["catalog_sequence"] == 1248
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.44"
-    assert [x["release_sequence"] for x in catalog["releases"]] == [1245, 1246, 1247]
-    assert catalog["releases"][1]["release_id"] == "clientflow-1.3.45-seq-1246"
+    assert [x["release_sequence"] for x in catalog["releases"]] == [1245, 1247, 1248]
+    assert catalog["releases"][1]["release_id"] == "clientflow-1.3.46-seq-1247"
     assert catalog["releases"][1]["installable"] is False
     assert catalog["releases"][2]["installable"] is False
     assert catalog["releases"][2]["install_modes"] == ["in_place_update"]
@@ -102,7 +102,7 @@ def test_only_exact_1248_pair_can_be_built(tmp_path, version: str, seq: int):
 
 
 @pytest.mark.parametrize("name,modify", [
-    ("backend/service1/clientflow_release_catalog.json", lambda x: x.update(catalog_sequence=1248)),
+    ("backend/service1/clientflow_release_catalog.json", lambda x: x.update(catalog_sequence=1249)),
     ("backend/service1/clientflow_release_catalog.json", lambda x: x.update(latest_stable="1.3.46")),
     ("backend/service1/clientflow_1245_fleet_acceptance.json", lambda x: x.update(physical_pilot_accepted=True)),
     ("backend/service1/clientflow_pilot_1245_approval.json", lambda x: x.update(approved=False)),
