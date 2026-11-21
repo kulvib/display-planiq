@@ -85,11 +85,11 @@ def test_brace_expansion_is_patched_and_its_old_audit_waiver_is_removed() -> Non
 
 def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
     # Approved 1.3.38/1239 replaces the selector, not historical evidence.
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.47"
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.3.48"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1248
+    assert release_input["release_sequence"] == 1249
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(
