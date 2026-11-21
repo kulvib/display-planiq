@@ -65,3 +65,33 @@ class MediaPressure:
         if now < self.congested_until:
             return max(35, min(int(requested), CONGESTED_JPEG_QUALITY))
         return int(requested)
+
+# Keep native desktop coordinates independent of encoded JPEG size.
+# Normal preview is at most 1280x720; under pressure prefer 960x540.
+NORMAL_MAX_FRAME_WIDTH = 1280
+NORMAL_MAX_FRAME_HEIGHT = 720
+CONGESTED_MAX_FRAME_WIDTH = 960
+CONGESTED_MAX_FRAME_HEIGHT = 540
+
+
+def bounded_capture_dimensions(
+    native_width: int, native_height: int, *, congested: bool,
+) -> tuple[int, int]:
+    """Aspect-ratio preserving, even-pixel JPEG bounds for non-native capture.
+
+    Only used after the first genuine native capture reports the screen geometry.
+    The original width and height must remain the *screen* geometry forwarded
+    to the browser for mouse input and accurate aspect ratio.
+    """
+    width, height = int(native_width), int(native_height)
+    if not 320 <= width <= 7680 or not 200 <= height <= 4320:
+        raise ValueError("Ugyldige oprindelige skærmdimensioner")
+    max_width = CONGESTED_MAX_FRAME_WIDTH if congested else NORMAL_MAX_FRAME_WIDTH
+    max_height = CONGESTED_MAX_FRAME_HEIGHT if congested else NORMAL_MAX_FRAME_HEIGHT
+    factor = min(1.0, max_width / width, max_height / height)
+    if factor == 1.0:
+        return (width, height)
+    # Even dimensions minimize video backend and encoder compatibility issues.
+    scaled_w = max(320, int(width * factor) // 2 * 2)
+    scaled_h = max(200, int(height * factor) // 2 * 2)
+    return (min(width, scaled_w), min(height, scaled_h))
