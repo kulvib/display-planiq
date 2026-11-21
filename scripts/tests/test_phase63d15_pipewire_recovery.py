@@ -38,15 +38,17 @@ def test_livestream_normal_then_bounded_capture_policy(monkeypatch):
     exec(compile(ast.Module(body=[_ast_entry(LIVESTREAM, "_build_pipeline")], type_ignores=[]), str(LIVESTREAM), "exec"), scope)
     build = scope["_build_pipeline"]
 
-    for mode in ("normal", "bounded"):
+    for mode in ("normal", "bounded", "copy"):
         build(63, Path("/tmp/test"), 10, 12000, "veryfast", 2, 8, source_mode=mode)
 
-    original, alternative = descriptions
+    original, alternative, copied = descriptions
     assert "pipewiresrc name=capture_source path=63" in original
     assert "use-bufferpool=" not in original
     assert "max-buffers=" not in original
     assert "min-buffers=" not in original
     assert "min-buffers=2 max-buffers=4 use-bufferpool=false" in alternative
+    assert "always-copy=true" in copied
+    assert "always-copy=true" not in original + alternative
     for desc in descriptions:
         assert "x264enc name=h264_encoder tune=zerolatency" in desc
         assert "video/x-raw,format=I420,framerate=10/1" in desc
@@ -59,7 +61,7 @@ def test_livestream_normal_then_bounded_capture_policy(monkeypatch):
 
 def test_producer_fallback_only_after_first_failed_attempt_and_generation_reset(monkeypatch):
     assert [livestream_producer.capture_source_mode(n) for n in (0, 1, 2, 9)] == [
-        "normal", "bounded", "bounded", "bounded"
+        "normal", "copy", "copy", "copy"
     ]
     producer = livestream_producer.Producer.__new__(livestream_producer.Producer)
     producer._retry_attempts = 0
@@ -69,7 +71,7 @@ def test_producer_fallback_only_after_first_failed_attempt_and_generation_reset(
     assert livestream_producer.capture_source_mode(producer._retry_attempts) == "normal"
     producer._reset_retry("f3056c30-d524-4a8d-9dd5-cc43fbcd41b6")
     producer._retry_attempts = 1
-    assert livestream_producer.capture_source_mode(producer._retry_attempts) == "bounded"
+    assert livestream_producer.capture_source_mode(producer._retry_attempts) == "copy"
     producer._reset_retry("5f166a2e-edfc-45ef-b4dc-286c3e799416")
     assert producer._retry_attempts == 0
     assert livestream_producer.capture_source_mode(producer._retry_attempts) == "normal"
@@ -103,14 +105,14 @@ def test_producer_only_passes_fixed_mode_argument_to_unprivileged_child(monkeypa
     producer._start(str(uuid.uuid4()))
     assert len(calls) == 1
     cmd, options = calls[0]
-    assert cmd[cmd.index("--source-mode") + 1] == "bounded"
+    assert cmd[cmd.index("--source-mode") + 1] == "copy"
     assert "--output" in cmd
     assert options["stdin"] == livestream_producer.subprocess.DEVNULL
     assert options["close_fds"] is True
     assert options["start_new_session"] is True
     assert options["env"]["XDG_SESSION_TYPE"] == "wayland"
     assert [s for s, _ in statuses] == ["starting", "running"]
-    assert all(data["source_mode"] == "bounded" for _, data in statuses)
+    assert all(data["source_mode"] == "copy" for _, data in statuses)
 
 
 def _load_remote_class(name, scope):
@@ -145,7 +147,9 @@ def test_remote_pipeline_preserves_native_and_scaled_geometry_in_both_modes():
     obj.ensure(63, 1280, 720, 85, native=True, source_mode="bounded")
     obj.ensure(63, 1280, 720, 85, native=False, source_mode="bounded")
     obj.ensure(63, 1280, 720, 85, native=False, source_mode="bounded")
-    assert len(descriptions) == 3  # identical spec reuses running pipeline
+    obj.ensure(63, 1280, 720, 85, native=False, source_mode="copy")
+    obj.ensure(63, 1280, 720, 85, native=False, source_mode="copy")
+    assert len(descriptions) == 4  # identical spec reuses running pipeline
     assert "use-bufferpool=" not in descriptions[0]
     assert "min-buffers=2 max-buffers=4 use-bufferpool=false" in descriptions[1]
     assert "min-buffers=2 max-buffers=4 use-bufferpool=false" in descriptions[2]
@@ -154,13 +158,15 @@ def test_remote_pipeline_preserves_native_and_scaled_geometry_in_both_modes():
     assert "pixel-aspect-ratio=1/1" in descriptions[2]
     assert "width=1280,height=720" in descriptions[2]
     assert "appsink name=frame_sink max-buffers=1 drop=true sync=false" in descriptions[2]
+    assert "always-copy=true" in descriptions[3]
+    assert "always-copy=true" not in "".join(descriptions[:3])
     with pytest.raises(ValueError, match="Ukendt PipeWire source mode"):
         obj.ensure(63, 1280, 720, 85, source_mode="unknown")
 
 
 def test_remote_retries_just_once_with_bounded_buffers_only_on_no_frame():
     for first_error, expected_modes in (
-        ("GStreamer returnerede ingen frame", ["normal", "bounded"]),
+        ("GStreamer returnerede ingen frame", ["normal", "copy"]),
         ("Mutter returnerede ingen PipeWire-node", ["normal", "normal"]),
     ):
         seen = []
@@ -220,7 +226,7 @@ def test_remote_double_zero_frame_failure_has_bounded_termination():
     worker = Worker()
     with pytest.raises(RuntimeError, match="Mutter/PipeWire capture kunne ikke genetableres"):
         worker.capture({"action": "capture", "width": 1280, "height": 720, "quality": 85})
-    assert seen == ["normal", "bounded"]
+    assert seen == ["normal", "copy"]
     assert worker.node_id is None
     assert worker.source_mode == "normal"
 
@@ -279,14 +285,14 @@ def test_livestream_ready_fallback_completes_before_agent_command_expires(monkey
         first_error="Wayland capture blev ikke HLS-klar inden for 12 sekunder",
     )
     producer._start(generation)
-    assert modes == ["normal", "bounded"]
+    assert modes == ["normal", "copy"]
     assert timeouts == [12.0, 14.0]
     assert sum(timeouts) < 45.0  # agent timeout includes remaining process-cleanup time
     assert states == ["starting", "stopped", "starting", "running"]
     assert producer.generation_id == generation
 
 
-def test_livestream_non_timeout_error_does_not_attempt_bounded_mode(monkeypatch, tmp_path):
+def test_livestream_non_timeout_error_does_not_attempt_copy_mode(monkeypatch, tmp_path):
     producer, modes, timeouts, states, generation = _fake_livestream_start(
         monkeypatch, tmp_path, first_error="No valid Mutter monitor found",
     )
@@ -297,7 +303,7 @@ def test_livestream_non_timeout_error_does_not_attempt_bounded_mode(monkeypatch,
     assert states == ["starting", "stopped"]
 
 
-def test_livestream_failed_bounded_retry_stops_no_duplicate_third_capture(monkeypatch, tmp_path):
+def test_livestream_failed_copy_retry_stops_no_duplicate_third_capture(monkeypatch, tmp_path):
     producer, modes, timeouts, states, generation = _fake_livestream_start(
         monkeypatch, tmp_path,
         first_error="Wayland capture blev ikke HLS-klar inden for 12 sekunder",
@@ -305,7 +311,7 @@ def test_livestream_failed_bounded_retry_stops_no_duplicate_third_capture(monkey
     )
     with pytest.raises(RuntimeError, match="14 sekunder"):
         producer._start(generation)
-    assert modes == ["normal", "bounded"]
+    assert modes == ["normal", "copy"]
     assert states == ["starting", "stopped", "starting", "stopped"]
     assert "running" not in states
 
