@@ -55,38 +55,27 @@ def test_baseline_matches_physical_kiosk_and_rejects_unexpected_user_changes(mon
 
 
 def test_credentials_are_parsed_without_showing_or_storing_secrets(monkeypatch):
-    monkeypatch.setattr(
-        pilot, "kiosk",
-        lambda uid, *args, **kw: Result(stdout=(
-            "RDP:\n"
-            " Username: (empty)\n"
-            " Password: (empty)\n"
-        )),
-    )
+    def report(status):
+        monkeypatch.setattr(
+            pilot, "kiosk",
+            lambda uid, *args, **kwargs: Result(stdout=status),
+        )
+
+    report("RDP:\n Username: (empty)\n Password: (empty)\n")
     assert pilot.credentials_empty(1000)
-    # Actual GNOME 50/51 output is TAB-indented, not space-indented.
-    monkeypatch.setattr(
-        pilot, "kiosk",
-        lambda uid, *args, **kw: Result(stdout=(
-            "RDP:\n\tUsername: (empty)\n\tPassword: (empty)\n"
-        )),
-    )
+    report("Overall:\n\tUnit status: inactive\nRDP:\n\tUsername: (empty)\n\tPassword: (empty)\n")
     assert pilot.credentials_empty(1000)
-    monkeypatch.setattr(
-        pilot, "kiosk",
-        lambda uid, *args, **kw: Result(stdout=(
-            "\tUsername: (empty)\n\tUsername: (empty)\n\tPassword: (empty)\n"
-        )),
-    )
+    report("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\nVNC:\n\tPassword: (hidden)\n")
+    assert pilot.credentials_empty(1000)
+    report("RDP:\n\tUsername: (empty)\n\tUsername: (empty)\n\tPassword: (empty)\n")
     assert not pilot.credentials_empty(1000)
-    monkeypatch.setattr(
-        pilot, "kiosk",
-        lambda uid, *args, **kw: Result(stdout=(
-            " Username: (hidden)\n Password: (hidden)\n"
-        )),
-    )
+    report("RDP:\n\tUsername: (empty)\n\tPassword: (empty)\nRDP:\n\tUsername: (empty)\n\tPassword: (empty)\n")
     assert not pilot.credentials_empty(1000)
-    monkeypatch.setattr(pilot, "kiosk", lambda uid, *args, **kw: Result(stdout=""))
+    report("RDP:\n Username: (hidden)\n Password: (hidden)\n")
+    assert not pilot.credentials_empty(1000)
+    report("RDP:\n\tPassword: (empty)\n")
+    assert not pilot.credentials_empty(1000)
+    report("")
     assert not pilot.credentials_empty(1000)
 
 
