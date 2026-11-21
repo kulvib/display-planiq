@@ -62,8 +62,8 @@ def test_slow_write_triggers_jpeg_quality_reduction_without_socket_telemetry():
     controller.observe_send(350.0, now=3.0)
     assert controller.jpeg_quality(72, now=4.0) == 68
     controller.observe_send(450.0, now=15.0)
-    assert controller.jpeg_quality(72, now=29.0) == 68
-    assert controller.jpeg_quality(72, now=30.0) == 72
+    assert controller.jpeg_quality(72, now=22.9) == 68
+    assert controller.jpeg_quality(72, now=23.0) == 72
 
 
 def test_video_is_gated_before_capture_and_input_lane_untouched():
@@ -91,6 +91,12 @@ def test_16_by_9_native_capture_is_bounded_without_changing_pointer_geometry():
     assert pressure.bounded_capture_dimensions(1280, 720, congested=False) == (1280, 720)
     assert pressure.bounded_capture_dimensions(1920, 1200, congested=False) == (1728, 1080)
     assert pressure.bounded_capture_dimensions(1080, 1920, congested=True) == (506, 900)
+    # Viborg1 physical display: the text-bearing 2560×1080 wide desktop
+    # must never collapse to the unreadable 960×404 / quality-40 profile.
+    assert pressure.bounded_capture_dimensions(2560, 1080, congested=False) == (1920, 810)
+    assert pressure.bounded_capture_dimensions(2560, 1080, congested=True) == (1600, 674)
+    assert pressure.CONGESTED_JPEG_QUALITY >= 68
+    assert pressure.CONGESTED_MAX_FRAME_WIDTH >= 1600
 
 
 def test_remote_capture_scales_jpeg_only_after_native_probe_preserving_mouse_coordinates():
