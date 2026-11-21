@@ -20,6 +20,8 @@ SOURCE_FILES = (
     "backend/service1/clientflow_release_catalog_1246_pilot.stage.json",
     "backend/service1/clientflow_release_catalog_1247_pilot.stage.json",
     "backend/service1/clientflow_pilot_1247_approval.json",
+    "backend/service1/clientflow_release_catalog_1248_pilot.stage.json",
+    "backend/service1/clientflow_pilot_1248_approval.json",
     "backend/service1/clientflow_pilot_1246_approval.json",
     "backend/service1/clientflow_release_catalog_1245_stable.stage.json",
     "backend/service1/clientflow_pilot_1245_approval.json",
