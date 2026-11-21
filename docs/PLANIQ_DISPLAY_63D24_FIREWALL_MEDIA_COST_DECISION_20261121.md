@@ -187,3 +187,25 @@ GNOME's RDP-GSettings-skema dokumenterer **`negotiate-port=true` som standard**,
 **Hard stop:** Før aktivering skal `port`, `negotiate-port`, `screen-share-mode`, `view-only` og `enable` aflæses i kioskbrugerens eksisterende GNOME-D-Bus. Pilotdesign skal sætte et eksplicit, verificeret portvalg (helst forhandlingsfri) med rollback af oprindelige GSettings-værdier og samtidig firewallblokering på alle potentielt valgte porte for både IPv4 og IPv6. Verificér kernereglen og faktiske listeners *før* nogen LAN-eksponeringstests. Ingen vellykket `nft --check` alene giver denne garanti. `grdctl --system` og `--headless` er forbudt i denne pilotscope.
 
 **Kilder:** https://sources.debian.org/src/gnome-remote-desktop/51.0-1/src/org.gnome.desktop.remote-desktop.gschema.xml.in (51.0 skema som dokumenterer 10-port forhandling; lokal 50.2 skal inspiceres), https://manpages.ubuntu.com/manpages/resolute/man1/grdctl.1.html (eksakt installeret pakkeversion), https://github.com/GNOME/gnome-remote-desktop/blob/main/docs/configuration.md (eksisterende-session Remote Assistance og TLS).
+
+## Fysisk 63D-27 RDP/port/skærmdelings-gate – verificeret 21. november 2026
+
+Den seneste skrivebeskyttede måling fra Viborg1 (CLIENT_ID=3) dokumenterer den faktiske brugerindstilling:
+
+| GSettings-nøgle | Læst værdi |
+|---|---|
+| `port` | `uint16 3389` |
+| `negotiate-port` | `true` |
+| `screen-share-mode` | `'mirror-primary'` |
+| `view-only` | `true` |
+| `enable` | `false` |
+| `auth-methods` | `['credentials']` |
+| TCP listeners 3389–3398 | Ingen |
+| UDP listeners 3389–3398 | Ingen |
+| Konfiguration ændret | Nej |
+
+**Beslutning for fysisk RDP-pilot:** Bevar `mirror-primary` og `auth-methods=['credentials']`. Hvis piloten skal kunne styre mus og tastatur, skal `view-only` midlertidigt sættes til `false`. `negotiate-port` må ikke forblive `true` med en 3389/3390-only firewall; brug et eksplicit, verificeret portvalg og bloker alle mulige RDP-porte på ikke-loopback for IPv4 *og* IPv6 som defense-in-depth. Den faktiske port og lytter skal observeres efter aktivering.
+
+**Reboot-sikkerhed / rollback:** Den eksisterende 63D-25 guard-only timer **sletter** sin firewall-tabel efter 120 sekunder. Den er *kun* sikker, fordi den aldrig aktiverer RDP. Den må **aldrig genbruges** som failsafe for en aktiv RDP-pilot: Ved proceskrasj ville den efterlade RDP aktiv og fjerne beskyttelsen. En rigtig RDP-pilot skal have et selvstændigt watchdog-flow, der først stopper/disable RDP og verificerer lytteren lukket og alle GSettings restored, og **derefter** kan fjerne firewallreglen. Ved fejl skal firewallreglen bevares, og der skal findes beskyttelse ved reboot før GNOME-brugersessionen startes. Certifikat/private key og credentials må ikke logges eller sendes i argumenter/PR. Restore må ikke slette eksisterende secrets uden baseline og ejerskab.
+
+**Gate 63D-27:** GNOME var fortsat deaktiveret, og den primære session er korrekt type. En aktiv RDP-billed-/inputtest er endnu **ikke** udført, og HTTPS/443-transportsystemet er ikke design- eller lasttestet. PR #403 er draft, release 1248 uændret.
