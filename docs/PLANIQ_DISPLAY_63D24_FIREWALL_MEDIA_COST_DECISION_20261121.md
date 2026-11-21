@@ -102,3 +102,30 @@ Operatøren udførte den skrivebeskyttede fase-63D-24 kontrol på `viborg1-NUC14
 **Gate A godkendt som inventar, ikke som RDP-feature.** Ubuntu/GNOME-dokumentationen bekræfter, at `Desktop Sharing` knytter til eksisterende session, men GNOME Desktop Sharing kan som standard åbne en RDP TCP-port (3389/3390). Derfor må hverken `grdctl rdp enable`, `systemctl --user enable --now gnome-remote-desktop.service` eller udlevering af RDP credentials udføres før et specifikt, fysisk rollback- og host-firewall-gate; en kommunal browser kan ikke kommunikere direkte til RDP bag NAT.
 
 Næste fasegate er derfor et særskilt **skrivebeskyttet kontroltrin af installeret GNOME version, dækkende host firewall-regler og sikker isolation af RDP til loopback**. En eventuel RDP-start skal være tidsbegrænset og skal verificere, at porten aldrig er eksponeret på Wi-Fi/Ethernet/LAN. Dette er endnu ikke gennemført. Behold 1248 og draft PR #402 uændret.
+
+## Fysisk RDP-firewallkontrol – 21. november 2026 (sikkerhedsstop)
+
+Brugerens anden **skrivebeskyttede** kontrol på Viborg1 viste:
+
+| Observation | Resultat |
+|---|---|
+| Pakkeversion `gnome-remote-desktop` | `50.2-0ubuntu0.1` |
+| System-Remote Login `is-active` | `inactive` |
+| System-Remote Login `is-enabled` | `disabled` |
+| ClientFlow RD-agent | `active` |
+| `ufw status` | `Status: inactive` |
+| Aktuelle nftables-INPUT base chains | `0` |
+| Nuværende dokumenteret RDP-isolation | `false` |
+| Konfiguration ændret | `false` |
+
+**BESLUTNING: Ingen GNOME RDP-aktivering, før en konkret og reversibel isolation er på plads.** Fravær af nft INPUT chains og inaktiv UFW betyder kun, at de to mekanismer ikke beskytter RDP i den observerede netværksnamespace; upstream firewall- og netværkspolicystatus er ikke bevist. GNOME Desktop Sharing bruger ifølge Ubuntu normalt port 3389 eller 3390, og et almindeligt `grdctl rdp enable` er **ikke** en garanti for loopback-only binding. Ingen offentlige/LAN RDP-porte accepteres.
+
+Dokumenteret tilgang før en ændrende pilot:
+1. Undersøg *read-only* den installerede `nft`-kommandos parser/understøttelse, 50.2 `grdctl`-optioner og mulig RDP local-client test.
+2. Vælg én dedikeret, genstartssikker **default-deny for RDP på ikke-loopback** på IPv4 **og** IPv6 (for eksempel en lille `inet` nftables INPUT drop-chain), men **ændr ingen eksisterende regler eller andre porte**. Reglerne skal først verificeres atomisk, og automatisk fail-safe rollback skal sættes op **før** RDP-tjenesten startes.
+3. Bind eller verificér RDP-porten faktisk, og kontroller isolation lokalt og fra separat LAN-vantage point. Hvis `grdctl` ikke understøtter eksplicit loopback-bind, må ingen dokumentation påstå det. Afvis hvis en ikke-loopback forbindelse kan oprettes.
+4. Konfigurer kun GNOME *screen sharing* for den eksisterende `clientflow-kiosk` Wayland-session; **aldrig** system-Remote Login, og gendan alle ændringer efter pilot.
+5. Før integration: dokumentér, hvordan **udgående, klientinitieret HTTPS/443** i ClientFlow sikkert kan transportere RDP til eksisterende Render-backend uden at gøre RDP/guacd offentligt. Dette er ikke etableret ved host firewall-gaten.
+6. Mål læsbar tekst, mus/drag, input-to-painted-frame, CPU/RAM, 443-proxykompatibilitet, trafik og 2 GB disksikkerhed; behold 1248 indtil godkendt.
+
+Officiel dokumentation: https://ubuntu.com/desktop/docs/en/26.04/how-to/share-your-desktop-remotely/ (Desktop Sharing 3389/3390 og Remote Login forskel), https://documentation.ubuntu.com/security/security-features/network/firewall/nftables/ (nft rulesets), https://netfilter.org/projects/nftables/manpage.html (INPUT hooks og regeltraversal).
