@@ -82,3 +82,13 @@ En systemd-timer alene giver ikke en absolut garanti for timeout/oprydning. Komb
 | Render/økonomi | Bevis for ingen backend-regression, ingen ny service/licens | Ikke målt |
 
 **Beslutning:** Pilot-kode kan auditeres/CI-testes nu. Fysisk `start` tilbageholdes, indtil de sikkerhedskritiske boot-/timeout-/credential-gates er objektivt efterprøvet.
+
+## Fysisk preflight før nogen `stage` / `start`
+
+Den samlede skrivebeskyttede `scripts/clientflow_63d30_physical_preflight.py` er nu tilføjet med automatiske tests. Den validerer på **fysisk Viborg1/klient ID 3** GNOME 50.2-pakken, præcis release 1248, kiosksessionens D-Bus, alle otte GNOME RDP-baselineindstillinger, tomme credentials uden at vise dem, begge system/user tjenesters inaktiv/disabled, fravær af alle TCP/UDP 3389–3398 listeners, ingen rest af 63D-29 guard/63D-30 pilot, display-manager aktiv, `Requires` ryddet, installeret `grdctl --help` med nødvendige funktioner samt `systemd-analyze calendar` accept af 10 sekunders timer.
+
+Preflight rapporterer også om SSH-serveren kører og om `xfreerdp3`/`xfreerdp` allerede er installeret. **De to sidste oplysninger er kun oplysende** og beviser hverken SSH-adgang fra en Mac eller evnen til at gennemføre RDP TLS/NLA-login og videomåling.
+
+Prøven udfører kun read-only kommandoer og skriver ikke credential- eller TLS-stier. Den kræver grøn fuld CI og grøn PostgreSQL-smoke på den eksakte SHA samt SHA-256-kontrol af preflight-kildefilen, før fysisk kørsel. `PHYSICAL_PREFLIGHT=PASS` er nødvendig, **men ikke tilstrækkelig**, til at tillade RDP-aktivering: boot-fail-closed, watchdog-rollback og fysisk autentificeret RDP-klient skal stadig have en godkendt lokal testplan.
+
+Ingen `stage/start`-kommandoer må sendes til operatøren, før den sidste sikkerhedsgate er dokumenteret.
