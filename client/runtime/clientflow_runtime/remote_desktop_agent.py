@@ -236,7 +236,8 @@ class RemoteDesktopAgent:
         pressure = self.media_pressure.setdefault(session_id, MediaPressure())
         quality = pressure.jpeg_quality(int(selected.get("quality", 85)), now=time.monotonic())
         if isinstance(self.control_ws, _HttpRelaySocket):
-            quality = min(quality, 40)
+            # Preserve readable text even on HTTPS fallback; fps is bounded separately.
+            quality = min(quality, 68)
         requested_native = bool(selected.get("native", False))
         native_geometry = self.native_screen_geometry.get(session_id) if requested_native else None
         native = requested_native
