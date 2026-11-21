@@ -135,6 +135,10 @@ def test_remove_order_rdp_off_then_disable_boot_guard_then_delete_nft(monkeypatc
     monkeypatch.setattr(guard, "guard_verified", lambda: True)
     def fake_run(*args, **kwargs):
         events.append(" ".join(args))
+        if args == ("systemctl", "is-active", "display-manager.service"):
+            return Result(stdout="active")
+        if args == ("systemctl", "show", "--property=Requires", "--value", "display-manager.service"):
+            return Result(stdout="dbus.service")
         return Result()
     monkeypatch.setattr(guard, "run", fake_run)
     guard.remove_guard("1000")
@@ -272,3 +276,45 @@ def test_unprotect_accepts_proven_disabled_rdp_without_other_network_changes(mon
     monkeypatch.setattr(guard, "kiosk", fake_kiosk)
     guard.ensure_rdp_off("1000")
     assert len(commands) == 7
+
+
+@pytest.mark.parametrize("mode", ["still-required", "manager-stopped", "query-failed"])
+def test_guard_cleanup_aborts_before_stopping_unit_if_display_manager_dependency_is_not_cleared(
+    monkeypatch, tmp_path, mode,
+):
+    directory = tmp_path / "guard"
+    directory.mkdir()
+    rule_file = directory / "guard.nft"
+    rule_file.write_text(guard.RULES)
+    unit_file = tmp_path / "guard.service"
+    unit_file.write_text(guard.UNIT)
+    dropin_dir = tmp_path / "display-manager.service.d"
+    dropin_dir.mkdir()
+    dropin_file = dropin_dir / "clientflow-63d29-rdp-guard.conf"
+    dropin_file.write_text(guard.DROPIN)
+    monkeypatch.setattr(guard, "DIRECTORY", directory)
+    monkeypatch.setattr(guard, "RULE_PATH", rule_file)
+    monkeypatch.setattr(guard, "UNIT_PATH", unit_file)
+    monkeypatch.setattr(guard, "DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(guard, "DROPIN_PATH", dropin_file)
+    monkeypatch.setattr(guard, "ensure_rdp_off", lambda uid: None)
+    monkeypatch.setattr(guard, "guard_verified", lambda: True)
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+        if args == ("systemctl", "is-active", "display-manager.service"):
+            if mode == "manager-stopped" and not dropin_file.exists():
+                return Result(code=3, stdout="inactive")
+            return Result(stdout="active")
+        if args == ("systemctl", "show", "--property=Requires", "--value", "display-manager.service"):
+            if mode == "query-failed":
+                return Result(code=1, stdout="")
+            return Result(stdout=guard.UNIT_NAME if mode == "still-required" else "dbus.service")
+        return Result()
+    monkeypatch.setattr(guard, "run", fake_run)
+    with pytest.raises(RuntimeError, match="display-manager"):
+        guard.remove_guard("1000")
+    assert not any(args[:3] == ("systemctl", "disable", "--now") for args in calls)
+    assert not any(args[:4] == ("nft", "delete", "table", "inet") for args in calls)
+    assert rule_file.is_file()
+    assert unit_file.is_file()
