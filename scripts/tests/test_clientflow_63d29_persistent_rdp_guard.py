@@ -54,6 +54,9 @@ def test_boot_guard_installed_before_display_manager_and_default_is_fail_closed(
     assert "After=local-fs.target" in guard.UNIT
     assert "WantedBy=sysinit.target" in guard.UNIT
     assert "RemainAfterExit=yes" in guard.UNIT
+    assert "ConditionPathExists=" not in guard.UNIT  # Must fail, not skip, on missing rules file.
+    assert f"Requires={guard.UNIT_NAME}" in guard.DROPIN
+    assert f"After={guard.UNIT_NAME}" in guard.DROPIN
     assert f"ExecStart=/usr/sbin/nft -f {guard.RULE_PATH}" in guard.UNIT
     assert "ExecStop=" not in guard.UNIT
     assert "grdctl" not in guard.UNIT
@@ -110,6 +113,12 @@ def test_remove_order_rdp_off_then_disable_boot_guard_then_delete_nft(monkeypatc
     unit = tmp_path / "guard.service"
     rule.write_text(guard.RULES)
     unit.write_text(guard.UNIT)
+    dropin_dir = tmp_path / "display-manager.service.d"
+    dropin_dir.mkdir()
+    dropin_path = dropin_dir / "clientflow-63d29-rdp-guard.conf"
+    dropin_path.write_text(guard.DROPIN)
+    monkeypatch.setattr(guard, "DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(guard, "DROPIN_PATH", dropin_path)
     monkeypatch.setattr(guard, "DIRECTORY", directory)
     monkeypatch.setattr(guard, "RULE_PATH", rule)
     monkeypatch.setattr(guard, "UNIT_PATH", unit)
@@ -122,12 +131,17 @@ def test_remove_order_rdp_off_then_disable_boot_guard_then_delete_nft(monkeypatc
     monkeypatch.setattr(guard, "run", fake_run)
     guard.remove_guard("1000")
     assert events[:2] == ["rdp-off", "rdp-off"]
+    assert events.count("rdp-off") == 3
+    assert not dropin_path.exists()
+    assert events.index("systemctl daemon-reload") < events.index("systemctl disable --now " + guard.UNIT_NAME)
     assert events.index("systemctl disable --now " + guard.UNIT_NAME) > 1
     assert events.index("nft delete table inet " + guard.TABLE_NAME) > events.index(
         "systemctl disable --now " + guard.UNIT_NAME
     )
     assert not directory.exists()
     assert not unit.exists()
+    assert not dropin_path.exists()
+    assert not dropin_dir.exists()
 
 
 def test_source_never_starts_rdp_or_exposes_credentials():
@@ -166,3 +180,28 @@ def test_guard_only_drill_refuses_cleanup_if_state_cannot_be_proven(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["rdp-guard", "drill"])
     assert guard.main() == 2
     assert events == ["install"]
+
+
+def test_remove_refuses_unknown_display_manager_dependency(monkeypatch, tmp_path):
+    directory = tmp_path / "guard"
+    directory.mkdir()
+    (directory / "guard.nft").write_text(guard.RULES)
+    unit = tmp_path / "guard.service"
+    unit.write_text(guard.UNIT)
+    dropin_dir = tmp_path / "display-manager.service.d"
+    dropin_dir.mkdir()
+    dropin_path = dropin_dir / "clientflow-63d29-rdp-guard.conf"
+    dropin_path.write_text("[Unit]\\nRequires=UNRELATED.service\\n")
+    monkeypatch.setattr(guard, "DIRECTORY", directory)
+    monkeypatch.setattr(guard, "RULE_PATH", directory / "guard.nft")
+    monkeypatch.setattr(guard, "UNIT_PATH", unit)
+    monkeypatch.setattr(guard, "DROPIN_DIR", dropin_dir)
+    monkeypatch.setattr(guard, "DROPIN_PATH", dropin_path)
+    monkeypatch.setattr(guard, "ensure_rdp_off", lambda uid: None)
+    monkeypatch.setattr(guard, "guard_verified", lambda: True)
+    commands = []
+    monkeypatch.setattr(guard, "run", lambda *args, **kw: commands.append(args) or Result())
+    with pytest.raises(RuntimeError, match="Display manager dependency er ændret"):
+        guard.remove_guard("1000")
+    assert not commands
+    assert dropin_path.exists()
