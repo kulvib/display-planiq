@@ -160,3 +160,30 @@ Operatøren har kørt den SHA-256-fastlåste kilde fra commit `6c7497b08fe9aef27
 **Resultat:** Midlertidig nftables `inet` guard kunne installeres, observeres og fjernes igen uden RDP-start. Dette er ikke en empirisk test af ekstern RDP-blokering, live-TLS, RDP-autentifikation eller browserintegration. Brug ikke samme firewall-tabelnavn som en fremtidig permanent sikkerhedspolitik.
 
 **Næste gate:** Inden GRD ændres skal den eksisterende kioskbrugers *user-mode* RDP-konfiguration inventariseres uden at printe TLS-paths, usernames, password eller keyring-indhold. Vurder GNOME 50.2 `grdctl` for *Remote Assistance/Screen Sharing* og design rollback af alle ændrede dconf/GSettings-, credential-, TLS- og systemd-state. Der må ikke startes system-mode remote login eller headless session. Reverse HTTPS/443-tunnel til Render er stadig udesignet og ikke dokumenteret som mulig inden for eksisterende Starter-budget.
+
+## Fysisk 63D-26 GNOME RDP baseline – PASS, 21. november 2026
+
+Operatøren verificerede på Viborg1 (ID 3) med skrivebeskyttet user-mode `grdctl status`, `gsettings`, systemd og nft:
+
+| Kontrol | Observeret |
+|---|---|
+| `grdctl status` og `gsettings` kan læses | Ja |
+| `org.gnome.desktop.remote-desktop.rdp enable` | `false` |
+| TLS-cert og privatnøglesti konfigureret | Begge mangler |
+| `gnome-remote-desktop.service` user | `inactive` / `disabled` |
+| Tidligere nft guard | `absent` |
+| Resterende rollout-/rollback-timere | 0 |
+| OpenSSL | Tilgængeligt |
+| `winpr-makecert`, `xfreerdp3`, `xfreerdp` | Ikke installeret |
+| `/opt/clientflow/active` | `clientflow-1.3.47-seq-1248` |
+| Passwords, TLS-filer eller GSettings ændret | Nej |
+
+**Fysisk konklusion:** GNOME Screen Sharing kan undersøges uden at migrere runtime eller installere GNOME RDP. Før egentlig aktivering skal TLS, credential-oprettelse og rollback planlægges. Ingen test har endnu vist et fungerende RDP-skærmbillede.
+
+### Vigtigt sikkerhedsfund: Portforhandling
+
+GNOME's RDP-GSettings-skema dokumenterer **`negotiate-port=true` som standard**, hvilket kan få Desktop Sharing til at lytte på første ledige af **10 porte startende ved `port`**. Ved standardport 3389 svarer det til 3389–3398. Derfor er den gamle 63D-25 nft guard, som kun blokerer 3389 og 3390, **IKKE tilstrækkelig til en ændrende RDP-pilot**; den gamle guard-only øvelse var sikker, fordi RDP aldrig var aktiv.
+
+**Hard stop:** Før aktivering skal `port`, `negotiate-port`, `screen-share-mode`, `view-only` og `enable` aflæses i kioskbrugerens eksisterende GNOME-D-Bus. Pilotdesign skal sætte et eksplicit, verificeret portvalg (helst forhandlingsfri) med rollback af oprindelige GSettings-værdier og samtidig firewallblokering på alle potentielt valgte porte for både IPv4 og IPv6. Verificér kernereglen og faktiske listeners *før* nogen LAN-eksponeringstests. Ingen vellykket `nft --check` alene giver denne garanti. `grdctl --system` og `--headless` er forbudt i denne pilotscope.
+
+**Kilder:** https://sources.debian.org/src/gnome-remote-desktop/51.0-1/src/org.gnome.desktop.remote-desktop.gschema.xml.in (51.0 skema som dokumenterer 10-port forhandling; lokal 50.2 skal inspiceres), https://manpages.ubuntu.com/manpages/resolute/man1/grdctl.1.html (eksakt installeret pakkeversion), https://github.com/GNOME/gnome-remote-desktop/blob/main/docs/configuration.md (eksisterende-session Remote Assistance og TLS).
