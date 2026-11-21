@@ -143,3 +143,20 @@ Output:
 **Resultat:** Syntaksgate PASS. Dette er *ikke* bevis for, at fremtidigt installerede regler faktisk beskytter RDP, eller at en HTTPS-only reverse tunnel findes.
 
 **Næste ændrende gate:** En isoleret nft guard-only øvelse kan installere denne *dedikerede* inet-tabel kortvarigt, verificere den installerede regel og derefter fjerne netop den, med watchdog-rollback. GNOME RDP skal fortsat være deaktiveret i denne øvelse. Først derefter kan der udarbejdes en særskilt fuld RDP-pilot, hvor en autoriseret, krypteret localhost RDP-session og sikker udgående HTTPS/443 transport verificeres uden at åbne LAN-port. En RDP/guacd implementation er ikke automatisk berettiget af denne PASS.
+
+## Fysisk 63D-25 guard-only øvelse – PASS, 21. november 2026
+
+Operatøren har kørt den SHA-256-fastlåste kilde fra commit `6c7497b08fe9aef27ce36cdd2afbce36ed298880` på Viborg1, `client_id=3`, som root.
+
+- `PINNED_SOURCE_SHA256=PASS`
+- `ROLLBACK_TIMER=ARMED_120_SECONDS`
+- `KERNEL_RULE_INSTALLED_AND_VERIFIED=True`
+- `RDP_ENABLED=False`
+- `RDP_CONNECTION_TESTED=False`
+- `NFT_GUARD_REMOVED=True`
+- `ROLLBACK_FAILSAFE_ARMED=False`
+- `RDP_NEVER_ENABLED=True`
+
+**Resultat:** Midlertidig nftables `inet` guard kunne installeres, observeres og fjernes igen uden RDP-start. Dette er ikke en empirisk test af ekstern RDP-blokering, live-TLS, RDP-autentifikation eller browserintegration. Brug ikke samme firewall-tabelnavn som en fremtidig permanent sikkerhedspolitik.
+
+**Næste gate:** Inden GRD ændres skal den eksisterende kioskbrugers *user-mode* RDP-konfiguration inventariseres uden at printe TLS-paths, usernames, password eller keyring-indhold. Vurder GNOME 50.2 `grdctl` for *Remote Assistance/Screen Sharing* og design rollback af alle ændrede dconf/GSettings-, credential-, TLS- og systemd-state. Der må ikke startes system-mode remote login eller headless session. Reverse HTTPS/443-tunnel til Render er stadig udesignet og ikke dokumenteret som mulig inden for eksisterende Starter-budget.
