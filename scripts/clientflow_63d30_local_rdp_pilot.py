@@ -15,6 +15,7 @@ Security invariants:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -22,10 +23,8 @@ from pathlib import Path
 import pwd
 import re
 import secrets
-import shutil
 import socket
 import subprocess
-import sys
 import time
 
 # Imported from the same pinned pilot bundle, never from a mutable release.
@@ -35,7 +34,7 @@ SCHEMA = "org.gnome.desktop.remote-desktop.rdp"
 KIOSK = "clientflow-kiosk"
 STATE_ROOT = Path("/var/lib/clientflow/rdp-pilot-63d30")
 STATE_FILE = STATE_ROOT / "state.json"
-STAGE_ROOT = Path("/usr/local/libexec/clientflow-63d30")
+STAGE_ROOT = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30")
 STAGED_RUNNER = STAGE_ROOT / "clientflow_63d30_local_rdp_pilot.py"
 STAGED_GUARD = STAGE_ROOT / "clientflow_63d29_persistent_rdp_guard.py"
 TIMER_NAME = "clientflow-63d30-rdp-watchdog.timer"
@@ -45,6 +44,8 @@ SERVICE_PATH = Path("/etc/systemd/system") / SERVICE_NAME
 SECRET_ROOT = Path("/run/clientflow-rdp-63d30")
 SECRET_FILE = SECRET_ROOT / "credentials"
 MAX_SECONDS = 6 * 60
+EXPECTED_GUARD_SHA256 = "709a5d9b1eba3364dfd2ac21f4e24525b0dc3261236456a9127aac7cfd54c000"
+LOCK_PATH = Path("/run/lock/clientflow-63d30-pilot.lock")
 BASE_KEYS = (
     "port", "negotiate-port", "screen-share-mode", "view-only",
     "enable", "auth-methods", "tls-cert", "tls-key",
@@ -146,7 +147,7 @@ def credentials_empty(uid: int) -> bool:
         raise RuntimeError("STOP: kunne ikke læse credentials status")
     result = {}
     for field in ("Username", "Password"):
-        match = re.search(rf"(?mi)^\\s*{field}:\\s*(.*?)\\s*$", response.stdout)
+        match = re.search(rf"(?mi)^\s*{field}:\s*(.*?)\s*$", response.stdout)
         result[field] = match.group(1) if match else None
     return result == {"Username": "(empty)", "Password": "(empty)"}
 
@@ -170,7 +171,9 @@ def write_private(path: Path, text: str, mode: int = 0o600) -> None:
 
 
 def state_load() -> dict | None:
-    if not STATE_FILE.is_file() or STATE_FILE.is_symlink():
+    if STATE_FILE.is_symlink():
+        raise RuntimeError("STOP: Pilot-state er symlink")
+    if not STATE_FILE.is_file():
         return None
     data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("phase") != "63D-30":
@@ -220,6 +223,8 @@ def stage() -> None:
     # Source is to be checksum-pinned by the user before any physical stage.
     if source.is_symlink() or other.is_symlink():
         raise RuntimeError("STOP: Symlink til kilde er ikke tilladt")
+    if hashlib.sha256(other.read_bytes()).hexdigest() != EXPECTED_GUARD_SHA256:
+        raise RuntimeError("STOP: 63D-29 firewall-kilde matcher ikke fysisk recovery-kilde")
     STAGE_ROOT.mkdir(mode=0o700, parents=False)
     write_private(STAGED_RUNNER, source.read_text(encoding="utf-8"), 0o700)
     write_private(STAGED_GUARD, other.read_text(encoding="utf-8"), 0o600)
@@ -430,8 +435,16 @@ def main() -> int:
     args = parser.parse_args()
     print("===== CLIENTFLOW 63D-30 · LOCAL GNOME RDP PILOT =====", flush=True)
     try:
-        {"stage": stage, "start": start, "stop": stop,
-         "tick": tick, "status": status}[args.action]()
+        # A concurrently expiring watchdog cannot remove network protection
+        # while the pilot is still starting.
+        with LOCK_PATH.open("a+", encoding="utf-8") as lock:
+            os.fchmod(lock.fileno(), 0o600)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("STOP: Anden pilotoperation kører allerede") from exc
+            {"stage": stage, "start": start, "stop": stop,
+             "tick": tick, "status": status}[args.action]()
         return 0
     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print("PILOT=STOP", type(exc).__name__, str(exc), flush=True)
