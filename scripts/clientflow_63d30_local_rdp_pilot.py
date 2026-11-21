@@ -71,9 +71,9 @@ TIMER = """[Unit]
 Description=ClientFlow GNOME RDP physical pilot expiry monitor
 
 [Timer]
-OnCalendar=*-*-* *:*:00
+OnCalendar=*-*-* *:*:0/10
 Persistent=true
-AccuracySec=10s
+AccuracySec=1s
 Unit=clientflow-63d30-rdp-watchdog.service
 
 [Install]
@@ -447,11 +447,19 @@ def tick() -> None:
     data = state_load()
     if data is None:
         return
-    if deadline_expired(data):
-        print("PILOT_TIMEOUT_OR_REBOOT=TRUE", flush=True)
+    expired = deadline_expired(data)
+    # A transient disappearance of nftables drops is treated as a potential
+    # security incident: attempt GNOME-first shutdown immediately, instead of
+    # keeping RDP enabled for the remainder of the six-minute pilot.
+    try:
+        protected = guard.guard_verified()
+    except (OSError, subprocess.TimeoutExpired):
+        protected = False
+    if expired or not protected:
+        print("PILOT_TIMEOUT_OR_GUARD_LOSS=TRUE", flush=True)
         stop()
     else:
-        print("WATCHDOG=ARMED", flush=True)
+        print("WATCHDOG=ARMED_AND_FIREWALL_PRESENT", flush=True)
 
 
 
