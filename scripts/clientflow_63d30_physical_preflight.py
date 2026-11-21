@@ -61,17 +61,20 @@ def valid_target(host: str, uid: int, data: object) -> bool:
 
 
 def credential_state(stdout: str) -> str:
-    states = []
-    for key in ("Username", "Password"):
-        match = re.search(rf"(?m)^ *{key}: *(.*?) *$", stdout)
-        if not match:
-            return "UNKNOWN"
-        token = match.group(1)
-        if token != "(empty)":
-            return "NOT_EMPTY_OR_UNEXPECTED"
-        states.append(token)
-    return "EMPTY" if len(states) == 2 else "UNKNOWN"
+    """Accept GNOME's tab-indented fields, never echo credential values.
 
+    Exactly one Username and one Password are required; an ambiguous,
+    duplicated, missing, or nonempty value is fail-closed.
+    """
+    for key in ("Username", "Password"):
+        values = re.findall(
+            rf"(?m)^[ \t]*{key}:[ \t]*([^\r\n]*)$", stdout
+        )
+        if len(values) != 1:
+            return "UNKNOWN"
+        if values[0].strip(" \t") != "(empty)":
+            return "NOT_EMPTY_OR_UNEXPECTED"
+    return "EMPTY"
 
 def listened_ports(output: str) -> list[int]:
     found = set()
