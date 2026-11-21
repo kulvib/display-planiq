@@ -48,11 +48,11 @@ def _update_manifest(repo: Path, name: str) -> None:
 
 
 def test_next_source_is_build_eligible_but_never_authorized():
-    assert (ROOT / "client/VERSION").read_text().strip() == "1.3.47"
+    assert (ROOT / "client/VERSION").read_text().strip() == "1.3.48"
     source = json.loads((ROOT / "client/release/release-input.json").read_text())
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1248,
+        "release_sequence": 1249,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",
@@ -83,9 +83,9 @@ def test_current_release_catalog_promotes_only_approved_update_only_1248():
 
 @pytest.mark.parametrize("version,seq", [
     ("1.3.45", 1246), ("1.3.46", 1246), ("1.3.45", 1247),
-    ("1.3.47", 1247), ("1.3.48", 1249), ("1.3.44", 1245),
+    ("1.3.47", 1248), ("1.3.48", 1248), ("1.3.49", 1250), ("1.3.44", 1245),
 ])
-def test_only_exact_1248_pair_can_be_built(tmp_path, version: str, seq: int):
+def test_only_exact_1249_pair_can_be_built(tmp_path, version: str, seq: int):
     root = _fixture(tmp_path)
     version_file = root / "client/VERSION"
     version_file.write_text(version + "\n")

@@ -126,7 +126,7 @@ def inspect(repo: Path) -> dict:
     checks["original_client_source_untouched"] = (
         ((repo / "client/VERSION").read_text(encoding="utf-8").strip(),
          load("client/release/release-input.json").get("release_sequence"))
-        in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247), ("1.3.47", 1248))
+        in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247), ("1.3.47", 1248), ("1.3.48", 1249))
     ) if (repo / "client/VERSION").is_file() else False
     checks["rollback_authority_disabled"] = (
         load("client/release/rollback-trust.json") == {

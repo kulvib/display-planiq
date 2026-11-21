@@ -17,8 +17,8 @@ from clientflow_63d6_active_catalog_contract import projected_stable_1245, verif
 
 BASELINE_VERSION = (1, 3, 44)
 BASELINE_SEQUENCE = 1245
-EXPECTED_CANDIDATE_VERSION = (1, 3, 47)
-EXPECTED_CANDIDATE_SEQUENCE = 1248
+EXPECTED_CANDIDATE_VERSION = (1, 3, 48)
+EXPECTED_CANDIDATE_SEQUENCE = 1249
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 VERSION_RE = re.compile(r'\d+\.\d+\.\d+\Z')
 REQUIRED_SOURCES = (

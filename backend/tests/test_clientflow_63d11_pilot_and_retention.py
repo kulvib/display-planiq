@@ -242,10 +242,21 @@ def test_duplicate_1247_build_rejected_for_new_main(tmp_path):
     with pytest.raises(ValueError, match='already approved'):
         verify('f' * 40, root=fixture)
     verify(SOURCE_COMMIT, root=fixture)  # exact historical signed source
-    # The newly signed 1248 source is equally immutable.
+    # Test immutable 1248 against its own frozen source identity: main now
+    # stages a separate unsigned 1249 candidate and must never reissue 1248.
+    approved_1248 = tmp_path / 'approved-1248'
+    (approved_1248 / 'client/release').mkdir(parents=True)
+    (approved_1248 / 'backend/service1').mkdir(parents=True)
+    (approved_1248 / 'client/VERSION').write_text('1.3.47\n')
+    (approved_1248 / 'client/release/release-input.json').write_text(
+        '{"schema_version":1,"release_sequence":1248}'
+    )
+    shutil.copy2(ROOT / 'backend/service1/clientflow_pilot_1248_approval.json',
+                 approved_1248 / 'backend/service1/clientflow_pilot_1248_approval.json')
     with pytest.raises(ValueError, match='1248 is already approved'):
-        verify('f' * 40)
-    verify('c0d5a092efe0c4e8638866ad98621481d6f5d0e8')
+        verify('f' * 40, root=approved_1248)
+    verify('c0d5a092efe0c4e8638866ad98621481d6f5d0e8', root=approved_1248)
+    verify('f' * 40)  # Newly staged 1249 is unsigned, not a 1248 duplicate.
     workflow = (ROOT / '.github/workflows/release-build.yml').read_text()
     assert 'clientflow_63d11_prevent_duplicate_build.py' in workflow
     assert '--expected-source-sha "$EXPECTED_SOURCE_SHA"' in workflow

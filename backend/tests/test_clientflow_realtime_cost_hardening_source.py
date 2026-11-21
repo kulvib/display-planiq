@@ -48,7 +48,7 @@ def test_remote_desktop_idle_transport_is_adaptive_and_deduplicated():
     assert "hashlib.sha256" in agent
     assert "unchanged" in agent
     assert "stream_mode_updated" in agent
-    assert "RD_ACTIVE_FPS = 6" in browser
+    assert "RD_ACTIVE_FPS = 8" in browser
     assert "RD_IDLE_FPS = 1" in browser
     assert "RD_DEEP_IDLE_FPS = 0.2" in browser
     assert "visibilitychange" in browser

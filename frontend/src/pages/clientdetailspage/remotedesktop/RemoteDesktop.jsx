@@ -32,6 +32,7 @@ import {
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
+import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import AppSnackbar from "../../../components/AppSnackbar";
 import {
@@ -78,9 +79,10 @@ function formatBytes(value) {
 }
 
 const UPLOAD_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024;
-const RD_ACTIVE_FPS = 6;
-// Reduce the native-resolution JPEG byte load only when HTTPS is the transport.
-// WSS keeps its existing quality; native geometry and input coordinates never change.
+// Bounded active rate plus smaller JPEGs reduce WSS head-of-line pressure.
+// Native screen geometry and input coordinates remain unchanged.
+const RD_ACTIVE_FPS = 8;
+const RD_WS_JPEG_QUALITY = 72;
 const RD_HTTPS_JPEG_QUALITY = 65;
 const RD_IDLE_FPS = 1;
 const RD_DEEP_IDLE_FPS = 0.2;
@@ -178,7 +180,6 @@ export default function RemoteDesktop() {
   const fileInputRef = useRef(null);
   const dragCounterRef = useRef(0);
   const mouseDownRef = useRef(false);
-  const lastMouseMoveSentRef = useRef(0);
   const pingSentAtRef = useRef(null);
   const shoutAckTimerRef = useRef(null);
   const fileBrowserPathRef = useRef("");
@@ -255,7 +256,7 @@ export default function RemoteDesktop() {
     // Native geometry is authoritative on the physical client. The browser
     // must not turn stale inventory/fallback dimensions into a capture cap.
     native: true,
-    quality: 85,
+    quality: RD_WS_JPEG_QUALITY,
   }), []);
   const streamStartPayloadRef = useRef(streamStartPayload);
   const effectiveRemoteResolutionTextRef = useRef(effectiveRemoteResolutionText);
@@ -304,6 +305,16 @@ export default function RemoteDesktop() {
     ws.send(JSON.stringify(payload));
     return true;
   }, []);
+
+  // A throttled move must still reach its final position when movement stops.
+  // Flush it before down/up, click and wheel to preserve input ordering.
+  const pointerMoves = useMemo(() => createLatestPointerMoveScheduler({
+    now: () => performance.now(),
+    schedule: (callback, delay) => window.setTimeout(callback, delay),
+    cancel: (id) => window.clearTimeout(id),
+    send,
+  }), [send]);
+  useEffect(() => () => pointerMoves.clear(), [pointerMoves]);
 
   // Measures browser-to-backend round trip through the actual transport.
   // No database query or client credential is involved. It is not presented
@@ -410,7 +421,6 @@ export default function RemoteDesktop() {
     fileBrowserShowHiddenRef.current = false;
     setFileBrowserShowHidden(false);
     mouseDownRef.current = false;
-    lastMouseMoveSentRef.current = 0;
 
     let ticket;
     try {
@@ -462,6 +472,7 @@ export default function RemoteDesktop() {
     ws.onclose = (event) => {
       if (attemptId !== connectAttemptRef.current) return;
       setConnected(false);
+      pointerMoves.clear();
       setTransportMode(null);
       setAgentConnected(false);
       setKeyboardEnabled(false);
@@ -739,6 +750,7 @@ export default function RemoteDesktop() {
     framePainter,
     markRemoteActivity,
     paintLatestFrame,
+    pointerMoves,
     send,
     startStream,
     showActionMessage,
@@ -871,6 +883,7 @@ export default function RemoteDesktop() {
 
   const sendMouseEvent = useCallback((event, action, extra = {}) => {
     if (!canControl) return;
+    pointerMoves.flush();
     markRemoteActivity();
     const pos = getRemoteCoordinates(event);
     if (!pos) return;
@@ -881,7 +894,7 @@ export default function RemoteDesktop() {
       ...pos,
       ...extra,
     });
-  }, [canControl, getRemoteCoordinates, markRemoteActivity, send]);
+  }, [canControl, getRemoteCoordinates, markRemoteActivity, pointerMoves, send]);
 
   const handleMouseDown = useCallback((event) => {
     if (!canControl) return;
@@ -928,31 +941,28 @@ export default function RemoteDesktop() {
     const pos = getRemoteCoordinates(event);
     if (!pos) return;
 
-    const now = Date.now();
-    const throttleMs = mouseDownRef.current ? 25 : 80;
-    if (now - lastMouseMoveSentRef.current < throttleMs) return;
-    lastMouseMoveSentRef.current = now;
-
-    send({
+    pointerMoves.move({
       type: "mouse",
       action: "move",
       ...pos,
       dragging: mouseDownRef.current,
-    });
-  }, [canControl, getRemoteCoordinates, markRemoteActivity, send]);
+    }, mouseDownRef.current ? 20 : 33);
+  }, [canControl, getRemoteCoordinates, markRemoteActivity, pointerMoves]);
 
   const handleMouseLeave = useCallback((event) => {
     if (!canControl) return;
+    pointerMoves.flush();
     if (!mouseDownRef.current) return;
 
     // Hvis musen forlader billedet mens venstre knap er nede, slipper vi den
     // på klienten, så et vindue ikke bliver ved med at hænge fast.
     sendMouseEvent(event, "up", { button: 1 });
     mouseDownRef.current = false;
-  }, [canControl, sendMouseEvent]);
+  }, [canControl, pointerMoves, sendMouseEvent]);
 
   const handleWheel = useCallback((event) => {
     if (!canControl) return;
+    pointerMoves.flush();
     markRemoteActivity();
     event.preventDefault();
     send({
@@ -960,7 +970,7 @@ export default function RemoteDesktop() {
       action: "scroll",
       delta: event.deltaY < 0 ? 3 : -3,
     });
-  }, [canControl, markRemoteActivity, send]);
+  }, [canControl, markRemoteActivity, pointerMoves, send]);
 
   useEffect(() => {
     const image = imgRef.current;
