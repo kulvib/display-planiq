@@ -89,6 +89,37 @@ def _manifest_span(manifest: bytes) -> tuple[int, int] | None:
     return first, first + len(names) - 1
 
 
+def _normalize_hlssink_media_sequence(raw: bytes) -> bytes:
+    """Correct only the observed one-ahead hlssink header, in memory.
+
+    Ubuntu's current hlssink can advertise the *next* media sequence while
+    listing the preceding complete segment first. Never renumber files,
+    tolerate gaps, correct other offsets, or touch the on-disk playlist.
+    Normal _manifest_span and file-presence checks remain mandatory.
+    """
+    try:
+        lines = raw.decode("utf-8").splitlines()
+        headers = [line for line in lines if line.startswith("#EXT-X-MEDIA-SEQUENCE:")]
+        names = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+        if len(headers) != 1 or not 2 <= len(names) <= 30:
+            return raw
+        advertised = int(headers[0].partition(":")[2])
+        matches = [_SEGMENT_PATTERN.fullmatch(name) for name in names]
+        if any(match is None for match in matches):
+            return raw
+        numbers = [int(match.group(1)) for match in matches]
+        if advertised != numbers[0] + 1:
+            return raw
+        if any(number != numbers[0] + index for index, number in enumerate(numbers)):
+            return raw
+        old_header = headers[0].encode("ascii")
+        new_header = f"#EXT-X-MEDIA-SEQUENCE:{numbers[0]}".encode("ascii")
+        normalized = raw.replace(old_header, new_header, 1)
+        return normalized if _manifest_span(normalized) is not None else raw
+    except (UnicodeError, ValueError):
+        return raw
+
+
 def _safe_unmodified_playlist(output: Path, lines: list[str], raw: bytes) -> tuple[list[Path], bytes] | None:
     """Preserve valid but non-basic HLS metadata without risking a broken stream."""
     if any(line.startswith(("#EXT-X-KEY:", "#EXT-X-MAP:", "#EXT-X-SESSION-KEY:")) for line in lines):
@@ -111,7 +142,9 @@ def current_playlist_uploads(output: Path) -> tuple[list[Path], bytes] | None:
     """
     manifest_path = output / "index.m3u8"
     try:
-        raw = _read_regular_file(manifest_path, max_bytes=1024 * 1024)
+        raw = _normalize_hlssink_media_sequence(
+            _read_regular_file(manifest_path, max_bytes=1024 * 1024)
+        )
         lines = raw.decode("utf-8").splitlines()
     except (OSError, RuntimeError, UnicodeDecodeError):
         return None
