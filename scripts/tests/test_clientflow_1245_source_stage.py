@@ -53,7 +53,7 @@ def test_staged_identity_is_now_exact_live_pilot_catalog():
     release = json.loads((ROOT / "client/release/release-input.json").read_text())
     catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
     assert release["release_sequence"] == 1248  # unsigned candidate
-    assert catalog["catalog_sequence"] == 1247  # 1245 stable + 1246/1247 update-only
+    assert catalog["catalog_sequence"] == 1248  # 1245 stable + 1247/1248 update-only
     assert len(catalog["releases"]) == 3
     assert catalog["releases"][1]["installable"] is False
     assert catalog["releases"][0]["install_modes"] == ["fresh_install", "in_place_update"]
