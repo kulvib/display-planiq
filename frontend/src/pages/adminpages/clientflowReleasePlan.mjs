@@ -38,6 +38,13 @@ const APPROVED_PILOTS = Object.freeze({
     approved_bundle_size: 223692800,
     approval_reference: "CF-1.3.46-1247-20261119-22a8a873-d60d63ba",
   }),
+  "clientflow-1.3.47-seq-1248": Object.freeze({
+    version: "1.3.47", sequence: 1248,
+    source_commit: "c0d5a092efe0c4e8638866ad98621481d6f5d0e8",
+    approved_bundle_sha256: "9ca8852ba29153f2ec40b58d18007c738a03f9569f14762486fc1953c59eb6ff",
+    approved_bundle_size: 223692800,
+    approval_reference: "CF-1.3.47-1248-20261121-c0d5a092-f8240014",
+  }),
 });
 
 /** Source-pinned GitHub approval is NOT Render publication or client permission. */
@@ -53,7 +60,7 @@ export function validateStagedPilotCandidate(candidate, activeReleaseId) {
       ["render_store_publication_verified", "physical_pilot_accepted",
        "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
        "database_cutover_authorized"].some((field) => candidate[field] !== false)) {
-    throw new Error("1246/1247-arkivstatus er ugyldig eller angiver uautoriseret installation");
+    throw new Error("1246/1247/1248-arkivstatus er ugyldig eller angiver uautoriseret installation");
   }
   return candidate;
 }
