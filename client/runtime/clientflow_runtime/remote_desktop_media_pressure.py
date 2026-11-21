@@ -91,6 +91,9 @@ def bounded_capture_dimensions(
     factor = min(1.0, max_width / width, max_height / height)
     if factor == 1.0:
         return (width, height)
+    # GStreamer needs at least 320x200. Extreme portrait/landscape displays
+    # can exceed one nominal budget slightly to preserve their aspect ratio.
+    factor = max(factor, 320 / width, 200 / height)
     # Even dimensions minimize video backend and encoder compatibility issues.
     scaled_w = max(320, int(width * factor) // 2 * 2)
     scaled_h = max(200, int(height * factor) // 2 * 2)
