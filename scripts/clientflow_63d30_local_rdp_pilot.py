@@ -148,14 +148,33 @@ def set_setting(uid: int, key: str, value: str) -> None:
         raise RuntimeError("STOP: GNOME setting ikke bekræftet: " + key)
 
 
+def rdp_status_section(stdout: str) -> str | None:
+    """Return the user-mode RDP block only; ignore VNC Password fields."""
+    sections = 0
+    inside = False
+    captured = []
+    for line in stdout.splitlines():
+        if line == "RDP:":
+            sections += 1
+            inside = True
+            continue
+        if inside and line and not line.startswith((" ", "\t")):
+            inside = False
+        if inside:
+            captured.append(line)
+    return "\n".join(captured) if sections == 1 else None
+
 def credentials_empty(uid: int) -> bool:
-    """Check GNOME user-mode credentials without exposing secret values."""
+    """Inspect only GNOME's RDP credential section, not VNC or secret values."""
     response = kiosk(uid, "grdctl", "status")
     if response.returncode:
         raise RuntimeError("STOP: kunne ikke læse credentials status")
+    rdp = rdp_status_section(response.stdout)
+    if rdp is None:
+        return False
     for field in ("Username", "Password"):
         values = re.findall(
-            rf"(?m)^[ \t]*{field}:[ \t]*([^\r\n]*)$", response.stdout
+            rf"(?m)^[ \t]*{field}:[ \t]*([^\r\n]*)$", rdp
         )
         if len(values) != 1 or values[0].strip(" \t") != "(empty)":
             return False
