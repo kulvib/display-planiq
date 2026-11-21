@@ -81,6 +81,33 @@ def _require(ok: bool, problem: str):
         raise HandoffError(problem)
 
 
+def _verify_original_catalog(repo: Path, release_id: str, sequence: int) -> None:
+    """Require the exact pinned catalog; a later update-only stage is not a new stable default."""
+    try:
+        mode = verified_mode(repo)
+    except ActiveCatalogDenied as exc:
+        raise HandoffError("stable_catalog_changed") from exc
+    allowed = {
+        "stable_1245_only": (1245, 1),
+        "update_only_1246_pilot_catalog": (1246, 2),
+        "update_only_1247_pilot_catalog": (1247, 3),
+    }
+    _require(mode in allowed, "stable_catalog_changed")
+    catalog_sequence, release_count = allowed[mode]
+    stable = _load(repo / "backend/service1/clientflow_release_catalog.json")
+    releases = stable.get("releases")
+    _require(stable.get("latest_stable") == "1.3.44"
+             and stable.get("default_install_version") == "1.3.44"
+             and stable.get("catalog_sequence") == catalog_sequence
+             and type(releases) is list and len(releases) == release_count
+             and releases[0].get("release_id") == "clientflow-1.3.44-seq-1245"
+             and release_id != releases[0]["release_id"], "stable_catalog_changed")
+    # 1248 must follow the pinned, already approved 1247 pilot stage; do not
+    # accept a source accidentally checked out with an older active catalog.
+    if sequence == 1248:
+        _require(mode == "update_only_1247_pilot_catalog", "stable_catalog_changed")
+
+
 def verify(repo: Path, handoff: Path, *, source_sha: str,
            candidate_sha256: str | None = None,
            installer_sha256: str | None = None,
@@ -106,17 +133,7 @@ def verify(repo: Path, handoff: Path, *, source_sha: str,
     for name in expected_handoff:
         _regular(handoff / name)
 
-    try:
-        verified_mode(repo)
-    except ActiveCatalogDenied as exc:
-        raise HandoffError("stable_catalog_changed") from exc
-    stable = _load(repo / "backend/service1/clientflow_release_catalog.json")
-    _require(stable.get("latest_stable") == "1.3.44"
-             and stable.get("default_install_version") == "1.3.44"
-             and stable.get("catalog_sequence") in (1245, 1246)
-             and len(stable.get("releases", [])) in (1, 2)
-             and stable["releases"][0].get("release_id") == "clientflow-1.3.44-seq-1245"
-             and release_id != stable["releases"][0]["release_id"], "stable_catalog_changed")
+    _verify_original_catalog(repo, release_id, seq)
     fleet = _load(repo / "backend/service1/clientflow_1245_fleet_acceptance.json")
     _require(fleet.get("physical_pilot_accepted") is False, "pilot_acceptance_not_disarmed")
 
