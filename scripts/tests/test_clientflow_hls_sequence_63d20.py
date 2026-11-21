@@ -71,7 +71,7 @@ def test_non_one_offsets_missing_segments_and_gaps_never_pass(tmp_path):
         raw = manifest(10, offset=offset, gap=gap)
         out = output_dir(tmp_path / f"case_{offset}_{gap}_{missing}", raw)
         if missing:
-            (out / "segment-000000013.ts").unlink()
+            (out / "segment-000000016.ts").unlink()
         assert ls.current_playlist_uploads(out) is None
 
 
