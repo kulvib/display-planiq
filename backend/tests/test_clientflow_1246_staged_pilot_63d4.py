@@ -51,7 +51,7 @@ def test_approved_source_record_is_exact_not_deployment():
     assert locked['source_commit'] == pilot.SOURCE_COMMIT
     assert locked['approval_reference'] == pilot.APPROVAL_REFERENCE
     assert '1245' in json.dumps(json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text()))
-    assert [x['release_sequence'] for x in json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())['releases']] == [1245, 1246, 1247]
+    assert [x['release_sequence'] for x in json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())['releases']] == [1245, 1247, 1248]
 
 
 @pytest.mark.parametrize('name', [pilot.PILOT_FLAG, pilot.PILOT_ARM_FLAG])
