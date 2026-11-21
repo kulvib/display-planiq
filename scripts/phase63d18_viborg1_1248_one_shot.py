@@ -126,7 +126,7 @@ def _service_checks(*, executing: bool) -> dict[str, bool]:
 def read_only_preflight(*, root: Path = Path("/"), run_directory: Path = RUN_DIRECTORY,
                         verify_services: bool = True, executing: bool = False) -> dict:
     """Read-only host and immutable source checks; not a deployment grant."""
-    if os.geteuid() != 0:
+    if root == Path("/") and os.geteuid() != 0:
         raise Pilot1248Denied("The host-bound gate requires root")
     if root == Path("/") and os.uname().nodename != HOST:
         raise Pilot1248Denied("Unexpected physical host")
