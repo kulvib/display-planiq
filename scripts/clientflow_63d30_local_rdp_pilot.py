@@ -45,7 +45,7 @@ SECRET_ROOT = Path("/run/clientflow-rdp-63d30")
 SECRET_FILE = SECRET_ROOT / "credentials"
 MAX_SECONDS = 6 * 60
 EXPECTED_GUARD_SHA256 = "709a5d9b1eba3364dfd2ac21f4e24525b0dc3261236456a9127aac7cfd54c000"
-LOCK_PATH = Path("/run/lock/clientflow-63d30-pilot.lock")
+LOCK_PATH = Path("/run/clientflow-63d30-pilot.lock")
 BASE_KEYS = (
     "port", "negotiate-port", "screen-share-mode", "view-only",
     "enable", "auth-methods", "tls-cert", "tls-key",
@@ -147,7 +147,7 @@ def credentials_empty(uid: int) -> bool:
         raise RuntimeError("STOP: kunne ikke læse credentials status")
     result = {}
     for field in ("Username", "Password"):
-        match = re.search(rf"(?mi)^\s*{field}:\s*(.*?)\s*$", response.stdout)
+        match = re.search(rf"(?m)^[ \\t]*{field}:[ \\t]*(.*?)[ \\t]*$", response.stdout)
         result[field] = match.group(1) if match else None
     return result == {"Username": "(empty)", "Password": "(empty)"}
 
@@ -237,6 +237,34 @@ def stage() -> None:
     print("WATCHDOG_STAGED=True")
     print("RDP_ENABLED=False")
     print("FIREWALL_INSTALLED=False")
+
+
+
+def unstage(uid: int) -> None:
+    """Remove only the owned root timer and staged files after proven cleanup."""
+    if state_load() is not None:
+        raise RuntimeError("STOP: Piloten er stadig aktiv; stop RDP først")
+    guard.ensure_rdp_off(str(uid))
+    if guard.guard_exists() or guard.DIRECTORY.exists():
+        raise RuntimeError("STOP: Firewall-guard eksisterer stadig")
+    if not TIMER_PATH.is_file() or TIMER_PATH.is_symlink():
+        raise RuntimeError("STOP: Root timer mangler/er symlink")
+    if not SERVICE_PATH.is_file() or SERVICE_PATH.is_symlink():
+        raise RuntimeError("STOP: Root service mangler/er symlink")
+    if TIMER_PATH.read_text() != TIMER or SERVICE_PATH.read_text() != SERVICE:
+        raise RuntimeError("STOP: Ukendt watchdog unit indhold")
+    if STAGED_RUNNER.is_symlink() or STAGED_GUARD.is_symlink():
+        raise RuntimeError("STOP: Staged kilde er symlink")
+    if hashlib.sha256(STAGED_GUARD.read_bytes()).hexdigest() != EXPECTED_GUARD_SHA256:
+        raise RuntimeError("STOP: Staged guard-kilde er ændret")
+    run_ok("systemctl", "disable", "--now", TIMER_NAME)
+    TIMER_PATH.unlink()
+    SERVICE_PATH.unlink()
+    run_ok("systemctl", "daemon-reload")
+    STAGED_GUARD.unlink()
+    STAGED_RUNNER.unlink()
+    STAGE_ROOT.rmdir()
+    print("ROOT_WATCHDOG_AND_STAGED_CODE_REMOVED=True", flush=True)
 
 
 def tls_directory(uid: int) -> Path:
@@ -403,6 +431,9 @@ def stop() -> None:
     print("RDP_ORIGINAL_GSETTINGS_RESTORED=True", flush=True)
     print("RDP_CREDENTIALS_AND_TLS_REMOVED=True", flush=True)
     print("FIREWALL_GUARD_REMOVED=True", flush=True)
+    # If cleanup is complete, retire the periodic root timer and pilot code.
+    # All state and firewall checks above have already passed.
+    unstage(uid)
 
 
 def tick() -> None:
@@ -431,7 +462,7 @@ def status() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="63D-30 local GNOME screen-sharing pilot")
-    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status"])
+    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage"])
     args = parser.parse_args()
     print("===== CLIENTFLOW 63D-30 · LOCAL GNOME RDP PILOT =====", flush=True)
     try:
@@ -444,7 +475,8 @@ def main() -> int:
             except BlockingIOError as exc:
                 raise RuntimeError("STOP: Anden pilotoperation kører allerede") from exc
             {"stage": stage, "start": start, "stop": stop,
-             "tick": tick, "status": status}[args.action]()
+             "tick": tick, "status": status,
+             "unstage": lambda: unstage(target()[0])}[args.action]()
         return 0
     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print("PILOT=STOP", type(exc).__name__, str(exc), flush=True)
