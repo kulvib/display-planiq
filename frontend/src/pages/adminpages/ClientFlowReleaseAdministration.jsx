@@ -8,6 +8,7 @@ import client from "../../api/client";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
 import ClientFlowPilot1247Panel from "./ClientFlowPilot1247Panel";
+import ClientFlowPilot1248Panel from "./ClientFlowPilot1248Panel";
 import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
@@ -347,6 +348,7 @@ export default function ClientFlowReleaseAdministration() {
           </Paper>
           <ClientFlowPilot1246Panel status={status} onAuthorized={refresh} />
           <ClientFlowPilot1247Panel status={status} onAuthorized={refresh} />
+          <ClientFlowPilot1248Panel status={status} onAuthorized={refresh} />
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
