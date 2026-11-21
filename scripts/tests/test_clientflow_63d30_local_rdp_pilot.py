@@ -26,7 +26,7 @@ def test_source_guard_is_pinned_to_physically_recovered_63d29_version():
 
 
 def test_root_watchdog_recurs_across_reboot_and_uses_no_time_bomb_that_removes_only_firewall():
-    assert "OnCalendar=*-*-* *:*:00" in pilot.TIMER
+    assert "OnCalendar=*-*-* *:*:0/10" in pilot.TIMER
     assert "Persistent=true" in pilot.TIMER
     assert "WantedBy=timers.target" in pilot.TIMER
     assert "ExecStart=/usr/bin/python3" in pilot.SERVICE
@@ -90,12 +90,17 @@ def test_tick_retains_guard_until_deadline_and_uses_stop_after_reboot(monkeypatc
     events = []
     monkeypatch.setattr(pilot, "state_load", lambda: {"phase": "63D-30"})
     monkeypatch.setattr(pilot, "deadline_expired", lambda data: False)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: True)
     monkeypatch.setattr(pilot, "stop", lambda: events.append("RDP-first cleanup"))
     pilot.tick()
     assert events == []
     monkeypatch.setattr(pilot, "deadline_expired", lambda data: True)
     pilot.tick()
     assert events == ["RDP-first cleanup"]
+    monkeypatch.setattr(pilot, "deadline_expired", lambda data: False)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: False)
+    pilot.tick()
+    assert events == ["RDP-first cleanup", "RDP-first cleanup"]
 
 
 def test_state_symlink_is_rejected_not_treated_as_missing(monkeypatch, tmp_path):
@@ -217,7 +222,7 @@ def test_no_public_gateway_no_paid_stack_no_unprotected_rdp_fallback():
     assert "grdctl --system" not in src
     assert "grdctl --headless" not in src
     assert "nft flush ruleset" not in src
-    assert "OnCalendar=*-*-* *:*:00" in src
+    assert "OnCalendar=*-*-* *:*:0/10" in src
     assert "secret" in src
     assert "HTTPS_443_RELAY_TESTED=False" in src
 
