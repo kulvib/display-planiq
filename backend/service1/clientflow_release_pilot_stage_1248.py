@@ -77,3 +77,24 @@ def validated_catalog_mode_1248(*, active_catalog: dict[str, Any]) -> str:
     if active_catalog != stage:
         raise PilotStage1248Denied("1248 pilot stage is not the active exact catalog")
     return "update_only_1248_pilot_catalog"
+
+
+def staged_pilot_summary_1248(*, active_catalog: dict[str, Any]) -> dict[str, Any]:
+    """Operator-facing SOURCE proof only; never infer Render, client or acceptance."""
+    validated_catalog_mode_1248(active_catalog=active_catalog)
+    return {
+        "schema_version": 1, "phase": "approved_github_archive_source_staged_only",
+        "release_id": pilot.PILOT_RELEASE_ID, "version": pilot.PILOT_TO_VERSION,
+        "sequence": 1248, "source_commit": pilot.SOURCE_COMMIT,
+        "approved_bundle_sha256": pilot.APPROVED_BUNDLE_SHA256,
+        "approved_bundle_size": pilot.APPROVED_BUNDLE_SIZE,
+        "approval_reference": pilot.APPROVAL_REFERENCE,
+        "active_release_id": "clientflow-1.3.44-seq-1245",
+        "pilot_client_id": pilot.PILOT_CLIENT_ID,
+        "github_artifact_approval_pinned": True,
+        "render_store_publication_verified": False,
+        "active_catalog_promoted": True,
+        "physical_pilot_accepted": False, "deployment_authorized": False,
+        "fleet_authorized": False, "fresh_install_authorized": False,
+        "database_cutover_authorized": False,
+    }
