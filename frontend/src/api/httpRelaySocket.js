@@ -28,6 +28,8 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
   let maxPendingBytes = 0;
   let overflowClosures = 0;
   const isMove = (value) => value?.type === "mouse" && value.action === "move";
+  const encoder = new TextEncoder();
+  const sizeOf = (value) => encoder.encode(JSON.stringify(value)).byteLength;
 
   async function drainSends() {
     if (sending) return;
@@ -35,7 +37,7 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
     try {
       while (!stopped && pendingSends.length) {
         const payload = pendingSends.shift();
-        pendingBytes = Math.max(0, pendingBytes - JSON.stringify(payload).length);
+        pendingBytes = Math.max(0, pendingBytes - sizeOf(payload));
         try {
           const started = Date.now();
           await sendPayload(payload);
@@ -74,8 +76,8 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
       const last = pendingSends[pendingSends.length - 1];
       const replace = isMove(payload) && isMove(last)
         && Boolean(payload.dragging) === Boolean(last.dragging);
-      const lastBytes = replace ? JSON.stringify(last).length : 0;
-      const candidateBytes = pendingBytes - lastBytes + String(raw).length;
+      const lastBytes = replace ? sizeOf(last) : 0;
+      const candidateBytes = pendingBytes - lastBytes + sizeOf(payload);
       const candidateLength = pendingSends.length + (replace ? 0 : 1);
       if (candidateLength > MAX_PENDING_HTTPS_SENDS || candidateBytes > MAX_PENDING_HTTPS_BYTES) {
         // Never silently discard clicks, releases or keystrokes. A broken
