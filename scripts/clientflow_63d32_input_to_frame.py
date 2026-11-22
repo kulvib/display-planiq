@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ctypes as ct
 import hashlib
-import json
 import os
 from pathlib import Path
 import pwd
@@ -18,7 +17,6 @@ import re
 import select
 import shutil
 import signal
-import socket
 import statistics
 import subprocess
 import sys
