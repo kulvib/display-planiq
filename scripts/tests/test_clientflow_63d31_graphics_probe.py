@@ -15,6 +15,8 @@ def test_source_pins_and_no_insecure_gui_channels():
     assert "RDP_INPUT_TO_FRAME_MS=NOT_MEASURED" in text
     assert "SCREENSHOT_FILES_CREATED=False" in text
     assert "subprocess.DEVNULL" in text
+    assert "start_new_session=False" in text  # GUI child remains in Xvfb group
+    assert "rd.terminate()" in text
 
 
 def test_readiness_is_read_only_and_fails_on_existing_pilot(monkeypatch, tmp_path):
