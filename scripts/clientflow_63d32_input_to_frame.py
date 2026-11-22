@@ -110,7 +110,7 @@ def gtk_window() -> None:
     # No application ID: avoid D-Bus singleton registration/remote activation
     # of an unrelated process. The lifetime is owned by this one test worker.
     app = Gtk.Application()
-    state = {"n": 0, "ready": False}
+    state = {"n": 0, "ready": False, "draw_attempted": False}
 
     def activate(application):
         print("63D32_GTK_STAGE=APPLICATION_ACTIVATED", flush=True)
@@ -126,14 +126,32 @@ def gtk_window() -> None:
         area.set_content_height(540)
 
         def paint(_area, cr, width, height):
-            red, green, blue = COLORS[state["n"] % 2]
-            cr.set_source_rgb(red / 255, green / 255, blue / 255)
-            cr.rectangle(0, 0, width, height)
-            cr.fill()
-            if not state["ready"]:
-                state["ready"] = True
-                print("63D32_GTK_STAGE=FRAME_DRAWN", flush=True)
-                print("63D32_WINDOW_READY=PASS", flush=True)
+            if not state["draw_attempted"]:
+                state["draw_attempted"] = True
+                print("63D32_GTK_DRAW_ENTER=PASS", flush=True)
+            stage = "COLOR_LOOKUP"
+            try:
+                red, green, blue = COLORS[state["n"] % 2]
+                stage = "CAIRO_SOURCE"
+                cr.set_source_rgb(red / 255, green / 255, blue / 255)
+                stage = "CAIRO_RECTANGLE"
+                cr.rectangle(0, 0, width, height)
+                stage = "CAIRO_FILL"
+                cr.fill()
+                if not state["ready"]:
+                    state["ready"] = True
+                    print("63D32_GTK_STAGE=FRAME_DRAWN", flush=True)
+                    print("63D32_WINDOW_READY=PASS", flush=True)
+            except Exception as error:
+                # Never disclose raw GTK exception text or user content.
+                error_name = type(error).__name__
+                if error_name not in {
+                    "AttributeError", "TypeError", "RuntimeError",
+                    "ValueError", "OSError", "OverflowError",
+                }:
+                    error_name = "OTHER"
+                print("63D32_GTK_DRAW_FAILED_STAGE=", stage, flush=True)
+                print("63D32_GTK_DRAW_ERROR=", error_name, flush=True)
 
         area.set_draw_func(paint)
         gesture = Gtk.GestureClick.new()
@@ -168,6 +186,13 @@ def gtk_window() -> None:
                     + "M" + str(int(window.get_mapped()))
                 )
                 print("63D32_GTK_SURFACE_STATE=", flags, flush=True)
+                print("63D32_GTK_ACTIVE=", bool(window.is_active()), flush=True)
+                width = max(0, min(area.get_allocated_width(), 9999))
+                height = max(0, min(area.get_allocated_height(), 9999))
+                print("63D32_GTK_AREA_SIZE=", str(width) + "x" + str(height),
+                      flush=True)
+                if width > 0 and height > 0:
+                    area.queue_draw()  # one safe re-render request
             return False
 
         GLib.timeout_add_seconds(2, heartbeat)
@@ -229,6 +254,11 @@ class StatusPipe:
         self.loop_running = False
         self.surface_state = "UNKNOWN"
         self.monitors: int | None = None
+        self.draw_entered = False
+        self.draw_failed_stage = "NONE"
+        self.draw_error = "NONE"
+        self.active: bool | None = None
+        self.area_size = "UNKNOWN"
         self.acks: dict[int, int] = {}
 
     def pump(self, timeout: float = 0.01) -> None:
@@ -245,6 +275,18 @@ class StatusPipe:
                 self.ready = True
             elif line == b"63D32_GTK_STAGE=LOOP_RUNNING":
                 self.loop_running = True
+            elif line == b"63D32_GTK_DRAW_ENTER=PASS":
+                self.draw_entered = True
+            elif re.fullmatch(rb"63D32_GTK_DRAW_FAILED_STAGE= "
+                              rb"(COLOR_LOOKUP|CAIRO_SOURCE|CAIRO_RECTANGLE|CAIRO_FILL)", line):
+                self.draw_failed_stage = line.split(b"=", 1)[1].strip().decode("ascii")
+            elif re.fullmatch(rb"63D32_GTK_DRAW_ERROR= "
+                              rb"(AttributeError|TypeError|RuntimeError|ValueError|OSError|OverflowError|OTHER)", line):
+                self.draw_error = line.split(b"=", 1)[1].strip().decode("ascii")
+            elif line in (b"63D32_GTK_ACTIVE= True", b"63D32_GTK_ACTIVE= False"):
+                self.active = line.endswith(b"True")
+            elif re.fullmatch(rb"63D32_GTK_AREA_SIZE= [0-9]{1,4}x[0-9]{1,4}", line):
+                self.area_size = line.split(b"=", 1)[1].strip().decode("ascii")
             elif re.fullmatch(rb"63D32_GTK_SURFACE_STATE= V[01]R[01]M[01]", line):
                 self.surface_state = line.split(b"=", 1)[1].strip().decode("ascii")
             elif re.fullmatch(rb"63D32_GDK_MONITORS= [0-9]{1,2}", line):
@@ -335,6 +377,11 @@ def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
             print("63D32_GTK_LOOP_RUNNING=", status.loop_running, flush=True)
             print("63D32_GTK_SURFACE_STATE=", status.surface_state, flush=True)
             print("63D32_GDK_MONITORS=", status.monitors, flush=True)
+            print("63D32_GTK_DRAW_ENTERED=", status.draw_entered, flush=True)
+            print("63D32_GTK_DRAW_FAILED_STAGE=", status.draw_failed_stage, flush=True)
+            print("63D32_GTK_DRAW_ERROR=", status.draw_error, flush=True)
+            print("63D32_GTK_ACTIVE=", status.active, flush=True)
+            print("63D32_GTK_AREA_SIZE=", status.area_size, flush=True)
             raise RuntimeError("STOP: GTK helper exited before first draw")
         status.pump(0.2)
     if not status.ready:
@@ -342,6 +389,11 @@ def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
         print("63D32_GTK_LOOP_RUNNING=", status.loop_running, flush=True)
         print("63D32_GTK_SURFACE_STATE=", status.surface_state, flush=True)
         print("63D32_GDK_MONITORS=", status.monitors, flush=True)
+        print("63D32_GTK_DRAW_ENTERED=", status.draw_entered, flush=True)
+        print("63D32_GTK_DRAW_FAILED_STAGE=", status.draw_failed_stage, flush=True)
+        print("63D32_GTK_DRAW_ERROR=", status.draw_error, flush=True)
+        print("63D32_GTK_ACTIVE=", status.active, flush=True)
+        print("63D32_GTK_AREA_SIZE=", status.area_size, flush=True)
         raise RuntimeError("STOP: GTK window did not render")
     print("63D32_GTK_FIRST_DRAW=PASS", flush=True)
 
@@ -469,7 +521,9 @@ PRINT_PREFIXES = (
     "63D32_LIVESTREAM_HLS=", "63D32_SCREENSHOTS_SAVED=",
     "63D32_REAL_INPUT_AND_VISIBLE_FRAMES=", "63D32_GTK_LAST_STAGE=",
     "63D32_GTK_LOOP_RUNNING=", "63D32_GTK_SURFACE_STATE=",
-    "63D32_GDK_MONITORS=", "63D32=STOP",
+    "63D32_GDK_MONITORS=", "63D32_GTK_DRAW_ENTERED=",
+    "63D32_GTK_DRAW_FAILED_STAGE=", "63D32_GTK_DRAW_ERROR=",
+    "63D32_GTK_ACTIVE=", "63D32_GTK_AREA_SIZE=", "63D32=STOP",
 )
 
 
