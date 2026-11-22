@@ -15,8 +15,14 @@ pilot without repeating any of its 5/5 clicks and pixel checks.
 - GNOME Desktop Sharing and FreeRDP local pilot were already physically
   accepted; **the remaining blocker is RFB producer privilege/isolation**,
   not the GNOME RDP handshake or Render/DB functionality.
-- These CVEs affect local cross-user framebuffer isolation, so wrapping
-  a vulnerable server in HTTPS or hiding TCP/5900 is NOT sufficient.
+- CVE-2026-32853 concerns bounds validation in the LibVNCServer
+  **UltraZip decoding path**. Ubuntu marks libvncserver on resolute
+  "Not affected", but separately marks the x11vnc source "Needs evaluation".
+  That classification is not evidence of a local shared-memory flaw
+  in x11vnc, nor a package-level clearance.
+- CVE-2026-34352 is a *different* TigerVNC x0vncserver local
+  framebuffer shared-memory permissions issue, fixed upstream in 1.16.2.
+  HTTPS or hiding TCP ports does not repair that kind of local flaw.
 - Until official Ubuntu package vulnerability status and exact build are
   independently reviewed, do **not** install or start x11vnc, TigerVNC
   x0vncserver or unreviewed source builds on Viborg1.
