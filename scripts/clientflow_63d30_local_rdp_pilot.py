@@ -587,6 +587,31 @@ def auth_probe() -> None:
         raise RuntimeError("STOP: FreeRDP localhost-auth mislykkedes")
 
 
+
+def exercise_auth() -> None:
+    """One command, bounded RDP authentication drill, always RDP-first rollback."""
+    # Requires previously staged, checksum-verified root bundle and FreeRDP.
+    uid, _ = target()
+    if Path(__file__).resolve() != STAGED_RUNNER:
+        raise RuntimeError("STOP: Kør kun fysisk staged pilotkilde")
+    if state_load() is not None:
+        raise RuntimeError("STOP: Tidligere eller igangværende pilot-state")
+    if not watchdog_verified():
+        raise RuntimeError("STOP: Root-watchdog ikke staged")
+    if not (shutil.which("xfreerdp") or shutil.which("xfreerdp3")) or not shutil.which("xvfb-run"):
+        raise RuntimeError("STOP: FreeRDP/Xvfb mangler; ingen RDP ændret")
+    try:
+        start()
+        auth_probe()
+        print("RDP_AUTH_DRILL_RESULT=PASS", flush=True)
+    finally:
+        # If start itself failed but already rolled back successfully,
+        # stop() must not rerun and fail on missing state. If anything
+        # remains, stop() takes precedence over the authentication result.
+        if state_load() is not None:
+            stop()
+
+
 def status() -> None:
     uid, _ = target()
     data = state_load()
@@ -602,7 +627,7 @@ def status() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="63D-30 local GNOME screen-sharing pilot")
-    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage", "probe", "auth-probe"])
+    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage", "probe", "auth-probe", "exercise-auth"])
     args = parser.parse_args()
     print("===== CLIENTFLOW 63D-30 · LOCAL GNOME RDP PILOT =====", flush=True)
     try:
@@ -618,7 +643,8 @@ def main() -> int:
              "tick": tick, "status": status,
              "unstage": lambda: unstage(target()[0]),
              "probe": probe,
-             "auth-probe": auth_probe}[args.action]()
+             "auth-probe": auth_probe,
+             "exercise-auth": exercise_auth}[args.action]()
         return 0
     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print("PILOT=STOP", type(exc).__name__, str(exc), flush=True)
