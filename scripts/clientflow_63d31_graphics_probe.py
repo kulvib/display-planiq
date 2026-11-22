@@ -195,7 +195,7 @@ def graphic_child() -> None:
         rd = subprocess.Popen(
             [client, "/args-from:stdin"], stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            start_new_session=False,
         )
         check(rd.stdin is not None, "FreeRDP stdin missing")
         rd.stdin.write(("\n".join(args) + "\n").encode("ascii"))
@@ -226,11 +226,12 @@ def graphic_child() -> None:
         print("63D31_GRAPHICS=PASS")
     finally:
         if rd is not None and rd.poll() is None:
+            rd.terminate()
             try:
-                os.killpg(rd.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            rd.wait(timeout=5)
+                rd.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                rd.kill()
+                rd.wait(timeout=5)
         x.close()
 
 
@@ -239,7 +240,7 @@ ALLOWED_OUTPUT = (
     "RDP_X11_CHANGED_SAMPLES=", "RDP_FIRST_GRAPHIC_MS=",
     "RDP_LOCAL_POINTER_SHIFT_DISPATCH=", "RDP_REMOTE_INPUT_ACCEPTED=",
     "RDP_INPUT_TO_FRAME_MS=", "DISPLAY_FRONTEND_TRANSPORT=",
-    "SCREENSHOT_FILES_CREATED=", "63D31_GRAPHICS=",
+    "SCREENSHOT_FILES_CREATED=", "63D31_GRAPHICS=", "63D31=STOP",
 )
 
 
