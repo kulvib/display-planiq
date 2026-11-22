@@ -1,8 +1,6 @@
 """Native RFB relay tests, no localhost access and no GNOME activation."""
 import asyncio
 import base64
-from collections import deque
-import json
 
 import pytest
 
