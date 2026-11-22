@@ -1,7 +1,6 @@
 """63D-40: non-executing ELF evidence and negative security contracts."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
