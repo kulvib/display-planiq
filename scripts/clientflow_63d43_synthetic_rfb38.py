@@ -13,12 +13,9 @@ NEVER overrides any product source activation flag.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 from pathlib import Path
-import socket
-import stat
 import struct
 import tempfile
 
