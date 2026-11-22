@@ -221,6 +221,13 @@ jobs:
           /usr/bin/python3 -m scripts.clientflow_63d41_rfb_source_gate \
             --x11-source "$RUNNER_TEMP/clientflow-63d41-source/x11-src" \
             --libvnc-source "$RUNNER_TEMP/clientflow-63d41-source/libvnc-src"
+          # 63D-42: pin all four extracted C/doc source hashes, inspect
+          # the TCP_NODELAY error branch, then exercise ONLY a temporary
+          # Python AF_UNIX socket with SO_PEERCRED and 0700/0600 isolation.
+          # No RFB producer, TCP listener, privilege escalation or deployment.
+          /usr/bin/python3 -m scripts.clientflow_63d42_rfb_decision_gate \
+            --x11-source "$RUNNER_TEMP/clientflow-63d41-source/x11-src" \
+            --libvnc-source "$RUNNER_TEMP/clientflow-63d41-source/libvnc-src"
 
   client-host-ubuntu-2604-scope:
     name: Ubuntu 26.04 executable proof scope
