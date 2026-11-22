@@ -103,6 +103,8 @@ def gtk_window() -> None:
     check(os.environ.get("GDK_BACKEND") == "wayland", "Window backend not Wayland")
     check(Gtk.init_check() and Gdk.Display.get_default() is not None, "GTK init failed")
     print("63D32_GTK_STAGE=INITIALIZED", flush=True)
+    monitors = Gdk.Display.get_default().get_monitors().get_n_items()
+    print("63D32_GDK_MONITORS=", min(monitors, 64), flush=True)
 
     # No application ID: avoid D-Bus singleton registration/remote activation
     # of an unrelated process. The lifetime is owned by this one test worker.
@@ -147,7 +149,10 @@ def gtk_window() -> None:
         area.add_controller(gesture)
         window.set_child(area)
         window.connect("map", lambda *_: print("63D32_GTK_STAGE=MAPPED", flush=True))
-        window.fullscreen()
+        if WINDOW_FULLSCREEN:
+            window.fullscreen()
+        else:
+            window.set_default_size(960, 540)
         window.present()
         print("63D32_GTK_STAGE=PRESENT_CALLED", flush=True)
 
@@ -156,6 +161,12 @@ def gtk_window() -> None:
         def heartbeat():
             if not state["ready"]:
                 print("63D32_GTK_STAGE=LOOP_RUNNING", flush=True)
+                flags = (
+                    "V" + str(int(window.get_visible()))
+                    + "R" + str(int(window.get_realized()))
+                    + "M" + str(int(window.get_mapped()))
+                )
+                print("63D32_GTK_SURFACE_STATE=", flags, flush=True)
             return False
 
         GLib.timeout_add_seconds(2, heartbeat)
@@ -168,12 +179,13 @@ def gtk_window() -> None:
     check(code == 0, "GTK application ended unsuccessfully")
 
 
-def gtk_worker_script() -> bytes:
+def gtk_worker_script(fullscreen: bool = True) -> bytes:
     """Supply public GTK helper code over stdin; kiosk never reads root script."""
     bootstrap = (
         "import os, pwd, time\n"
         f"COLORS = {COLORS!r}\n"
         f"MAX_WINDOW_SECONDS = {MAX_WINDOW_SECONDS}\n"
+        f"WINDOW_FULLSCREEN = {bool(fullscreen)!r}\n"
         "def check(value, message):\n"
         "    if not value: raise RuntimeError('STOP: ' + message)\n\n"
     )
@@ -213,6 +225,9 @@ class StatusPipe:
         self.pending = b""
         self.ready = False
         self.stage = "NOT_STARTED"
+        self.loop_running = False
+        self.surface_state = "UNKNOWN"
+        self.monitors: int | None = None
         self.acks: dict[int, int] = {}
 
     def pump(self, timeout: float = 0.01) -> None:
@@ -227,12 +242,17 @@ class StatusPipe:
             line, self.pending = self.pending.split(b"\n", 1)
             if line == b"63D32_WINDOW_READY=PASS":
                 self.ready = True
+            elif line == b"63D32_GTK_STAGE=LOOP_RUNNING":
+                self.loop_running = True
+            elif re.fullmatch(rb"63D32_GTK_SURFACE_STATE= V[01]R[01]M[01]", line):
+                self.surface_state = line.split(b"=", 1)[1].strip().decode("ascii")
+            elif re.fullmatch(rb"63D32_GDK_MONITORS= [0-9]{1,2}", line):
+                self.monitors = int(line.split(b"=", 1)[1].strip())
             elif line in (
                 b"63D32_GTK_STAGE=INITIALIZED",
                 b"63D32_GTK_STAGE=APPLICATION_RUN",
                 b"63D32_GTK_STAGE=APPLICATION_ACTIVATED",
                 b"63D32_GTK_STAGE=WINDOW_CREATED",
-                b"63D32_GTK_STAGE=LOOP_RUNNING",
                 b"63D32_GTK_STAGE=PRESENT_CALLED",
                 b"63D32_GTK_STAGE=MAPPED",
                 b"63D32_GTK_STAGE=FRAME_DRAWN",
@@ -289,7 +309,7 @@ def summarize(ms: list[float], name: str) -> None:
     print(name + "_MAX_MS=", round(max(ms), 1), flush=True)
 
 
-def gtk_launch(uid: int) -> tuple[subprocess.Popen[bytes], StatusPipe]:
+def gtk_launch(uid: int, fullscreen: bool = True) -> tuple[subprocess.Popen[bytes], StatusPipe]:
     # Deliver only benign GTK worker source via stdin; the kiosk user never
     # receives root-only pilot scripts, TLS material or RDP credentials.
     proc = subprocess.Popen(
@@ -300,7 +320,7 @@ def gtk_launch(uid: int) -> tuple[subprocess.Popen[bytes], StatusPipe]:
     )
     check(proc.stdin is not None and proc.stdout is not None,
           "GTK worker channels unavailable")
-    proc.stdin.write(gtk_worker_script())
+    proc.stdin.write(gtk_worker_script(fullscreen=fullscreen))
     proc.stdin.close()
     return proc, StatusPipe(proc.stdout.fileno())
 
@@ -311,10 +331,16 @@ def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
     while time.monotonic() < deadline and not status.ready:
         if proc.poll() is not None:
             print("63D32_GTK_LAST_STAGE=", status.stage, flush=True)
+            print("63D32_GTK_LOOP_RUNNING=", status.loop_running, flush=True)
+            print("63D32_GTK_SURFACE_STATE=", status.surface_state, flush=True)
+            print("63D32_GDK_MONITORS=", status.monitors, flush=True)
             raise RuntimeError("STOP: GTK helper exited before first draw")
         status.pump(0.2)
     if not status.ready:
         print("63D32_GTK_LAST_STAGE=", status.stage, flush=True)
+        print("63D32_GTK_LOOP_RUNNING=", status.loop_running, flush=True)
+        print("63D32_GTK_SURFACE_STATE=", status.surface_state, flush=True)
+        print("63D32_GDK_MONITORS=", status.monitors, flush=True)
         raise RuntimeError("STOP: GTK window did not render")
     print("63D32_GTK_FIRST_DRAW=PASS", flush=True)
 
@@ -325,8 +351,9 @@ def gtk_smoke() -> None:
     uid = verified()
     worker = None
     try:
-        worker, status = gtk_launch(uid)
+        worker, status = gtk_launch(uid, fullscreen=False)
         gtk_wait_draw(worker, status, seconds=15)
+        print("63D32_GTK_WINDOW_MODE=NORMAL", flush=True)
         print("63D32_GTK_WINDOW_SMOKE=PASS", flush=True)
     finally:
         terminate_group(worker)
@@ -439,7 +466,9 @@ PRINT_PREFIXES = (
     "63D32_VISIBLE_REMOTE_FRAMES=", "63D32_INPUT_TO_GTK_",
     "63D32_INPUT_TO_FREERDP_PIXEL_", "63D32_FRONTEND_RELAY=",
     "63D32_LIVESTREAM_HLS=", "63D32_SCREENSHOTS_SAVED=",
-    "63D32_REAL_INPUT_AND_VISIBLE_FRAMES=", "63D32_GTK_LAST_STAGE=", "63D32=STOP",
+    "63D32_REAL_INPUT_AND_VISIBLE_FRAMES=", "63D32_GTK_LAST_STAGE=",
+    "63D32_GTK_LOOP_RUNNING=", "63D32_GTK_SURFACE_STATE=",
+    "63D32_GDK_MONITORS=", "63D32=STOP",
 )
 
 
