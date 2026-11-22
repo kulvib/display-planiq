@@ -145,6 +145,36 @@ jobs:
       - name: Execute legacy 1.1.19 capability parity gate
         run: python scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope python
 
+  clientflow-63d39-ubuntu-rfb-archive-audit:
+    name: 63D-39 isolated Ubuntu 26.04 RFB archive evidence
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout exact pull request sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download only signed-index candidate packages on disposable CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 26.04
+          mkdir -p "$RUNNER_TEMP/clientflow-63d39-rfb-debs"
+          cd "$RUNNER_TEMP/clientflow-63d39-rfb-debs"
+          # APT metadata refresh is strictly limited to disposable GitHub CI.
+          # DO NOT install or run vulnerable server binaries on the physical client.
+          sudo apt-get update -qq
+          apt-get download x11vnc libvncserver1 libvncclient1 tigervnc-scraping-server
+          /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/clientflow_63d39_rfb_ci_audit.py" \
+            --download-dir "$PWD"
+
   client-host-ubuntu-2604-scope:
     name: Ubuntu 26.04 executable proof scope
     runs-on: ubuntu-latest
