@@ -591,3 +591,15 @@ def test_session_preflight_failure_must_precede_firewall_or_rdp(monkeypatch, tmp
     )
     with pytest.raises(RuntimeError, match="not session collection"):
         pilot.start()
+
+def test_stage_requires_verified_ram_keyring_before_filesystem_changes(monkeypatch, tmp_path):
+    monkeypatch.setattr(pilot, "target", lambda: (1000, tmp_path))
+    monkeypatch.setattr(pilot.guard, "ensure_rdp_off", lambda uid: None)
+    monkeypatch.setattr(
+        pilot, "session_collection_preflight",
+        lambda uid: (_ for _ in ()).throw(RuntimeError("STOP: unsafe alias state")),
+    )
+    monkeypatch.setattr(pilot, "STAGE_ROOT", tmp_path / "staged")
+    with pytest.raises(RuntimeError, match="unsafe alias state"):
+        pilot.stage()
+    assert not (tmp_path / "staged").exists()
