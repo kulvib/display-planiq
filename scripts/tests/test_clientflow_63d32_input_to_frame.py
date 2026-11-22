@@ -176,7 +176,7 @@ def test_no_password_in_argv_and_no_persistent_screenshot():
     assert "GTK" in text
     assert "gtk_worker_script()" in text
     assert '"/usr/bin/python3", "-u", "-"' in text
-    assert "window.stdin.write(gtk_worker_script())" in text
+    assert "proc.stdin.write(gtk_worker_script())" in text
     assert "guard.guard_verified()" in text
     assert "time.monotonic_ns()" in text
     assert "marker_count" in text
