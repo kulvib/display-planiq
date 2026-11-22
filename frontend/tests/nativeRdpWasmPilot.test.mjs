@@ -46,3 +46,11 @@ test("RDP iframe cannot be blocked by broad clickjacking headers", () => {
   assert.match(render, /path: \/native-rdp\/\*[\s\S]*?name: Cross-Origin-Embedder-Policy/);
   assert.match(render, /name: Content-Security-Policy[\s\S]*?wasm-unsafe-eval/);
 });
+
+test("WASM reports early exit and no-socket timeout without exposing secrets", () => {
+  assert.match(child, /onExit: \(statusCode\) =>/);
+  assert.match(child, /printErr: classifyStderr/);
+  assert.match(child, /FreeRDP åbnede ingen RDP-WebSocket inden 15 sekunder/);
+  assert.match(child, /if \(!transportOpened\)/);
+  assert.doesNotMatch(child, /console\.(?:error|log|warn)\(/);
+});

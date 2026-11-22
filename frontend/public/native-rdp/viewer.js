@@ -7,12 +7,31 @@
   const element = document.getElementById("desktop");
   const status = document.getElementById("status");
   let started = false;
+  let failed = false;
+  let transportOpened = false;
+  let transportTimer = null;
+  let safeFailureClass = "UNKNOWN";
   const tell = (type, message) => {
     status.textContent = String(message).slice(0, 180);
     window.parent.postMessage({ type, message: status.textContent }, window.location.origin);
   };
-  const error = (message) => tell("planiq-native-rdp-error", message);
-  const update = (message) => tell("planiq-native-rdp-status", message);
+  const error = (message) => {
+    if (failed) return;
+    failed = true;
+    if (transportTimer !== null) clearTimeout(transportTimer);
+    tell("planiq-native-rdp-error", message);
+  };
+  const update = (message) => {
+    if (!failed) tell("planiq-native-rdp-status", message);
+  };
+  // Raw FreeRDP stderr can include /u: and /p: parameters. NEVER forward it.
+  const classifyStderr = (raw) => {
+    const line = String(raw || "");
+    if (/SDL_Init failed|video driver|video subsystem/i.test(line)) safeFailureClass = "SDL";
+    else if (/command.line|unknown option|invalid option|usage:/i.test(line)) safeFailureClass = "ARGUMENTS";
+    else if (/certificate|X509|TLS/i.test(line)) safeFailureClass = "TLS";
+    else if (/websocket|network|socket|connect/i.test(line)) safeFailureClass = "NETWORK";
+  };
   const isTunnelUrl = (raw) => {
     try {
       const url = new URL(raw);
@@ -50,12 +69,30 @@
         subprotocol: "binary,planiq-ws-ticket," + data.ticket,
       },
       print: () => {},
-      printErr: () => {},
+      printErr: classifyStderr,
+      onExit: (statusCode) => {
+        const code = Number.isInteger(statusCode) && Math.abs(statusCode) <= 65535
+          ? String(statusCode) : "unknown";
+        error("FreeRDP afsluttede (exit=" + code + ", fase=" + safeFailureClass +
+          "). Ingen fungerende RDP-session er etableret.");
+      },
       onAbort: () => error("FreeRDP blev afbrudt. Kontrollér GNOME RDP og forbindelsen."),
       onRuntimeInitialized: () => {
         update("Forbinder til GNOME RDP via PlanIQ …");
+        transportTimer = setTimeout(() => {
+          if (!transportOpened) {
+            const fsActive = window.Module.FS?.initialized === true;
+            error("FreeRDP åbnede ingen RDP-WebSocket inden 15 sekunder (FS=" +
+              (fsActive ? "aktiv" : "afsluttet") + ", fase=" + safeFailureClass +
+              "). Opret en ny forbindelse.");
+          }
+        }, 15000);
         if (typeof window.Module.websocket?.on === "function") {
-          window.Module.websocket.on("open", () => update("Binær RDP-forbindelse etableret · afventer GNOME-billede"));
+          window.Module.websocket.on("open", () => {
+            transportOpened = true;
+            if (transportTimer !== null) clearTimeout(transportTimer);
+            update("Binær RDP-WebSocket etableret · afventer GNOME-billede");
+          });
           window.Module.websocket.on("close", () => error("RDP-tunnelen blev lukket. Vælg en ny forbindelse."));
           window.Module.websocket.on("error", () => error("RDP-transportfejl. Kontrollér GNOME og WSS-forbindelsen."));
         }
