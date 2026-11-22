@@ -52,8 +52,10 @@ class VerifiedSocket:
     path: Path
     directory_device: int
     directory_inode: int
+    directory_mtime_ns: int
     socket_device: int
     socket_inode: int
+    socket_ctime_ns: int
     owner_uid: int
 
 
@@ -94,8 +96,10 @@ def inspect_socket(
         path=path,
         directory_device=directory.st_dev,
         directory_inode=directory.st_ino,
+        directory_mtime_ns=directory.st_mtime_ns,
         socket_device=sock.st_dev,
         socket_inode=sock.st_ino,
+        socket_ctime_ns=sock.st_ctime_ns,
         owner_uid=uid,
     )
 
@@ -123,27 +127,61 @@ async def open_approved_socket(
     *,
     runtime_root: Path = RUNTIME_ROOT,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-    """Bounded local Unix connection, source-disabled until producer approval.
+    """Bounded AF_UNIX connection; both original inodes held open by O_PATH.
 
-    Perform both lstat checks under the private agent-only directory.
-    Recheck device+inode after connection so a replaced socket is rejected.
-    No TCP, network address, port or subprocess is accepted.
+    A closed/unlinked AF_UNIX inode may be reused immediately by Linux.
+    Path-only stat comparisons therefore do NOT prove identity. Holding
+    O_PATH descriptors to the original socket and O_DIRECTORY descriptor to
+    the original private directory prevents inode reuse until validation
+    completes; any replacement on connect is detected and closed.
     """
     ensure_source_approved()
     verified = inspect_socket(session_id, runtime_root=runtime_root)
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_unix_connection(path=str(verified.path)), timeout=2.0,
+        dir_fd = os.open(
+            runtime_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
         )
-    except (OSError, asyncio.TimeoutError) as exc:
-        raise NativeRfbLocalGateError("RFB Unix socket not ready") from exc
+    except OSError as exc:
+        raise NativeRfbLocalGateError("RFB private directory changed") from exc
     try:
-        revalidate_socket(verified)
-        return reader, writer
-    except Exception:
-        writer.close()
         try:
-            await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
-        except (OSError, asyncio.TimeoutError):
-            pass
-        raise
+            sock_fd = os.open(
+                verified.path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC,
+            )
+        except OSError as exc:
+            raise NativeRfbLocalGateError("RFB socket changed before connect") from exc
+        try:
+            original_dir = os.fstat(dir_fd)
+            original_sock = os.fstat(sock_fd)
+            if (
+                original_dir.st_ino != verified.directory_inode or
+                original_dir.st_dev != verified.directory_device or
+                original_sock.st_ino != verified.socket_inode or
+                original_sock.st_dev != verified.socket_device or
+                not stat.S_ISSOCK(original_sock.st_mode) or
+                original_sock.st_uid != verified.owner_uid or
+                stat.S_IMODE(original_sock.st_mode) != SOCKET_MODE
+            ):
+                raise NativeRfbLocalGateError("RFB socket generation changed")
+            revalidate_socket(verified)
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_unix_connection(path=str(verified.path)),
+                    timeout=2.0,
+                )
+            except (OSError, asyncio.TimeoutError) as exc:
+                raise NativeRfbLocalGateError("RFB Unix socket not ready") from exc
+            try:
+                revalidate_socket(verified)
+                return reader, writer
+            except Exception:
+                writer.close()
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+                except (OSError, asyncio.TimeoutError):
+                    pass
+                raise
+        finally:
+            os.close(sock_fd)
+    finally:
+        os.close(dir_fd)

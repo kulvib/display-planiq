@@ -133,6 +133,43 @@ def test_only_approved_source_change_can_connect_to_private_unix_socket(local_rf
     assert server.fileno() != -1
 
 
+def test_replacement_during_unix_handshake_closes_untrusted_connection(
+    local_rfb, monkeypatch,
+):
+    root, path, server, _owner = local_rfb
+    monkeypatch.setattr(gate, "PRODUCER_APPROVED", True)
+    replacements = []
+    class FakeWriter:
+        closed = False
+        def close(self):
+            self.closed = True
+        async def wait_closed(self):
+            return
+    candidate_writer = FakeWriter()
+
+    async def attacker_replaces_path(**_kwargs):
+        # Retain original FD inside the gate while a new same-named socket
+        # is created; inode reuse MUST NOT conceal this substitution.
+        server.close()
+        path.unlink()
+        other = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        other.bind(str(path))
+        path.chmod(0o600)
+        replacements.append(other)
+        return asyncio.StreamReader(), candidate_writer
+
+    monkeypatch.setattr(gate.asyncio, "open_unix_connection", attacker_replaces_path)
+    try:
+        async def run():
+            with pytest.raises(gate.NativeRfbLocalGateError):
+                await gate.open_approved_socket(SESSION, runtime_root=root)
+        asyncio.run(run())
+        assert candidate_writer.closed
+    finally:
+        for replacement in replacements:
+            replacement.close()
+
+
 def test_no_external_ports_or_subprocess_in_local_gate():
     import inspect
     source = inspect.getsource(gate)

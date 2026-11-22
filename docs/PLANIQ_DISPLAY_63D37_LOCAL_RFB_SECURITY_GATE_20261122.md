@@ -113,3 +113,25 @@ https://ubuntu.com/security/CVE-2026-32853
 
 The package's exact `dpkg-query` version on **Viborg1** must eventually
 be inventoried with the read-only script, not assumed from the archive.
+
+## Race-condition fix after 63D-37 CI negative test
+
+The first candidate correctly rejected the unsafe provider but detected
+Linux AF_UNIX inode reuse in a strict negative test: unlink/rebind can
+reuse `st_ino` immediately. The local gate now:
+
+- includes private-directory modification time and socket change time in
+  read-only pre/post inode snapshots;
+- holds an `O_DIRECTORY|O_NOFOLLOW` descriptor for the original directory
+  and an `O_PATH|O_NOFOLLOW` descriptor for the original Unix socket
+  **across the entire connection attempt**. This prevents the old inode
+  being recycled while the candidate socket is being connected;
+- validates socket owner/type/mode/device/inode both before and after the
+  bounded Unix connection, and closes an untrusted connected writer
+  before releasing either descriptor;
+- tests an adversarial unlink/rebind *during* connect and requires a
+  fail-closed disconnect with no RFB bytes sent.
+
+These are Linux-specific primitives and remain unavailable for
+production activation until the RFB producer CVE and root supervisor gate
+are independently accepted. No physical client operation is performed.
