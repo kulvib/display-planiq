@@ -10,6 +10,7 @@ export function createLatestRemoteFramePainter({
   onFrameReceived = null, now = () => Date.now(),
 }) {
   let pending = null;
+  let pendingTiming = null;
   let scheduled = null;
   let disposed = false;
 
@@ -21,11 +22,13 @@ export function createLatestRemoteFramePainter({
       const element = getImage();
       if (element && pending !== null) {
         const next = pending;
+        const timing = pendingTiming;
         pending = null;
-        element.src = "data:image/jpeg;base64," + next.encoded;
+        pendingTiming = null;
+        element.src = next;
         onFrameAssigned?.({
-          receivedAt: next.receivedAt,
-          replacedWhileWaiting: next.replacedWhileWaiting,
+          receivedAt: timing.receivedAt,
+          replacedWhileWaiting: timing.replacedWhileWaiting,
         });
       }
     });
@@ -34,10 +37,10 @@ export function createLatestRemoteFramePainter({
   return {
     push(encodedJpeg, { receivedAt } = {}) {
       if (disposed || typeof encodedJpeg !== "string" || !encodedJpeg) return;
-      const replacedWhileWaiting = pending ? pending.replacedWhileWaiting + 1 : 0;
+      const replacedWhileWaiting = pending ? pendingTiming.replacedWhileWaiting + 1 : 0;
       const measuredAt = Number.isFinite(receivedAt) ? receivedAt : onFrameReceived?.();
-      pending = {
-        encoded: encodedJpeg,
+      pending = `data:image/jpeg;base64,${encodedJpeg}`;
+      pendingTiming = {
         receivedAt: Number.isFinite(measuredAt) ? measuredAt : now(),
         replacedWhileWaiting,
       };
@@ -48,6 +51,7 @@ export function createLatestRemoteFramePainter({
       if (scheduled !== null) cancelFrame(scheduled);
       scheduled = null;
       pending = null;
+      pendingTiming = null;
     },
     dispose() {
       this.clear();
