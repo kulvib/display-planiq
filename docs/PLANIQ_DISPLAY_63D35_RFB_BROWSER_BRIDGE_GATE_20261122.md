@@ -82,3 +82,19 @@ migration and cannot yet carry real desktop pixels.
 
 No changes to Render Docker/local PostgreSQL, kiosk system, PR #404
 physical evidence, or existing JPEG frontend during this candidate.
+
+## Security advisory gate added 22 November 2026
+
+[Ubuntu CVE-2026-32853](https://ubuntu.com/security/CVE-2026-32853)
+lists the `x11vnc` package for Ubuntu **26.04 LTS** as
+**Needs evaluation**; its underlying `libvncserver` package is listed
+as "Not affected", which does not clear the separate x11vnc status.
+[USN-9089-1](https://ubuntu.com/security/notices/USN-9089-1)
+published 12 November 2026 covered an earlier shared-memory issue
+on Ubuntu 20.04 only. These are distinct findings.
+
+STOP on x11vnc activation until the exact Ubuntu 26.04 package build
+and relevant CVE/privilege/isolation status are independently checked,
+and ephemeral per-session safe authentication/loopback restrictions
+are physically accepted. Never install x11vnc solely because the
+package is available in the archive.

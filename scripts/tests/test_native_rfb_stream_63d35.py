@@ -124,6 +124,10 @@ def test_credit_window_waits_for_ack_no_discarding_bytes():
                 break
         assert len([v for v in wire if v["type"] == "native_rdp_chunk"]) == MAX_UNACKED + 1
         assert [v["seq"] for v in wire if v["type"] == "native_rdp_chunk"] == list(range(MAX_UNACKED+1))
+        # RFB is an ordered byte stream; acknowledge outstanding packets
+        # before expecting the source EOF, rather than silently dropping.
+        for seq in range(1, MAX_UNACKED + 1):
+            await session.receive(ack(seq))
         await reader.queue.put(b"")
         await asyncio.wait_for(task, 2)
         assert writer.closed
