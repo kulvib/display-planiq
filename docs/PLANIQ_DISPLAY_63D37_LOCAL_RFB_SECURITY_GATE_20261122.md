@@ -96,3 +96,20 @@ pilot without repeating any of its 5/5 clicks and pixel checks.
 
 Viborg1 stays ClientFlow 1248. This phase does **not** mark native RDP in
 browser as working and does not change existing JPEG/livestream.
+
+## Version-level finding from Ubuntu archive, 22 November 2026
+
+Ubuntu resolute's advertised `tigervnc-scraping-server` build is
+`1.15.0+dfsg-2build1`, while the upstream source fix for
+CVE-2026-34352 is in 1.16.2; **do not select this distro candidate**:
+https://packages.ubuntu.com/uk/resolute/x11/
+https://nvd.nist.gov/vuln/detail/CVE-2026-34352
+
+Ubuntu resolute's x11vnc source package is `0.9.17-2`. The upstream
+version alone is NOT a proof of a patched Ubuntu security build, and
+Ubuntu still marks x11vnc's CVE-2026-32853 as Needs evaluation:
+https://packages.ubuntu.com/source/resolute/x11vnc
+https://ubuntu.com/security/CVE-2026-32853
+
+The package's exact `dpkg-query` version on **Viborg1** must eventually
+be inventoried with the read-only script, not assumed from the archive.

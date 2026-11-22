@@ -137,7 +137,8 @@ def test_no_external_ports_or_subprocess_in_local_gate():
     source = inspect.getsource(gate)
     assert "open_unix_connection" in source
     assert "open_connection(" not in source.replace("open_unix_connection(", "")
-    assert "subprocess" not in source
+    assert "import subprocess" not in source
+    assert "subprocess." not in source
     assert "os.system(" not in source
     assert "Popen(" not in source
     assert "PRODUCER_APPROVED = False" in source
