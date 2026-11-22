@@ -141,11 +141,12 @@ def test_start_arms_and_verifies_firewall_before_any_GNOME_change(monkeypatch, t
     )
     def fake_kiosk_ok(uid, *cmd, **kwargs):
         events.append(" ".join(cmd[:3]))
-        if cmd[:3] == ("grdctl", "rdp", "set-credentials"):
-            assert "input" in kwargs
-            assert "\n" in kwargs["input"]
-            assert len(cmd) == 3  # credentials must never appear in argv
     monkeypatch.setattr(pilot, "kiosk_ok", fake_kiosk_ok)
+    def fake_credentials(uid, user, password):
+        assert user.startswith("cfpilot")
+        assert len(password) >= 32
+        events.append("grdctl rdp set-credentials")
+    monkeypatch.setattr(pilot, "kiosk_set_rdp_credentials_pty", fake_credentials)
     monkeypatch.setattr(pilot, "get_setting", lambda uid, key:
                         {"screen-share-mode": "'mirror-primary'", "port": "uint16 3389"}[key])
     monkeypatch.setattr(pilot, "listeners", lambda: [3389])
@@ -603,3 +604,62 @@ def test_stage_requires_verified_ram_keyring_before_filesystem_changes(monkeypat
     with pytest.raises(RuntimeError, match="unsafe alias state"):
         pilot.stage()
     assert not (tmp_path / "staged").exists()
+
+def test_pty_credentials_answer_two_prompts_separately_without_secret_exposure(monkeypatch, capsys):
+    """Simulation: child asks once for each value; real GNOME is not invoked."""
+    import subprocess
+    import sys
+    real_popen = subprocess.Popen
+    secret_username = "cfpilot01234567"
+    secret_password = "SecretPasswordForUnitTest___________________"
+    child = (
+        'import sys; '
+        'sys.stdout.write("Username: ");sys.stdout.flush();'
+        'u=sys.stdin.readline().rstrip("\\r\\n");'
+        'sys.stdout.write("Password: ");sys.stdout.flush();'
+        'p=sys.stdin.readline().rstrip("\\r\\n");'
+        'sys.exit(0 if (u == "cfpilot01234567" and '
+        'p == "SecretPasswordForUnitTest___________________") else 17)'
+    )
+    def fake_popen(command, **kwargs):
+        assert command[-3:] == ["grdctl", "rdp", "set-credentials"]
+        assert secret_username not in " ".join(command)
+        assert secret_password not in " ".join(command)
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        return real_popen([sys.executable, "-u", "-c", child], **kwargs)
+    monkeypatch.setattr(pilot.subprocess, "Popen", fake_popen)
+    pilot.kiosk_set_rdp_credentials_pty(1000, secret_username, secret_password)
+    printed = capsys.readouterr().out
+    assert "GNOME_CREDENTIALS_STDIN_PTY=PASS" in printed
+    assert secret_username not in printed and secret_password not in printed
+
+
+def test_pty_rejects_unsolicited_commands_or_bad_secrets_before_execution(monkeypatch):
+    monkeypatch.setattr(
+        pilot.subprocess, "Popen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("spawn prohibited")),
+    )
+    with pytest.raises(RuntimeError, match="Unsafe generated RDP username"):
+        pilot.kiosk_set_rdp_credentials_pty(1000, "unsafe user", "A" * 36)
+    with pytest.raises(RuntimeError, match="Unsafe generated RDP password"):
+        pilot.kiosk_set_rdp_credentials_pty(1000, "cfpilot01234567", "x")
+
+
+def test_pty_unknown_child_prompt_fails_closed_and_kills_child(monkeypatch, capsys):
+    import subprocess
+    import sys
+    real_popen = subprocess.Popen
+    def fake_popen(command, **kwargs):
+        return real_popen(
+            [sys.executable, "-u", "-c",
+             'import sys;sys.stdout.write("Unsupported: ");sys.stdout.flush()'],
+            **kwargs,
+        )
+    monkeypatch.setattr(pilot.subprocess, "Popen", fake_popen)
+    with pytest.raises(RuntimeError, match="GNOME credential PTY failed"):
+        pilot.kiosk_set_rdp_credentials_pty(
+            1000, "cfpilot01234567", "A" * 36,
+        )
+    printed = capsys.readouterr().out
+    assert "WAIT_USERNAME_PROMPT" in printed
+    assert "GNOME_USER_FAILED_OPERATION= RDP_SET_CREDENTIALS" in printed
