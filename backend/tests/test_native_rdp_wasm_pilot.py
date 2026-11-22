@@ -75,3 +75,24 @@ def test_native_rdp_tcp_destination_is_fixed_loopback():
     assert forwarder.GNOME_RDP_HOST == "127.0.0.1"
     assert forwarder.GNOME_RDP_PORT == 3389
     assert forwarder.GUARD_MARKER.is_absolute()
+
+
+def test_agent_socket_is_bound_to_live_control_credential_not_old_jwt(monkeypatch):
+    from types import SimpleNamespace
+
+    browser = SocketStub()
+    tunnel = relay.NativeRdpTunnel(
+        client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+        tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+        user_id=42, browser=browser,
+    )
+    tunnel.agent_credential_id = "rdp-credential"
+    tunnel.agent_token_version = 7
+    control = SimpleNamespace(credential_id="rdp-credential", token_version=7)
+    monkeypatch.setitem(relay.CONTROL_AGENTS, 3, control)
+    monkeypatch.setattr(relay, "_remote_desktop_agent_channel_valid", lambda _: True)
+    assert tunnel.authorized_agent()
+    # A renewed handshake JWT is not needed while the same credential remains
+    # approved. Changing its persisted version must still revoke immediately.
+    control.token_version = 8
+    assert not tunnel.authorized_agent()

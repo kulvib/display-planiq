@@ -27,6 +27,7 @@ from .remote_desktop_v2 import (
     _extract_agent_bearer,
     _platform_client_accessible,
     _remote_desktop_browser_auth_state,
+    _remote_desktop_agent_channel_valid,
     _send_agent,
     _ws_origin_allowed,
 )
@@ -57,7 +58,8 @@ class NativeRdpTunnel:
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     to_browser: asyncio.Lock = field(default_factory=asyncio.Lock)
     to_agent: asyncio.Lock = field(default_factory=asyncio.Lock)
-    agent_token: str | None = None
+    agent_credential_id: str | None = None
+    agent_token_version: int | None = None
 
     def authorized_browser(self) -> bool:
         active = BROWSERS.get(self.session_id)
@@ -67,12 +69,20 @@ class NativeRdpTunnel:
         return bool(current is not None and state == "ok")
 
     def authorized_agent(self) -> bool:
-        if not self.agent_token or self.client_id not in CONTROL_AGENTS:
+        # On an established socket the short-lived handshake token may expire.
+        # Recheck credential revocation and version, not its original JWT exp.
+        # Reuse the existing agent-control-channel validator; never store JWTs
+        # or query PostgreSQL for every binary RDP packet.
+        control = CONTROL_AGENTS.get(self.client_id)
+        if not control or not self.agent_credential_id:
+            return False
+        if (
+            str(control.credential_id) != self.agent_credential_id
+            or int(control.token_version) != self.agent_token_version
+        ):
             return False
         try:
-            with Session(engine) as db:
-                verify_remote_desktop_agent_token(db, self.agent_token, client_id=self.client_id)
-            return True
+            return _remote_desktop_agent_channel_valid(control)
         except Exception:
             return False
 
@@ -210,7 +220,7 @@ async def native_rdp_agent_ws(ws: WebSocket, client_id: int, session_id: str, tu
     try:
         token = _extract_agent_bearer(ws)
         with Session(engine) as db:
-            verify_remote_desktop_agent_token(db, token, client_id=client_id)
+            credential = verify_remote_desktop_agent_token(db, token, client_id=client_id)
     except Exception:
         await _reject(ws, "Ugyldig agentgodkendelse", 4401)
         return
@@ -223,8 +233,16 @@ async def native_rdp_agent_ws(ws: WebSocket, client_id: int, session_id: str, tu
         ):
             await _reject(ws, "RDP-tunnel er lukket eller tilhører en anden session")
             return
+        control = CONTROL_AGENTS.get(client_id)
+        if (
+            control is None or str(control.credential_id) != str(credential.id)
+            or int(control.token_version) != int(credential.token_version)
+        ):
+            await _reject(ws, "Agent og kontrolkanal har forskellig identitet", 4401)
+            return
         tunnel.agent = ws
-        tunnel.agent_token = token
+        tunnel.agent_credential_id = str(credential.id)
+        tunnel.agent_token_version = int(credential.token_version)
 
     await ws.accept()
     tunnel.ready.set()
