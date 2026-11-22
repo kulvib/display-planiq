@@ -6,7 +6,8 @@
  * purely local; transport and authentication remain untouched.
  */
 export function createLatestRemoteFramePainter({
-  requestFrame, cancelFrame, getImage, onFrameAssigned = null, now = () => Date.now(),
+  requestFrame, cancelFrame, getImage, onFrameAssigned = null,
+  onFrameReceived = null, now = () => Date.now(),
 }) {
   let pending = null;
   let scheduled = null;
@@ -34,9 +35,10 @@ export function createLatestRemoteFramePainter({
     push(encodedJpeg, { receivedAt } = {}) {
       if (disposed || typeof encodedJpeg !== "string" || !encodedJpeg) return;
       const replacedWhileWaiting = pending ? pending.replacedWhileWaiting + 1 : 0;
+      const measuredAt = Number.isFinite(receivedAt) ? receivedAt : onFrameReceived?.();
       pending = {
         encoded: encodedJpeg,
-        receivedAt: Number.isFinite(receivedAt) ? receivedAt : now(),
+        receivedAt: Number.isFinite(measuredAt) ? measuredAt : now(),
         replacedWhileWaiting,
       };
       flush();
