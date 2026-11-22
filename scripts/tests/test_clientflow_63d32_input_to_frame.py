@@ -200,3 +200,75 @@ def test_gtk_worker_script_contains_only_unprivileged_window_code():
     assert "RDP_LOCAL_PORT" not in code
     assert "SECRET.read_text" not in code
     assert "CLIENT_ID" not in code
+
+def test_gtk_pipe_accepts_only_fixed_progress_stages():
+    reader, writer = os.pipe()
+    try:
+        status = phase.StatusPipe(reader)
+        os.write(writer, (
+            b"63D32_GTK_STAGE=INITIALIZED\n"
+            b"63D32_GTK_STAGE=WINDOW_CREATED\n"
+            b"63D32_GTK_STAGE=PRESENT_CALLED\n"
+            b"63D32_GTK_STAGE=MAPPED\n"
+            b"63D32_GTK_STAGE=FRAME_DRAWN\n"
+            b"63D32_WINDOW_READY=PASS\n"
+        ))
+        status.pump(0.1)
+        assert status.ready and status.stage == "FRAME_DRAWN"
+        os.write(writer, b"63D32_GTK_STAGE=PASSWORD_LEAK\n")
+        with pytest.raises(RuntimeError, match="Unexpected GTK status"):
+            status.pump(0.1)
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+def test_gtk_smoke_without_rdp_always_cleans(monkeypatch):
+    events = []
+    monkeypatch.setattr(phase, "readiness", lambda: events.append("readiness"))
+    monkeypatch.setattr(phase, "verified", lambda: 1001)
+    monkeypatch.setattr(phase, "gtk_launch", lambda uid: (object(), object()))
+    monkeypatch.setattr(phase, "gtk_wait_draw",
+                        lambda *args, **kwargs: events.append("draw"))
+    monkeypatch.setattr(phase, "terminate_group",
+                        lambda proc: events.append("terminated"))
+    monkeypatch.setattr(phase.graphics, "baseline",
+                        lambda: events.append("postflight"))
+    monkeypatch.setattr(phase.graphics, "cmd",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            AssertionError("No RDP operations allowed")))
+    phase.gtk_smoke()
+    assert events == ["readiness", "draw", "terminated", "postflight"]
+
+
+def test_gtk_smoke_failure_still_terminates_and_checks_postflight(monkeypatch):
+    events = []
+    monkeypatch.setattr(phase, "readiness", lambda: None)
+    monkeypatch.setattr(phase, "verified", lambda: 1001)
+    monkeypatch.setattr(phase, "gtk_launch", lambda uid: (object(), object()))
+    monkeypatch.setattr(phase, "gtk_wait_draw",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(
+                            RuntimeError("No paint")))
+    monkeypatch.setattr(phase, "terminate_group",
+                        lambda proc: events.append("terminated"))
+    monkeypatch.setattr(phase.graphics, "baseline",
+                        lambda: events.append("postflight"))
+    with pytest.raises(RuntimeError, match="No paint"):
+        phase.gtk_smoke()
+    assert events == ["terminated", "postflight"]
+
+
+def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
+    class Worker:
+        def poll(self):
+            return None
+    class Status:
+        ready = False
+        stage = "PRESENT_CALLED"
+        def pump(self, timeout):
+            pass
+    iterator = iter((0, 16))
+    monkeypatch.setattr(phase.time, "monotonic", lambda: next(iterator))
+    with pytest.raises(RuntimeError, match="did not render"):
+        phase.gtk_wait_draw(Worker(), Status(), seconds=15)
+    assert "63D32_GTK_LAST_STAGE= PRESENT_CALLED" in capsys.readouterr().out
