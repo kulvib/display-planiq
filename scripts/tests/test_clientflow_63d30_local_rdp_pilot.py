@@ -295,3 +295,103 @@ def test_unstage_refuses_to_disarm_watchdog_if_rdp_guard_remains(monkeypatch):
     with pytest.raises(RuntimeError, match="Firewall"):
         pilot.unstage(1000)
     assert calls == []
+
+
+def test_auth_probe_secret_is_only_in_stdin_and_cert_is_pinned(
+    monkeypatch, tmp_path, capsys,
+):
+    """FreeRDP receives a one-time secret only via its stdin argument stream."""
+    import types
+    user = "cfpilot1234abcd"
+    password = "T" * 44
+    class SecretFile:
+        def is_symlink(self):
+            return False
+        def is_file(self):
+            return True
+        def stat(self):
+            return types.SimpleNamespace(st_uid=0, st_mode=0o100600)
+        def read_text(self, encoding="utf-8"):
+            return user + "\n" + password + "\n"
+
+    monkeypatch.setattr(pilot, "SECRET_FILE", SecretFile())
+    monkeypatch.setattr(pilot, "target", lambda: (1000, tmp_path))
+    monkeypatch.setattr(pilot, "state_load", lambda: {"phase": "63D-30"})
+    monkeypatch.setattr(pilot, "deadline_expired", lambda _: False)
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: True)
+    monkeypatch.setattr(pilot, "get_setting", lambda uid, key: "true")
+    monkeypatch.setattr(pilot, "listeners", lambda: [3389])
+    monkeypatch.setattr(pilot.shutil, "which", lambda name: {
+        "xfreerdp": "/usr/bin/xfreerdp",
+        "xvfb-run": "/usr/bin/xvfb-run",
+    }.get(name))
+
+    cert_dir = tmp_path / "certificate"
+    cert_dir.mkdir()
+    (cert_dir / "tls.crt").write_text("test only")
+    monkeypatch.setattr(pilot, "tls_directory", lambda uid: cert_dir)
+
+    invoked = []
+    def fake_run(argv, **kwargs):
+        invoked.append((argv, kwargs))
+        if argv[0] == "openssl":
+            assert "tls.crt" in argv[-3] or "tls.crt" in argv
+            return types.SimpleNamespace(returncode=0, stdout=b"DER-ONLY")
+        assert argv == [
+            "/usr/bin/xvfb-run", "-a", "/usr/bin/xfreerdp", "/args-from:stdin"
+        ]
+        assert kwargs.get("capture_output") is True
+        assert kwargs.get("text") is True
+        assert user in kwargs["input"]
+        assert password in kwargs["input"]
+        assert "+auth-only" in kwargs["input"]
+        assert "/v:127.0.0.1:3389" in kwargs["input"]
+        assert "/cert:fingerprint:sha256:" in kwargs["input"]
+        assert "/cert:ignore" not in kwargs["input"]
+        assert password not in " ".join(argv)
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(pilot.subprocess, "run", fake_run)
+    pilot.auth_probe()
+    output = capsys.readouterr().out
+    assert "FREERDP_LOCAL_AUTH_ONLY= PASS" in output
+    assert user not in output and password not in output
+    assert len(invoked) == 2
+
+
+def test_auth_probe_fails_closed_when_guard_or_watchdog_is_missing(monkeypatch):
+    monkeypatch.setattr(pilot, "target", lambda: (1000, Path("/tmp")))
+    monkeypatch.setattr(pilot, "state_load", lambda: {"phase": "63D-30"})
+    monkeypatch.setattr(pilot, "deadline_expired", lambda _: False)
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: False)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: True)
+    with pytest.raises(RuntimeError, match="watchdog"):
+        pilot.auth_probe()
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: False)
+    with pytest.raises(RuntimeError, match="firewall"):
+        pilot.auth_probe()
+
+
+def test_auth_probe_does_not_attempt_connection_without_test_packages(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(pilot, "target", lambda: (1000, Path("/tmp")))
+    monkeypatch.setattr(pilot, "state_load", lambda: {"phase": "63D-30"})
+    monkeypatch.setattr(pilot, "deadline_expired", lambda _: False)
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot.guard, "guard_verified", lambda: True)
+    monkeypatch.setattr(pilot, "get_setting", lambda uid, key: "true")
+    monkeypatch.setattr(pilot, "listeners", lambda: [3389])
+    monkeypatch.setattr(pilot, "SECRET_FILE", SimpleNamespace(
+        is_symlink=lambda: False,
+        is_file=lambda: True,
+        stat=lambda: SimpleNamespace(st_uid=0, st_mode=0o100600),
+        read_text=lambda encoding="utf-8": "cfpilot1234abcd\n" + "S"*44 + "\n",
+    ))
+    monkeypatch.setattr(pilot.shutil, "which", lambda name: None)
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("Should not run openssl or FreeRDP if packages missing")
+    monkeypatch.setattr(pilot.subprocess, "run", must_not_run)
+    with pytest.raises(RuntimeError, match="freerdp"):
+        pilot.auth_probe()
