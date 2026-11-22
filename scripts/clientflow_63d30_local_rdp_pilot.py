@@ -603,13 +603,14 @@ def exercise_auth() -> None:
     try:
         start()
         auth_probe()
-        print("RDP_AUTH_DRILL_RESULT=PASS", flush=True)
     finally:
         # If start itself failed but already rolled back successfully,
         # stop() must not rerun and fail on missing state. If anything
         # remains, stop() takes precedence over the authentication result.
         if state_load() is not None:
             stop()
+    # Report PASS only AFTER RDP-off and complete cleanup succeeded.
+    print("RDP_AUTH_AND_ROLLBACK_DRILL=PASS", flush=True)
 
 
 def status() -> None:
