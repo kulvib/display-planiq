@@ -349,6 +349,8 @@ def watchdog_verified() -> bool:
 def stage() -> None:
     uid, _ = target()
     guard.ensure_rdp_off(str(uid))
+    # Fail before creating any watchdog files if the RAM-only keyring is absent.
+    session_collection_preflight(uid)
     if STAGE_ROOT.exists() or TIMER_PATH.exists() or SERVICE_PATH.exists():
         raise RuntimeError("STOP: Pilotfiler findes allerede")
     if STATE_ROOT.exists() or SECRET_ROOT.exists():
