@@ -37,7 +37,7 @@ test("63D-33 replaces only pending image while preserving first and latest timin
   const painter = createLatestRemoteFramePainter({
     requestFrame: (cb) => { raf.push(cb); return raf.length; },
     cancelFrame: () => {},
-    getImage: () => ({ set src(value) { assert.equal(value, "data:image/jpeg;base64:last"); } }),
+    getImage: () => ({ set src(value) { assert.equal(value, "data:image/jpeg;base64,last"); } }),
     onFrameAssigned: (x) => meter.frameAssigned(x),
   });
   for (const word of ["first", "middle", "last"]) {
