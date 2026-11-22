@@ -9,6 +9,7 @@
     "@mui/icons-material": "9.4.0",
     "@mui/material": "9.4.0",
     "@mui/x-date-pickers": "9.14.0",
+    "@novnc/novnc": "1.7.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "date-fns": "4.4.0",

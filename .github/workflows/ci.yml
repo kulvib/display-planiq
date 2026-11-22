@@ -145,6 +145,95 @@ jobs:
       - name: Execute legacy 1.1.19 capability parity gate
         run: python scripts/verify_clientflow_legacy119_capability_gate.py --repo "$GITHUB_WORKSPACE" --scope python
 
+  clientflow-63d39-ubuntu-rfb-archive-audit:
+    name: 63D-39 isolated Ubuntu 26.04 RFB archive evidence
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout exact pull request sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download only signed-index candidate packages on disposable CI runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 26.04
+          mkdir -p "$RUNNER_TEMP/clientflow-63d39-rfb-debs"
+          cd "$RUNNER_TEMP/clientflow-63d39-rfb-debs"
+          # APT metadata refresh is strictly limited to disposable GitHub CI.
+          # DO NOT install or run vulnerable server binaries on the physical client.
+          sudo apt-get update -qq
+          apt-get download x11vnc libvncserver1 libvncclient1 tigervnc-scraping-server
+          /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/clientflow_63d39_rfb_ci_audit.py" \
+            --download-dir "$PWD"
+          cd "$GITHUB_WORKSPACE"
+          # SHA-pinned offline ELF + dependency evidence. No server binary
+          # execution, no package installation and no activation permission.
+          /usr/bin/python3 -m scripts.clientflow_63d40_rfb_offline_elf \
+            --download-dir "$RUNNER_TEMP/clientflow-63d39-rfb-debs"
+
+  clientflow-63d41-ubuntu-rfb-source-gate:
+    name: 63D-41 Ubuntu 26.04 source and Unix socket caveat
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout exact pull request sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch signed-index Ubuntu RFB source without building or running it
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          . /etc/os-release
+          test "$ID" = ubuntu
+          test "$VERSION_ID" = 26.04
+          # Only this disposable GitHub runner receives a source-index file.
+          sudo tee /etc/apt/sources.list.d/clientflow-63d41-src.sources >/dev/null <<'APT_SOURCE'
+          Types: deb-src
+          URIs: http://archive.ubuntu.com/ubuntu/
+          Suites: resolute resolute-updates resolute-security
+          Components: main universe
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          APT_SOURCE
+          sudo apt-get update -qq
+          mkdir -m 700 "$RUNNER_TEMP/clientflow-63d41-source"
+          cd "$RUNNER_TEMP/clientflow-63d41-source"
+          apt-get source --download-only \
+            'x11vnc=0.9.17-2' 'libvncserver=0.9.15+dfsg-3ubuntu0.2'
+          dpkg-source -x 'x11vnc_0.9.17-2.dsc' 'x11-src'
+          dpkg-source -x 'libvncserver_0.9.15+dfsg-3ubuntu0.2.dsc' 'libvnc-src'
+          cd "$GITHUB_WORKSPACE"
+          # Never run x11vnc, LibVNCServer, Xvfb or native-RDP.
+          /usr/bin/python3 -m scripts.clientflow_63d41_rfb_source_gate \
+            --x11-source "$RUNNER_TEMP/clientflow-63d41-source/x11-src" \
+            --libvnc-source "$RUNNER_TEMP/clientflow-63d41-source/libvnc-src"
+          # 63D-42: pin all four extracted C/doc source hashes, inspect
+          # the TCP_NODELAY error branch, then exercise ONLY a temporary
+          # Python AF_UNIX socket with SO_PEERCRED and 0700/0600 isolation.
+          # No RFB producer, TCP listener, privilege escalation or deployment.
+          /usr/bin/python3 -m scripts.clientflow_63d42_rfb_decision_gate \
+            --x11-source "$RUNNER_TEMP/clientflow-63d41-source/x11-src" \
+            --libvnc-source "$RUNNER_TEMP/clientflow-63d41-source/libvnc-src"
+
+          # 63D-43: actual Linux AF_UNIX + broker/client framed synthetic
+          # RFB 3.8 pixels/key-up/mouse-up. NO vulnerable VNC producer.
+          # This runner is ephemeral, non-root and has no physical client.
+          /usr/bin/python3 -m scripts.clientflow_63d43_synthetic_rfb38
+
   client-host-ubuntu-2604-scope:
     name: Ubuntu 26.04 executable proof scope
     runs-on: ubuntu-latest
