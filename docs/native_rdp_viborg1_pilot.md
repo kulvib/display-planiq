@@ -14,9 +14,13 @@ PlanIQ Display superadmin session and one-time browser ticket
   -> GNOME 50.2 **Desktop Sharing of existing Wayland kiosk session**.
 
 The browser uses a disposable same-origin iframe running the official SDL3
-FreeRDP 3.33.1 Emscripten build. WebAssembly output is intentionally NOT
-pretended to exist in the repository: the source-pinned GitHub workflow builds
-and publishes a reviewable artifact. The iframe's credential fields are never
+FreeRDP 3.33.1 Emscripten build. The compiled JavaScript and WASM runtime ARE
+NOW source-pinned in frontend/public/native-rdp with their complete provenance:
+GitHub Actions build 45066909031 passed and independently SHA256-verified
+sdl-freerdp.js (269234 bytes, sha256 609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5)
+and sdl-freerdp.wasm (11089855 bytes, sha256
+808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90).
+The exact compiled files were integrated into PR #408, not deployed. The iframe's credential fields are never
 posted to the PlanIQ API. A trusted GNOME TLS SHA256 fingerprint is required
 before the WASM client can connect; /cert:ignore is explicitly forbidden.
 
@@ -60,9 +64,9 @@ The client never opens an inbound tunnel and Render never exposes RDP.
    reading it. Never mark approved merely because RDP starts.
 4. Confirm GNOME's temporary RDP username/password and TLS are initialized
    in the kiosk's session without leaving credentials in argv, logs or env.
-5. Run FreeRDP WASM build workflow; inspect artifact manifest SHA256;
-   copy verified sdl-freerdp.js/.wasm and any worker/runtime assets under
-   frontend/public/native-rdp. Do not obtain a mutable CDN build at runtime.
+5. Verify the already committed, source-pinned FreeRDP WASM runtime against
+   `node frontend/scripts/checkNativeRdpWasm.mjs`; the build script always
+   verifies exact binary hashes, not just filenames. No CDN is used.
 6. Verify Render static frontend /remote-desktop/* and /native-rdp/*
    response headers, in a **new page navigation**: COOP same-origin,
    COEP require-corp, isolated iframe, X-Frame-Options SAMEORIGIN and
@@ -133,3 +137,19 @@ are imported as UNMODIFIED files into this draft. They are not installed
 into ClientFlow releases automatically and are not executed by CI. The
 6-minute timeout in the old 63D-30 physical runner remains a fail-closed
 safety feature; extending it requires its own operator-reviewed approval.
+
+## Verified artifact integration and current gates (2026-11-22)
+
+- Official FreeRDP 3.33.1 WASM build **PASS**, including upstream Node tests.
+- Source-pinned JS/WASM artifact **verified and committed into PR #408**.
+- The write-permitted artifact integration workflow was temporary and removed
+  after the reviewed files were committed. Normal branch CI remains read-only.
+- Frontend now fails its build on missing or modified FreeRDP assets if the
+  pilot is enabled; if assets exist, it hashes them even while disabled.
+- Existing Render Docker/PostgreSQL smoke and GitHub CI are independently
+  required at the final branch head before any staging or merge.
+- GNOME 50.2 RDP negotiations, SDL canvas display, browser mouse/key events,
+  30-minute recovery and actual browser-to-pixel p50/p95 remain **UNTESTED**.
+- The older 6-minute GNOME source runner is an independent physical safety
+  gate. It must not be silently extended and is not the 30-minute performance
+  test environment; stabilize the first screenshot before longer sessions.

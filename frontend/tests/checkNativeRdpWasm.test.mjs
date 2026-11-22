@@ -23,3 +23,12 @@ test("WASM gate fails closed if enabled without a source-pinned artifact", () =>
     rmSync(dir, { force: true, recursive: true });
   }
 });
+
+
+test("the actual source-pinned SDL3 WASM artifact is installed and passes strong SHA256 gate", async () => {
+  const { inspectNativeRdpAssets } = await import("../scripts/checkNativeRdpWasm.mjs");
+  const report = inspectNativeRdpAssets({ enabled: true });
+  assert.equal(report.installed, true);
+  assert.equal(report.verified, true);
+  assert.equal(report.sourceCommit, "65bcca1913a28cbdd7eb913599f692bd2b707991");
+});
