@@ -66,7 +66,7 @@ test("63D-33 keeps a strict bounded rolling window, resets all metrics", () => {
   assert.equal(snap.received, 3);
   assert.equal(snap.samples, 2);
   assert.equal(snap.browserP50Ms, 6);
-  assert.equal(snap.browserP95Ms, 6);
+  assert.equal(snap.browserP95Ms, 9);
   m.reset();
   assert.equal(m.snapshot().received, 0);
   assert.equal(m.snapshot().samples, 0);
