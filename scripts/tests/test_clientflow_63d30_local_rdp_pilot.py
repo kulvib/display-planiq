@@ -421,7 +421,7 @@ def test_bounded_auth_exercise_starts_authenticates_and_always_stops(
     monkeypatch.setattr(pilot, "stop", fake_stop)
     pilot.exercise_auth()
     assert events == ["start", "auth", "stop"]
-    assert "RDP_AUTH_DRILL_RESULT=PASS" in capsys.readouterr().out
+    assert "RDP_AUTH_AND_ROLLBACK_DRILL=PASS" in capsys.readouterr().out
 
 
 def test_bounded_auth_exercise_stops_even_if_authentication_fails(monkeypatch):
