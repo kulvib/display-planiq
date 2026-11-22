@@ -126,10 +126,38 @@ def kiosk(uid: int, *args: str, input: str | None = None) -> subprocess.Complete
     )
 
 
+# Fixed, non-sensitive operation labels. Do not include command arguments,
+# TLS file locations, credentials, or stderr/stdout in error messages.
+SAFE_KIOSK_OPERATIONS = {
+    ("grdctl", "rdp", "set-tls-key"): "RDP_SET_TLS_KEY",
+    ("grdctl", "rdp", "set-tls-cert"): "RDP_SET_TLS_CERT",
+    ("grdctl", "rdp", "set-credentials"): "RDP_SET_CREDENTIALS",
+    ("grdctl", "rdp", "disable-port-negotiation"): "RDP_DISABLE_PORT_NEGOTIATION",
+    ("grdctl", "rdp", "disable-view-only"): "RDP_DISABLE_VIEW_ONLY",
+    ("grdctl", "rdp", "enable"): "RDP_ENABLE",
+    ("grdctl", "rdp", "disable"): "RDP_DISABLE",
+    ("grdctl", "rdp", "clear-credentials"): "RDP_CLEAR_CREDENTIALS",
+    ("systemctl", "--user", "enable"): "USER_RDP_SERVICE_ENABLE",
+    ("systemctl", "--user", "disable"): "USER_RDP_SERVICE_DISABLE",
+}
+
+
+def safe_kiosk_operation(args: tuple[str, ...]) -> str:
+    if len(args) >= 3:
+        return SAFE_KIOSK_OPERATIONS.get(tuple(args[:3]), "OTHER_USER_COMMAND")
+    if len(args) >= 2 and args[:2] == ("gsettings", "set"):
+        return "GSETTINGS_SET"
+    return "OTHER_USER_COMMAND"
+
+
 def kiosk_ok(uid: int, *args: str, input: str | None = None) -> None:
     result = kiosk(uid, *args, input=input)
     if result.returncode:
-        raise RuntimeError("STOP: GNOME user kommando mislykkedes: " + args[0])
+        label = safe_kiosk_operation(args)
+        # Never log subprocess output or any values, even on diagnostic failure.
+        print("GNOME_USER_FAILED_OPERATION=", label, flush=True)
+        print("GNOME_USER_COMMAND_FAILED=True", flush=True)
+        raise RuntimeError("STOP: GNOME user operation failed: " + label)
 
 
 def get_setting(uid: int, key: str) -> str:
