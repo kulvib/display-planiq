@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 import json
 import re
 import time
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from sqlmodel import Session
