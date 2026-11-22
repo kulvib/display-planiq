@@ -196,3 +196,53 @@ def test_guard_staging_cannot_bypass_expiry(monkeypatch):
     monkeypatch.setattr(pilot.pilot, "deadline_expired", lambda _: True)
     with pytest.raises(RuntimeError, match="ikke aktiv"):
         pilot.check_physical_guard()
+
+
+def test_stalled_native_peer_is_bounded_and_never_reorders(monkeypatch):
+    import asyncio
+
+    class StalledSocket(SocketStub):
+        async def send_bytes(self, packet):
+            await asyncio.Future()
+
+    async def check():
+        browser = SocketStub()
+        agent = StalledSocket()
+        instance = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        instance.authorized_browser = lambda: True
+        instance.authorized_agent = lambda: True
+        monkeypatch.setattr(relay, "SEND_TIMEOUT", 0.02)
+        await browser.rx.put({"type": "websocket.receive", "bytes": b"one"})
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(relay._pump(instance, browser, browser_side=True), timeout=1)
+
+    asyncio.run(check())
+
+
+def test_binary_agent_packet_size_limit_and_closed_tunnel(monkeypatch):
+    import asyncio
+
+    async def check():
+        agent = SocketStub()
+        browser = SocketStub()
+        instance = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        instance.authorized_browser = lambda: True
+        instance.authorized_agent = lambda: True
+        await agent.rx.put({"type": "websocket.receive", "bytes": b"\x00\xff"})
+        await agent.rx.put({"type": "websocket.disconnect"})
+        await relay._pump(instance, agent, browser_side=False)
+        assert browser.sent == [b"\x00\xff"]
+        instance.closed.set()
+        await agent.rx.put({"type": "websocket.receive", "bytes": b"stale"})
+        await relay._pump(instance, agent, browser_side=False)
+        assert browser.sent == [b"\x00\xff"]
+
+    asyncio.run(check())

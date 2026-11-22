@@ -41,6 +41,8 @@ VIBORG1_PILOT_CLIENT_ID = 3  # Fail closed for all other clients until fleet app
 MAX_TUNNEL_LIFETIME = 60 * 60
 CHECK_INTERVAL = 15.0
 OPEN_TIMEOUT = 12.0
+SEND_TIMEOUT = 8.0  # Bounded backpressure: close stalled tunnel, never retain GBs of RDP frames.
+CLOSE_TIMEOUT = 3.0
 _TUNNELS: dict[str, "NativeRdpTunnel"] = {}
 _CLIENT_TUNNELS: dict[int, str] = {}
 _LOCK = asyncio.Lock()
@@ -90,8 +92,10 @@ class NativeRdpTunnel:
 
 async def _reject(ws: WebSocket, reason: str, code: int = 4403) -> None:
     try:
-        await ws.close(code=code, reason=reason[:100])
-    except Exception:
+        await asyncio.wait_for(
+            ws.close(code=code, reason=reason[:100]), timeout=CLOSE_TIMEOUT
+        )
+    except (asyncio.TimeoutError, RuntimeError, OSError, WebSocketDisconnect):
         pass
 
 
@@ -128,7 +132,10 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
                 return
             lock = tunnel.to_agent if browser_side else tunnel.to_browser
             async with lock:
-                await peer.send_bytes(packet)
+                # A peer that stops reading must not hold a websocket task or
+                # the single Render worker indefinitely. TCP ordering stays
+                # intact: a stalled send terminates both endpoints.
+                await asyncio.wait_for(peer.send_bytes(packet), timeout=SEND_TIMEOUT)
             if time.monotonic() >= next_check:
                 if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
                     return
@@ -255,7 +262,7 @@ async def native_rdp_agent_ws(ws: WebSocket, client_id: int, session_id: str, tu
     tunnel.ready.set()
     try:
         await _pump(tunnel, ws, browser_side=False)
-    except (WebSocketDisconnect, OSError, RuntimeError) as exc:
+    except (asyncio.TimeoutError, WebSocketDisconnect, OSError, RuntimeError) as exc:
         logger.info("native_rdp_agent_closed client_id=%s reason=%s", client_id, type(exc).__name__)
     finally:
         await _cleanup(tunnel)
