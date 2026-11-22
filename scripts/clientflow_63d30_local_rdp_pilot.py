@@ -143,10 +143,10 @@ SAFE_KIOSK_OPERATIONS = {
 
 
 def safe_kiosk_operation(args: tuple[str, ...]) -> str:
-    if len(args) >= 3:
-        return SAFE_KIOSK_OPERATIONS.get(tuple(args[:3]), "OTHER_USER_COMMAND")
     if len(args) >= 2 and args[:2] == ("gsettings", "set"):
         return "GSETTINGS_SET"
+    if len(args) >= 3:
+        return SAFE_KIOSK_OPERATIONS.get(tuple(args[:3]), "OTHER_USER_COMMAND")
     return "OTHER_USER_COMMAND"
 
 
