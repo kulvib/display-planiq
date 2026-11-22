@@ -213,6 +213,7 @@ export default function RemoteDesktop() {
     cancelFrame: (id) => window.cancelAnimationFrame(id),
     getImage: () => imgRef.current,
     now: () => performance.now(),
+    onFrameReceived: () => frameTimingRef.current.frameReceived(),
     onFrameAssigned: (metadata) => frameTimingRef.current.frameAssigned(metadata),
   }), []);
   const lastFrameStateChangeRef = useRef(0);
@@ -572,8 +573,7 @@ export default function RemoteDesktop() {
 
       if (msg.type === "frame") {
         if (typeof msg.data !== "string" || !msg.data) return;
-        const receivedAt = frameTimingRef.current.frameReceived();
-        framePainter.push(msg.data, { receivedAt });
+        framePainter.push(msg.data);
         if (!firstFrameRef.current) {
           firstFrameRef.current = true;
           setHasRemoteFrame(true);
