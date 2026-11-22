@@ -1,0 +1,15 @@
+{
+  "freerdp_source_commit": "65bcca1913a28cbdd7eb913599f692bd2b707991",
+  "freerdp_version": "3.33.1",
+  "emsdk": "6.0.12",
+  "files": {
+    "sdl-freerdp.js": {
+      "sha256": "609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5",
+      "bytes": 269234
+    },
+    "sdl-freerdp.wasm": {
+      "sha256": "808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90",
+      "bytes": 11089855
+    }
+  }
+}
