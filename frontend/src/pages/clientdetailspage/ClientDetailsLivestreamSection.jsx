@@ -1562,7 +1562,7 @@ export default function ClientDetailsLivestreamSection({
       resetVideo();
       setManifestReady(false);
     };
-  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive]);
+  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive, hlsBrowserTiming]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
