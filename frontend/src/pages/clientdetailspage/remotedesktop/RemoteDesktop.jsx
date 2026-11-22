@@ -32,6 +32,7 @@ import {
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
+import { createRemoteDesktopTiming } from "./remoteDesktopTiming.mjs";
 import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import AppSnackbar from "../../../components/AppSnackbar";
@@ -200,10 +201,20 @@ export default function RemoteDesktop() {
   const [actionMessage, setActionMessage] = useState("");
   const [hasRemoteFrame, setHasRemoteFrame] = useState(false);
   const firstFrameRef = useRef(false);
+  // Bounded, browser-only timings; no network, secrets or JPEGs in React state.
+  const frameTimingRef = useRef(null);
+  if (frameTimingRef.current === null) {
+    frameTimingRef.current = createRemoteDesktopTiming({ now: () => performance.now() });
+  }
+  const lastTimingUiAtRef = useRef(0);
+  const [browserFrameTiming, setBrowserFrameTiming] = useState(null);
   const framePainter = useMemo(() => createLatestRemoteFramePainter({
     requestFrame: (callback) => window.requestAnimationFrame(callback),
     cancelFrame: (id) => window.cancelAnimationFrame(id),
     getImage: () => imgRef.current,
+    now: () => performance.now(),
+    onFrameReceived: () => frameTimingRef.current.frameReceived(),
+    onFrameAssigned: (metadata) => frameTimingRef.current.frameAssigned(metadata),
   }), []);
   const lastFrameStateChangeRef = useRef(0);
   const lastFrameGeometryRef = useRef(null);
@@ -302,8 +313,14 @@ export default function RemoteDesktop() {
   const send = useCallback((payload) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify(payload));
-    return true;
+    try {
+      ws.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      // HTTPS fallback explicitly fails closed on input backpressure.
+      // Do not report a click, key or release as successfully queued.
+      return false;
+    }
   }, []);
 
   // A throttled move must still reach its final position when movement stops.
@@ -399,6 +416,9 @@ export default function RemoteDesktop() {
     lastFrameGeometryRef.current = null;
     firstFrameRef.current = false;
     framePainter.clear();
+    frameTimingRef.current.reset();
+    lastTimingUiAtRef.current = 0;
+    setBrowserFrameTiming(null);
     setTransportMode(null);
     setRoundTripMs(null);
     pingSentAtRef.current = null;
@@ -1427,6 +1447,14 @@ export default function RemoteDesktop() {
                   component="img"
                   ref={imgRef}
                   alt="Remote desktop"
+                  onLoad={() => {
+                    if (!frameTimingRef.current.imageLoaded()) return;
+                    const at = performance.now();
+                    if (at - lastTimingUiAtRef.current >= 1000) {
+                      lastTimingUiAtRef.current = at;
+                      setBrowserFrameTiming(frameTimingRef.current.snapshot());
+                    }
+                  }}
                   onMouseDown={handleMouseDown}
                   onMouseUp={handleMouseUp}
                   onDoubleClick={handleDoubleClick}
@@ -1468,11 +1496,18 @@ export default function RemoteDesktop() {
         {roundTripMs !== null && <Tooltip title="Browser → backend → browser. Omfatter ikke inputbehandling eller billedoptagelse på klienten.">
           <Chip size="small" variant="outlined" label={`Transport RTT ${roundTripMs} ms`} />
         </Tooltip>}
+        {browserFrameTiming?.samples >= 3 && (
+          <Tooltip title="Kun lokalt i browseren: fra modtaget JPEG til billedets load-hændelse. Inkluderer RAF-kø og billedindlæsning, men IKKE klientcapture, netværksforsinkelsen før browseren eller skærmens faktiske scan-out. Ikke en mus-til-billede-måling.">
+            <Chip size="small" variant="outlined"
+              label={`Browser frame p50 ${browserFrameTiming.browserP50Ms} ms · p95 ${browserFrameTiming.browserP95Ms} ms · sprunget over ${browserFrameTiming.replaced}`} />
+          </Tooltip>
+        )}
         {transportMode === "https_long_poll" && (() => {
           const stats = wsRef.current?.getDiagnostics?.();
           return stats ? <Typography variant="caption" color="text.secondary">
             HTTPS-inputkø: {stats.pending}{stats.sending ? " + 1 aktiv" : ""}
             {stats.lastSendDurationMs !== null ? ` · sidste send ${stats.lastSendDurationMs} ms` : ""}
+            {stats.lastPollDurationMs !== null ? ` · sidste poll ${stats.lastPollDurationMs} ms` : ""}
             {` · musebevægelser samlet ${stats.replacedMoves}`}
           </Typography> : null;
         })()}

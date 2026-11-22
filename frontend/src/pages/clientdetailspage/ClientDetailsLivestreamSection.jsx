@@ -10,6 +10,7 @@ import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateClient } from "../../api";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
+import { createLivestreamBrowserTiming } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
@@ -707,6 +708,8 @@ export default function ClientDetailsLivestreamSection({
   const videoContainerRef = useRef(null);
   const hlsRef   = useRef(null);
   const lastHlsProgressAtRef = useRef(0);
+  const hlsBrowserTiming = useMemo(() => createLivestreamBrowserTiming(), []);
+  const [hlsLatencyStats, setHlsLatencyStats] = useState(null);
   const lastVideoTimeRef = useRef(0);
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const viewerLeaveSentRef = useRef(false);
@@ -1335,6 +1338,8 @@ export default function ClientDetailsLivestreamSection({
     setError("");
     setCurrentSegNum(null);
     setLastSegNum(null);
+    hlsBrowserTiming.reset();
+    setHlsLatencyStats(null);
 
     const video = videoRef.current;
     if (!video) return undefined;
@@ -1499,8 +1504,11 @@ export default function ClientDetailsLivestreamSection({
               const observedAt = new Date();
               setLastFetched(observedAt);
               setLastSegmentTimestamp(observedAt.toISOString());
-              const measuredLatency = Number(hls.latency);
-              setLastSegmentLag(Number.isFinite(measuredLatency) ? measuredLatency : 0);
+              const measuredLatency = typeof hls.latency === "number" ? hls.latency : Number.NaN;
+              setLastSegmentLag(Number.isFinite(measuredLatency) && measuredLatency >= 0 ? measuredLatency : null);
+              if (hlsBrowserTiming.observe(measuredLatency)) {
+                setHlsLatencyStats(hlsBrowserTiming.snapshot());
+              }
               setError("");
             }
             try {
@@ -1554,7 +1562,7 @@ export default function ClientDetailsLivestreamSection({
       resetVideo();
       setManifestReady(false);
     };
-  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive]);
+  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive, hlsBrowserTiming]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
@@ -2715,7 +2723,13 @@ export default function ClientDetailsLivestreamSection({
             },
             { label: "Segmenter", value: `${currentSegNum ?? "-"} / ${lastSegNum ?? "-"}` },
             { label: "Total lag", value: formatLagValue(computedLag), color: manifestReady ? lagStatus.color : "#cbd5e1" },
-            { label: "Uploadalder", value: formatLagValue(lastSegmentLag) },
+            {
+              label: "HLS livekant",
+              value: formatLagValue(lastSegmentLag),
+              detail: hlsLatencyStats?.samples >= 3
+                ? `Browser p50 ${hlsLatencyStats.p50Seconds}s · p95 ${hlsLatencyStats.p95Seconds}s`
+                : "Afspillerestimat, ikke kamera-til-skærm",
+            },
             { label: "Skærm", value: currentDisplayDescription, detail: canManageDisplaySettings ? displayResolutionUiMeta.short : null, detailColor: displayResolutionUiMeta.severity === "error" ? "#f87171" : displayResolutionUiMeta.busy ? "#7dd3fc" : "rgba(203,213,225,0.62)" },
           ].map((item) => (
             <Box
