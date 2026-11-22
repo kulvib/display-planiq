@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container: emscripten/emsdk:6.0.12
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout PlanIQ browser pilot
         uses: actions/checkout@v4
