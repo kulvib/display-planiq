@@ -7,7 +7,9 @@ has been installed AFTER firewall/watchdog and GNOME Desktop Sharing checks.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import time
 from pathlib import Path
 import socket
 import stat
@@ -29,20 +31,44 @@ class NativeRdpNotApproved(RuntimeError):
 
 
 def ensure_native_rdp_guard(*, client_id: int) -> None:
-    """A reboot drops the marker; root must re-approve the physical firewall.
+    """Validate a root-owned grant bound to GNOME pilot's wall+monotonic expiry.
 
-    This is a human-controlled pilot latch, not a replacement for nftables.
+    Reject stale post-watchdog files, a reboot, symlinks, wrong identity or
+    any non-Viborg1 client. The unprivileged agent can only READ the grant.
     """
+    if client_id != 3 or socket.gethostname() != "viborg1-NUC14MNK-B2":
+        raise NativeRdpNotApproved("Kun Viborg1 er godkendt til GNOME RDP-pilot")
     try:
         info = GUARD_MARKER.lstat()
         if (
             not stat.S_ISREG(info.st_mode) or info.st_uid != 0
             or stat.S_IMODE(info.st_mode) != 0o644
-            or GUARD_MARKER.read_text(encoding="ascii") != f"{socket.gethostname()}:{client_id}\n"
+            or info.st_size > 1024
         ):
-            raise NativeRdpNotApproved("GNOME RDP mangler fysisk firewallgodkendelse")
-    except (OSError, UnicodeError) as exc:
-        raise NativeRdpNotApproved("GNOME RDP er ikke aktiveret til browserpilot") from exc
+            raise NativeRdpNotApproved("RDP-godkendelsesfilen er ugyldig")
+        state = json.loads(GUARD_MARKER.read_text(encoding="ascii"))
+        if not isinstance(state, dict) or set(state) != {
+            "schema", "hostname", "client_id", "boot_id", "expires_wall", "expires_mono"
+        }:
+            raise NativeRdpNotApproved("RDP-godkendelsens format er ugyldigt")
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if (
+            state["schema"] != 1
+            or state["hostname"] != socket.gethostname()
+            or type(state["client_id"]) is not int or state["client_id"] != client_id
+            or state["boot_id"] != boot_id
+            or type(state["expires_wall"]) not in (int, float)
+            or type(state["expires_mono"]) not in (int, float)
+        ):
+            raise NativeRdpNotApproved("RDP-godkendelsen er ikke bundet til klient og boot")
+        # The physical guardian has a maximum six-minute window. Reject
+        # future-dated grants and stale grants even if the watchdog has gone.
+        remaining_wall = state["expires_wall"] - time.time()
+        remaining_mono = state["expires_mono"] - time.monotonic()
+        if not (0 < remaining_wall <= 360 and 0 < remaining_mono <= 360):
+            raise NativeRdpNotApproved("GNOME RDP-pilotens firewallgodkendelse er udløbet")
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
+        raise NativeRdpNotApproved("GNOME RDP-godkendelse kunne ikke valideres") from exc
 
 
 async def forward_native_rdp(
@@ -75,6 +101,7 @@ async def forward_native_rdp(
 
             async def send_local_bytes() -> None:
                 async for packet in websocket:
+                    ensure_native_rdp_guard(client_id=client_id)
                     if not isinstance(packet, bytes) or not (0 < len(packet) <= MAX_WSS_MESSAGE):
                         raise ConnectionError("Ugyldig binær RDP-pakke")
                     writer.write(packet)
@@ -88,9 +115,15 @@ async def forward_native_rdp(
                         return
                     await websocket.send(packet)
 
+            async def monitor_guard_expiry() -> None:
+                while True:
+                    await asyncio.sleep(1)
+                    ensure_native_rdp_guard(client_id=client_id)
+
             tasks = [
                 asyncio.create_task(send_local_bytes()),
                 asyncio.create_task(send_remote_bytes()),
+                asyncio.create_task(monitor_guard_expiry()),
             ]
             try:
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

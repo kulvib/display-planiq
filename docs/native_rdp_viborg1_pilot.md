@@ -54,14 +54,21 @@ The client never opens an inbound tunnel and Render never exposes RDP.
    The guard must be installed BEFORE any GNOME listener is enabled.
    Check both TCP and UDP 3389 are blocked on non-loopback interfaces, and
    verify that GNOME Desktop Sharing is not Remote Login.
-3. Only AFTER verifying the guard is active and its watchdog survives an
-   agent restart, create the boot-ephemeral root-owned **read-only** approval
-   marker: /run/clientflow/native-rdp-approved.
-   The exact ASCII contents must be hostname + ":" + client ID + newline,
-   e.g. "viborg1-NUC14MNK-B2:3\n", owner root:root, mode 0644.
-   This file contains NO secret. Its ownership and restricted write
-   permissions matter; mode 0600 would prevent the unprivileged agent from
-   reading it. Never mark approved merely because RDP starts.
+3. Only AFTER checking the actual nftables guard, systemd root watchdog,
+   active GNOME Desktop Sharing, boot ID, six-minute expiration and a fixed
+   RDP port, run the **new fail-closed companion**
+   `sudo python3 scripts/clientflow_native_rdp_browser_pilot.py arm`
+   on Viborg1. The source must be taken from the immutable reviewed commit
+   and run from the same local directory as the accepted 63D-29/30 scripts.
+   This creates a boot-ephemeral root-owned mode 0644, **JSON expiration-bound**
+   approval marker at /run/clientflow/native-rdp-approved; no secret stored.
+   A 0600 file is not readable by the non-root ClientFlow agent.
+   `arm` prints only the PUBLIC TLS certificate SHA-256 fingerprint, never
+   login credentials; the GNOME temporary login is held in the existing
+   root-only `/run/clientflow-rdp-63d30/credentials` file.
+   To stop, `sudo python3 scripts/clientflow_native_rdp_browser_pilot.py disarm`
+   **first**, then use the independently accepted 63D-30 `stop` action.
+   Do not remove the firewall before GNOME has shut down.
 4. Confirm GNOME's temporary RDP username/password and TLS are initialized
    in the kiosk's session without leaving credentials in argv, logs or env.
 5. Verify the already committed, source-pinned FreeRDP WASM runtime against
@@ -153,3 +160,25 @@ safety feature; extending it requires its own operator-reviewed approval.
 - The older 6-minute GNOME source runner is an independent physical safety
   gate. It must not be silently extended and is not the 30-minute performance
   test environment; stabilize the first screenshot before longer sessions.
+
+## Critical six-minute pilot revocation protection
+
+The new unprivileged agent now validates the root-owned approval JSON against
+both the GNOME pilot's wall and monotonic six-minute expiration AND the
+current machine boot ID. It rejects a symlink, wrong UID/permissions, hostname
+or client ID, altered expiry, reboot and every expired marker. The RDP data
+pump revalidates the grant before each packet in both directions AND every
+second even when idle, forcibly closing the local TCP and outbound WSS sockets
+on expiry. No route is accepted for any client other than Viborg1 ID 3.
+
+The old 63D-30 systemd watchdog independently disables GNOME RDP and restores
+the original settings on expiry; its earlier physically tested code is
+unchanged. A stale marker left under /run cannot revive the tunnel after
+the watchdog shuts down the GNOME pilot. Do NOT extend the physical timer
+during this first end-to-end test or silently change other firewall rules.
+
+**No real physical test or remote mouse movement is claimed here.** The
+reviewed source must first be deployed to the correct client and Render
+backend, then operator-run on the actual Viborg1 machine. The server,
+agent, frontend, GNOME Desktop Sharing, nftables kernel state and remaining
+six-minute timer must all be accepted before displaying a remote frame.
