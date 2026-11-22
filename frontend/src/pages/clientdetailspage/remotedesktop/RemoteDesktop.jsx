@@ -31,6 +31,7 @@ import {
   closeRemoteDesktopBrowserHttpRelay,
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
+import NativeRfbViewer from "./NativeRfbViewer";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
 import { createRemoteDesktopTiming } from "./remoteDesktopTiming.mjs";
 import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
@@ -82,6 +83,10 @@ function formatBytes(value) {
 const UPLOAD_TOTAL_LIMIT_BYTES = 100 * 1024 * 1024;
 // Bounded active rate plus smaller JPEGs reduce WSS head-of-line pressure.
 // Native screen geometry and input coordinates remain unchanged.
+// Source-disabled until signed x11vnc/FreeRDP supervisor and browser
+// input-to-pixel physical acceptance pass. Never enable via environment
+// variable or an accidental admin toggle.
+const NATIVE_RFB_PILOT_ENABLED = false;
 const RD_ACTIVE_FPS = 8;
 const RD_WS_JPEG_QUALITY = 72;
 const RD_HTTPS_JPEG_QUALITY = 65;
@@ -1699,7 +1704,13 @@ export default function RemoteDesktop() {
 
         {activeTab === "desktop" ? (
           <Stack spacing={2}>
-            {remoteScreenPanel}
+            {NATIVE_RFB_PILOT_ENABLED && sessionId ? (
+              <NativeRfbViewer
+                clientId={clientId}
+                sessionId={sessionId}
+                active={Boolean(connected && agentConnected)}
+              />
+            ) : remoteScreenPanel}
             {shoutPanel}
           </Stack>
         ) : (

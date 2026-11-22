@@ -419,6 +419,15 @@ export function getRemoteDesktopBrowserWsUrl(clientId) {
   return getBrowserWsUrl(`/api/remote-desktop/browser/${encodeURIComponent(clientId)}/ws`);
 }
 
+// 63D-36: future native RFB viewer, specifically bound to the *existing*
+// authorised Remote Desktop browser session and the selected client.
+// Source-disabled in the React page; do not activate without host safety gate.
+export function getNativeRfbBrowserWsUrl(clientId, sessionId) {
+  return getBrowserWsUrl(
+    `/api/remote-desktop/native/browser/${encodeURIComponent(clientId)}/${encodeURIComponent(sessionId)}/ws`
+  );
+}
+
 
 export async function openTerminalBrowserHttpRelay(clientId, mode = "user") {
   const ticket = await createTerminalBrowserWsTicket(clientId, mode);
@@ -489,6 +498,51 @@ export async function closeRemoteDesktopBrowserHttpRelay(clientId, relayId) {
   const res = await apiFetch(buildApiUrl(`/remote-desktop/browser/${encodeURIComponent(clientId)}/http/${encodeURIComponent(relayId)}`), { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw await buildApiErrorFromResponse(res, "Remote Desktop HTTPS-fallback kunne ikke lukkes");
 }
+
+// 63D-36: exact same authenticated API fetch / refresh logic as legacy
+// Remote Desktop. A fresh one-use ticket is minted for each HTTPS fallback;
+// never reuse a ticket consumed by a prior WebSocket upgrade.
+function nativeRfbHttpBase(clientId, sessionId) {
+  return `/remote-desktop/native/browser/${encodeURIComponent(clientId)}/${encodeURIComponent(sessionId)}/http`;
+}
+
+export async function openNativeRfbBrowserHttpRelay(clientId, sessionId) {
+  const ticket = await createBrowserWsTicket(clientId, "remote_desktop");
+  const res = await apiFetch(buildApiUrl(`${nativeRfbHttpBase(clientId, sessionId)}/open`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket: ticket.ticket, subprotocol: ticket.subprotocol }),
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke åbne sikker RFB HTTPS-fallback");
+  return readJsonResponse(res, "Uventet svar fra RFB HTTPS-fallback");
+}
+
+export async function sendNativeRfbBrowserHttpRelay(clientId, sessionId, relayId, payload) {
+  const res = await apiFetch(
+    buildApiUrl(`${nativeRfbHttpBase(clientId, sessionId)}/${encodeURIComponent(relayId)}/send`),
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payload }) }
+  );
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "RFB HTTPS-fallback kunne ikke sende");
+  return readJsonResponse(res, "Uventet svar fra RFB HTTPS-fallback");
+}
+
+export async function pollNativeRfbBrowserHttpRelay(clientId, sessionId, relayId, timeoutSeconds = 25) {
+  const query = new URLSearchParams({ timeout_seconds: String(timeoutSeconds) });
+  const res = await apiFetch(buildApiUrl(
+    `${nativeRfbHttpBase(clientId, sessionId)}/${encodeURIComponent(relayId)}/poll?${query}`
+  ), { method: "GET" });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "RFB HTTPS-fallback kunne ikke modtage");
+  return readJsonResponse(res, "Uventet svar fra RFB HTTPS-fallback");
+}
+
+export async function closeNativeRfbBrowserHttpRelay(clientId, sessionId, relayId) {
+  const res = await apiFetch(buildApiUrl(
+    `${nativeRfbHttpBase(clientId, sessionId)}/${encodeURIComponent(relayId)}`
+  ), { method: "DELETE" });
+  if (!res.ok && res.status !== 404)
+    throw await buildApiErrorFromResponse(res, "RFB HTTPS-fallback kunne ikke lukkes");
+}
+
 
 function normalizeChromeStatusPayload(data = {}) {
   const normalized = { ...(data || {}) };
