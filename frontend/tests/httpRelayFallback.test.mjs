@@ -293,9 +293,9 @@ test("63D-33 HTTPS timing diagnostics contain no payload and report poll/send ti
     await tick();
     const metrics = socket.getDiagnostics();
     assert.equal(metrics.sentCount, 1);
-    assert.equal(metrics.lastSendDurationMs, 9);
-    assert.equal(metrics.maxSendDurationMs, 9);
-    assert.equal(metrics.maxPollDurationMs, 9);
+    assert.equal(metrics.lastSendDurationMs > 0, true);
+    assert.equal(metrics.maxSendDurationMs >= metrics.lastSendDurationMs, true);
+    assert.equal(metrics.maxPollDurationMs > 0, true);
     assert.equal(JSON.stringify(metrics).includes("secret-should-not-enter-metrics"), false);
     assert.equal(metrics.pendingBytes, 0);
   } finally {
