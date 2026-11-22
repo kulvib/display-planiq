@@ -34,11 +34,13 @@ import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
 import { createRemoteDesktopTiming } from "./remoteDesktopTiming.mjs";
 import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
+import { createLatestRemoteFrameSequence } from "./latestRemoteFrameSequence.mjs";
 import { createHttpRelaySocket, createWebSocketWithHttpsFallback } from "../../../api/httpRelaySocket";
 import AppSnackbar from "../../../components/AppSnackbar";
 import {
   buildRemoteDesktopBrowserDownloadUrl,
   buildRemoteDesktopUploadMultipleUrl,
+  buildRemoteDesktopBrowserMediaWsUrl,
 } from "./remoteDesktopUrls";
 import {
   getEffectiveDisplayResolution,
@@ -172,6 +174,8 @@ export default function RemoteDesktop() {
   const [organizations, setOrganizations] = useState([]);
 
   const wsRef = useRef(null);
+  const mediaWsRef = useRef(null);
+  const frameSequenceRef = useRef(createLatestRemoteFrameSequence());
   const connectAttemptRef = useRef(0);
   const connectRef = useRef(null);
   const reconnectTimerRef = useRef(null);
@@ -220,6 +224,7 @@ export default function RemoteDesktop() {
   const lastFrameGeometryRef = useRef(null);
   const [transportMode, setTransportMode] = useState(null);
   const [roundTripMs, setRoundTripMs] = useState(null);
+  const [mediaChannelActive, setMediaChannelActive] = useState(false);
   const [screenSize, setScreenSize] = useState({ width: null, height: null });
   const [lastFrameTs, setLastFrameTs] = useState(null);
   const [frameAgeTick, setFrameAgeTick] = useState(0);
@@ -400,11 +405,9 @@ export default function RemoteDesktop() {
       }, delay);
     };
 
-    try {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    } catch {}
+    try { mediaWsRef.current?.close(); } catch {}
+    mediaWsRef.current = null;
+    try { wsRef.current?.close(); } catch {}
 
     setError("");
     setStatus("Forbinder...");
@@ -417,6 +420,8 @@ export default function RemoteDesktop() {
     firstFrameRef.current = false;
     framePainter.clear();
     frameTimingRef.current.reset();
+    frameSequenceRef.current.reset();
+    setMediaChannelActive(false);
     lastTimingUiAtRef.current = 0;
     setBrowserFrameTiming(null);
     setTransportMode(null);
@@ -481,6 +486,50 @@ export default function RemoteDesktop() {
     }
     wsRef.current = ws;
 
+    const openMediaLane = async (id) => {
+      // The HTTPS relay remains functional when a separate WSS is blocked.
+      if (ws.transport !== "wss" || !id) return;
+      try {
+        const mediaTicket = await createBrowserWsTicket(clientId, "remote_desktop");
+        if (attemptId !== connectAttemptRef.current || wsRef.current !== ws ||
+            ws.readyState !== WebSocket.OPEN) return;
+        const media = new WebSocket(
+          buildRemoteDesktopBrowserMediaWsUrl(getRemoteDesktopBrowserWsUrl(clientId), id),
+          getBrowserWsProtocols(mediaTicket),
+        );
+        mediaWsRef.current = media;
+        media.onopen = () => {
+          if (attemptId === connectAttemptRef.current && mediaWsRef.current === media) {
+            setMediaChannelActive(true);
+          } else {
+            media.close();
+          }
+        };
+        media.onmessage = (event) => {
+          if (attemptId !== connectAttemptRef.current || mediaWsRef.current !== media) return;
+          try {
+            // The dedicated transport must not carry control events.
+            if (JSON.parse(event.data)?.type === "frame") ws.onmessage?.(event);
+          } catch {}
+        };
+        media.onclose = () => {
+          if (attemptId === connectAttemptRef.current && mediaWsRef.current === media) {
+            mediaWsRef.current = null;
+            setMediaChannelActive(false);
+          }
+        };
+        media.onerror = () => {
+          // The server reverts to the original ordered control WebSocket.
+          // Failure of this optional socket must not tear down a valid session.
+          if (mediaWsRef.current === media) {
+            try { media.close(); } catch {}
+          }
+        };
+      } catch {
+        if (attemptId === connectAttemptRef.current) setMediaChannelActive(false);
+      }
+    };
+
     ws.onopen = () => {
       reconnectAttemptRef.current = 0;
       setError("");
@@ -491,6 +540,9 @@ export default function RemoteDesktop() {
 
     ws.onclose = (event) => {
       if (attemptId !== connectAttemptRef.current) return;
+      try { mediaWsRef.current?.close(); } catch {}
+      mediaWsRef.current = null;
+      setMediaChannelActive(false);
       setConnected(false);
       pointerMoves.clear();
       setTransportMode(null);
@@ -523,6 +575,7 @@ export default function RemoteDesktop() {
 
       if (msg.type === "hello") {
         setSessionId(msg.session_id);
+        void openMediaLane(msg.session_id);
         setAgentConnected(!!msg.agent_connected);
         const geometry = getRemoteScreenGeometryFromMessage(msg, true);
         if (geometry) {
@@ -573,6 +626,7 @@ export default function RemoteDesktop() {
 
       if (msg.type === "frame") {
         if (typeof msg.data !== "string" || !msg.data) return;
+        if (!frameSequenceRef.current.accept(msg.frame_seq)) return;
         framePainter.push(msg.data);
         if (!firstFrameRef.current) {
           firstFrameRef.current = true;
@@ -798,6 +852,8 @@ export default function RemoteDesktop() {
         window.clearTimeout(hiddenStopTimerRef.current);
         hiddenStopTimerRef.current = null;
       }
+      try { mediaWsRef.current?.close(); } catch {}
+      mediaWsRef.current = null;
       try {
         wsRef.current?.send(JSON.stringify({ type: "stop_stream" }));
         wsRef.current?.close();
@@ -1493,7 +1549,8 @@ export default function RemoteDesktop() {
         </Typography>
         {transportMode && <Chip size="small" color={transportMode === "https_long_poll" ? "warning" : "success"}
           variant="outlined" label={transportMode === "https_long_poll" ? "HTTPS-fallback" : "WebSocket"} />}
-        {roundTripMs !== null && <Tooltip title="Browser → backend → browser. Omfatter ikke inputbehandling eller billedoptagelse på klienten.">
+        {mediaChannelActive && <Chip size="small" color="success" variant="outlined" label="JPEG separat" />}
+        {roundTripMs !== null && <Tooltip title="Browser → backend → browser på kontrolkanalen. Omfatter ikke inputbehandling eller billedoptagelse på klienten.">
           <Chip size="small" variant="outlined" label={`Transport RTT ${roundTripMs} ms`} />
         </Tooltip>}
         {browserFrameTiming?.samples >= 3 && (
