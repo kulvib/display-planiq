@@ -30,7 +30,7 @@ export function createRemoteDesktopTiming({ now, sampleLimit = 32 }) {
   function percentile(values, p) {
     if (!values.length) return null;
     const sorted = [...values].sort((a, b) => a - b);
-    return Math.round(sorted[Math.floor((sorted.length - 1) * p)] * 10) / 10;
+    return Math.round(sorted[Math.max(0, Math.ceil(sorted.length * p) - 1)] * 10) / 10;
   }
 
   return {
