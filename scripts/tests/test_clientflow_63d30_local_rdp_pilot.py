@@ -395,3 +395,68 @@ def test_auth_probe_does_not_attempt_connection_without_test_packages(monkeypatc
     monkeypatch.setattr(pilot.subprocess, "run", must_not_run)
     with pytest.raises(RuntimeError, match="freerdp"):
         pilot.auth_probe()
+
+
+def test_bounded_auth_exercise_starts_authenticates_and_always_stops(
+    monkeypatch, capsys,
+):
+    source_path = Path(pilot.__file__).resolve()
+    monkeypatch.setattr(pilot, "STAGED_RUNNER", source_path)
+    monkeypatch.setattr(pilot, "target", lambda: (1000, Path("/tmp")))
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot.shutil, "which", lambda name: "/usr/bin/" + name)
+    current = {"state": None}
+    monkeypatch.setattr(pilot, "state_load", lambda: current["state"])
+    events = []
+    def fake_start():
+        events.append("start")
+        current["state"] = {"phase": "63D-30"}
+    def fake_auth():
+        events.append("auth")
+    def fake_stop():
+        events.append("stop")
+        current["state"] = None
+    monkeypatch.setattr(pilot, "start", fake_start)
+    monkeypatch.setattr(pilot, "auth_probe", fake_auth)
+    monkeypatch.setattr(pilot, "stop", fake_stop)
+    pilot.exercise_auth()
+    assert events == ["start", "auth", "stop"]
+    assert "RDP_AUTH_DRILL_RESULT=PASS" in capsys.readouterr().out
+
+
+def test_bounded_auth_exercise_stops_even_if_authentication_fails(monkeypatch):
+    monkeypatch.setattr(pilot, "STAGED_RUNNER", Path(pilot.__file__).resolve())
+    monkeypatch.setattr(pilot, "target", lambda: (1000, Path("/tmp")))
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot.shutil, "which", lambda name: "/usr/bin/" + name)
+    current = {"state": None}
+    monkeypatch.setattr(pilot, "state_load", lambda: current["state"])
+    events = []
+    def fake_start():
+        events.append("start")
+        current["state"] = {"phase": "63D-30"}
+    def fake_auth():
+        events.append("auth-failed")
+        raise RuntimeError("FreeRDP authentication rejected")
+    def fake_stop():
+        events.append("stop")
+        current["state"] = None
+    monkeypatch.setattr(pilot, "start", fake_start)
+    monkeypatch.setattr(pilot, "auth_probe", fake_auth)
+    monkeypatch.setattr(pilot, "stop", fake_stop)
+    with pytest.raises(RuntimeError, match="authentication rejected"):
+        pilot.exercise_auth()
+    assert events == ["start", "auth-failed", "stop"]
+
+
+def test_bounded_auth_exercise_does_not_start_without_a_client(monkeypatch):
+    monkeypatch.setattr(pilot, "STAGED_RUNNER", Path(pilot.__file__).resolve())
+    monkeypatch.setattr(pilot, "target", lambda: (1000, Path("/tmp")))
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot, "state_load", lambda: None)
+    monkeypatch.setattr(pilot.shutil, "which", lambda name: None)
+    events = []
+    monkeypatch.setattr(pilot, "start", lambda: events.append("start"))
+    with pytest.raises(RuntimeError, match="FreeRDP/Xvfb"):
+        pilot.exercise_auth()
+    assert events == []
