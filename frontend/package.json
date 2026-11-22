@@ -28,7 +28,7 @@
   "scripts": {
     "dev": "vite",
     "start": "vite",
-    "build": "vite build && node scripts/checkBundleBudget.mjs --dist dist && node scripts/writeReleaseMetadata.mjs --product \"PlanIQ Display\" --output dist/release.json",
+    "build": "node scripts/checkNativeRdpWasm.mjs && vite build && node scripts/checkBundleBudget.mjs --dist dist && node scripts/writeReleaseMetadata.mjs --product \"PlanIQ Display\" --output dist/release.json",
     "preview": "vite preview",
     "test:api-error": "node --test tests/apiError.test.mjs",
     "test:calendar-auth-client": "node --test tests/calendarAuthClient.test.mjs",

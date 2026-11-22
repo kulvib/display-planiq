@@ -215,7 +215,8 @@ services:
 
       - path: /*
         name: X-Frame-Options
-        value: DENY
+        # Blocks third-party embedding; the same-origin RDP iframe is allowed.
+        value: SAMEORIGIN
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
@@ -224,7 +225,7 @@ services:
         value: "max-age=31536000; includeSubDomains"
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
       - path: /*
         name: Referrer-Policy
         value: strict-origin-when-cross-origin
@@ -247,6 +248,27 @@ services:
       - path: /*.html
         name: Cache-Control
         value: "no-store, no-cache, must-revalidate, max-age=0"
+
+      # Native RDP is isolated to this page. Never impose COEP on the whole
+      # management portal before verifying unrelated external media.
+      - path: /remote-desktop/*
+        name: Cross-Origin-Embedder-Policy
+        value: require-corp
+      - path: /remote-desktop/*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+
+      # The disposable SDL/WASM iframe must be SAMEORIGIN only, never publicly
+      # embeddable. Both parent and iframe require cross-origin isolation.
+      - path: /native-rdp/*
+        name: Cross-Origin-Embedder-Policy
+        value: require-corp
+      - path: /native-rdp/*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /native-rdp/*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: https:; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'none'; object-src 'none'; upgrade-insecure-requests"
 
     routes:
       - type: rewrite
@@ -284,3 +306,6 @@ services:
         value: "https://api.display.planiq.dk"
       - key: VITE_WS_API_URL
         value: "https://api.display.planiq.dk"
+      # Disabled until the pinned WASM bundle and physical GNOME browser pilot pass.
+      - key: VITE_NATIVE_RDP_PILOT
+        value: "false"
