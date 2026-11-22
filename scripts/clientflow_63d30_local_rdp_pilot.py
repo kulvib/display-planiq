@@ -23,6 +23,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import shlex
 import shutil
 import socket
 import subprocess
@@ -39,6 +40,8 @@ else:
     import clientflow_63d29_persistent_rdp_guard as guard
 
 SCHEMA = "org.gnome.desktop.remote-desktop.rdp"
+# GNOME Keyring session collection: RAM-only and destroyed on session end.
+SESSION_COLLECTION = "/org/freedesktop/secrets/collection/session"
 KIOSK = "clientflow-kiosk"
 STATE_ROOT = Path("/var/lib/clientflow/rdp-pilot-63d30")
 STATE_FILE = STATE_ROOT / "state.json"
@@ -209,6 +212,83 @@ def credentials_empty(uid: int) -> bool:
             return False
     return True
 
+def secret_bus(uid: int, *args: str) -> str:
+    """Call Secret Service through kiosk D-Bus, never expose raw replies/errors."""
+    response = kiosk(uid, "busctl", "--user", *args)
+    if response.returncode != 0:
+        raise RuntimeError("STOP: Secret Service query or operation failed")
+    return response.stdout.strip()
+
+
+def secret_alias(uid: int, name: str) -> str:
+    if name not in {"default", "login"}:
+        raise RuntimeError("STOP: Unexpected Secret Service alias")
+    raw = secret_bus(
+        uid, "call", "org.freedesktop.secrets", "/org/freedesktop/secrets",
+        "org.freedesktop.Secret.Service", "ReadAlias", "s", name,
+    )
+    try:
+        parts = shlex.split(raw)
+    except ValueError as exc:
+        raise RuntimeError("STOP: Unexpected Secret Service alias response") from exc
+    if len(parts) != 2 or parts[0] != "o":
+        raise RuntimeError("STOP: Unexpected Secret Service alias response")
+    if parts[1] not in {"/", SESSION_COLLECTION}:
+        raise RuntimeError("STOP: Unexpected existing Secret Service alias")
+    return parts[1]
+
+
+def session_collection_preflight(uid: int) -> None:
+    """Only accept the one existing unlocked RAM-only GNOME session collection."""
+    raw = secret_bus(
+        uid, "get-property", "org.freedesktop.secrets",
+        "/org/freedesktop/secrets", "org.freedesktop.Secret.Service", "Collections",
+    )
+    try:
+        values = shlex.split(raw)
+    except ValueError as exc:
+        raise RuntimeError("STOP: Unexpected Secret Service collection response") from exc
+    if values != ["ao", "1", SESSION_COLLECTION]:
+        raise RuntimeError("STOP: Only an existing single RAM-only session collection is allowed")
+    locked = secret_bus(
+        uid, "get-property", "org.freedesktop.secrets",
+        SESSION_COLLECTION, "org.freedesktop.Secret.Collection", "Locked",
+    )
+    if locked != "b false":
+        raise RuntimeError("STOP: Session collection is locked or unknown")
+    if secret_alias(uid, "default") != "/" or secret_alias(uid, "login") != "/":
+        raise RuntimeError("STOP: Existing keyring alias cannot be overwritten")
+    print("RAM_ONLY_SESSION_COLLECTION_VERIFIED=True", flush=True)
+
+
+def set_temporary_default_alias(uid: int) -> None:
+    # Called only AFTER the persistent boot firewall and root watchdog are verified.
+    session_collection_preflight(uid)
+    secret_bus(
+        uid, "call", "org.freedesktop.secrets", "/org/freedesktop/secrets",
+        "org.freedesktop.Secret.Service", "SetAlias", "so",
+        "default", SESSION_COLLECTION,
+    )
+    if secret_alias(uid, "default") != SESSION_COLLECTION:
+        raise RuntimeError("STOP: Temporary default alias was not established")
+    print("TEMPORARY_SESSION_ALIAS_ACTIVE=True", flush=True)
+
+
+def clear_temporary_default_alias(uid: int) -> None:
+    # No persistent default keyring ever created. Do not overwrite another alias.
+    current = secret_alias(uid, "default")
+    if current == SESSION_COLLECTION:
+        secret_bus(
+            uid, "call", "org.freedesktop.secrets", "/org/freedesktop/secrets",
+            "org.freedesktop.Secret.Service", "SetAlias", "so", "default", "/",
+        )
+    if secret_alias(uid, "default") != "/":
+        raise RuntimeError("STOP: Temporary alias not cleared; keep firewall")
+    if secret_alias(uid, "login") != "/":
+        raise RuntimeError("STOP: Login keyring alias changed; keep firewall")
+    print("TEMPORARY_SESSION_ALIAS_CLEARED=True", flush=True)
+
+
 def read_baseline(uid: int) -> dict[str, str]:
     result = {key: get_setting(uid, key) for key in BASE_KEYS}
     if result != EXPECTED_BASE:
@@ -373,12 +453,14 @@ def start() -> None:
     if not watchdog_verified():
         raise RuntimeError("STOP: Boot-watchdog ikke aktiv")
     baseline = read_baseline(uid)
+    session_collection_preflight(uid)
     if guard.guard_exists():
         raise RuntimeError("STOP: ukendt eksisterende firewall-guard")
     STATE_ROOT.mkdir(mode=0o700, parents=True, exist_ok=False)
     data = {
         "phase": "63D-30",
         "baseline": baseline,
+        "temporary_session_alias": True,
         "boot_id": boot_id(),
         "deadline_wall": time.time() + MAX_SECONDS,
         "deadline_mono": time.monotonic() + MAX_SECONDS,
@@ -392,6 +474,7 @@ def start() -> None:
         # The timer has been armed before any GNOME mutation.
         if not watchdog_verified():
             raise RuntimeError("STOP: Watchdog ikke aktiv")
+        set_temporary_default_alias(uid)
         cert, key = stage_tls(uid)
         SECRET_ROOT.mkdir(mode=0o700, exist_ok=False)
         username = "cfpilot" + secrets.token_hex(4)
@@ -461,6 +544,8 @@ def stop() -> None:
         set_setting(uid, key, original[key])
     if not credentials_empty(uid):
         raise RuntimeError("STOP: GNOME RDP credentials blev ikke slettet")
+    if data.get("temporary_session_alias") is True:
+        clear_temporary_default_alias(uid)
     guard.ensure_rdp_off(str(uid))
     if guard.guard_exists():
         guard.remove_guard(str(uid))
