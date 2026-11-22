@@ -25,7 +25,7 @@ PILOT_STAGED = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30/clientflow_63d30
 GUARD_SRC = SOURCE_ROOT / "clientflow_63d29_persistent_rdp_guard.py"
 APPROVAL_SRC = SOURCE_ROOT / "clientflow_native_rdp_browser_pilot.py"
 SOURCE_HASHES = {
-    PILOT_SRC: "78972f7c7173a4894abc22d4518b1fc4d3189c76e30dd463715af03ef069",
+    PILOT_SRC: "78972f7c7173a4894abc22d4518b1fc4d3189c76e30dd463715af03ef069af69",
     GUARD_SRC: "709a5d9b1eba3364dfd2ac21f4e24525b0dc3261236456a9127aac7cfd54c000",
     APPROVAL_SRC: "02c63fc10deb3c0329c5309bdcb19a0edf8fa694c1c0045257cd79c304849e7f",
 }
