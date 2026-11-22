@@ -16,6 +16,11 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import errno
+import pty
+import select
+import signal
+import termios
 import hashlib
 import json
 import os
@@ -161,6 +166,93 @@ def kiosk_ok(uid: int, *args: str, input: str | None = None) -> None:
         print("GNOME_USER_FAILED_OPERATION=", label, flush=True)
         print("GNOME_USER_COMMAND_FAILED=True", flush=True)
         raise RuntimeError("STOP: GNOME user operation failed: " + label)
+
+
+def kiosk_set_rdp_credentials_pty(uid: int, username: str, password: str) -> None:
+    """Drive GRD's two separate readline prompts through a private PTY.
+
+    Sending both lines together on a pipe can cause the first buffered
+    GDataInputStream to consume the second line. The PTY feeds one answer
+    only after the relevant prompt. No secret enters argv, env, or logs.
+    """
+    if not re.fullmatch(r"[a-zA-Z0-9]{8,32}", username):
+        raise RuntimeError("STOP: Unsafe generated RDP username")
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{32,80}", password):
+        raise RuntimeError("STOP: Unsafe generated RDP password")
+
+    master, slave = pty.openpty()
+    process = None
+    stage = "PTY_PREPARE"
+    try:
+        attrs = termios.tcgetattr(slave)
+        attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(slave, termios.TCSANOW, attrs)
+        argv = [
+            "runuser", "-u", KIOSK, "--", "env",
+            f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+            "LC_ALL=C", "grdctl", "rdp", "set-credentials",
+        ]
+        process = subprocess.Popen(
+            argv, stdin=slave, stdout=slave, stderr=subprocess.DEVNULL,
+            close_fds=True, start_new_session=True,
+        )
+        os.close(slave)
+        slave = -1
+        stage = "WAIT_USERNAME_PROMPT"
+        buffer = b""
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select(
+                [master], [], [], min(0.5, max(0, deadline - time.monotonic())),
+            )
+            if ready:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError as exc:
+                    if exc.errno == errno.EIO:
+                        chunk = b""
+                    else:
+                        raise
+                if not chunk:
+                    break
+                # The PTY is private. Never print or log its contents.
+                buffer = (buffer + chunk)[-4096:]
+                if stage == "WAIT_USERNAME_PROMPT" and b"Username:" in buffer:
+                    os.write(master, username.encode("ascii") + b"\n")
+                    stage = "WAIT_PASSWORD_PROMPT"
+                    buffer = b""
+                elif stage == "WAIT_PASSWORD_PROMPT" and b"Password:" in buffer:
+                    os.write(master, password.encode("ascii") + b"\n")
+                    stage = "WAIT_CREDENTIAL_STORE"
+                    buffer = b""
+            if process.poll() is not None and not ready:
+                break
+        if stage != "WAIT_CREDENTIAL_STORE":
+            raise RuntimeError("STOP: GNOME credential prompt incomplete")
+        if process.poll() is None:
+            try:
+                process.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("STOP: GNOME credential store timed out") from exc
+        if process.returncode != 0:
+            raise RuntimeError("STOP: GNOME credential store returned failure")
+        print("GNOME_CREDENTIALS_STDIN_PTY=PASS", flush=True)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+        # Only fixed phases are logged; raw PTY output can contain secrets.
+        print("GNOME_USER_FAILED_OPERATION= RDP_SET_CREDENTIALS", flush=True)
+        print("GNOME_CREDENTIAL_PTY_PHASE=", stage, flush=True)
+        raise RuntimeError("STOP: GNOME credential PTY failed") from None
+    finally:
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
+        os.close(master)
+        if slave >= 0:
+            os.close(slave)
 
 
 def get_setting(uid: int, key: str) -> str:
@@ -484,8 +576,7 @@ def start() -> None:
         write_private(SECRET_FILE, username + "\n" + password + "\n")
         kiosk_ok(uid, "grdctl", "rdp", "set-tls-key", str(key))
         kiosk_ok(uid, "grdctl", "rdp", "set-tls-cert", str(cert))
-        kiosk_ok(uid, "grdctl", "rdp", "set-credentials",
-                 input=username + "\n" + password + "\n")
+        kiosk_set_rdp_credentials_pty(uid, username, password)
         # Avoid service moving to another RDP port while only one is tested.
         kiosk_ok(uid, "grdctl", "rdp", "disable-port-negotiation")
         kiosk_ok(uid, "grdctl", "rdp", "disable-view-only")
