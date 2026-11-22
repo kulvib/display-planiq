@@ -31,7 +31,7 @@ def test_readiness_is_read_only_and_fails_on_existing_pilot(monkeypatch, tmp_pat
     (tmp_path / "state").touch()
     with pytest.raises(RuntimeError, match="unclean"):
         probe.readiness()
-    assert event == ["verified", "baseline"]
+    assert event == ["verified", "baseline", "verified"]
 
 
 def test_graphics_rollback_is_always_delegated_to_pinned_core(monkeypatch, tmp_path):
