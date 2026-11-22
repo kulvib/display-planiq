@@ -1,12 +1,8 @@
 name: FreeRDP 3.33.1 browser WASM reproducible build
 
+# Manual rebuild only: verified compiled output is source-locked and checked
+# at EVERY frontend build; avoid 80-minute CMake rebuilds on unrelated PR pushes.
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/freerdp-wasm-pilot.yml"
-      - "frontend/public/native-rdp/viewer.js"
-      - "frontend/public/native-rdp/viewer.html"
-      - "frontend/src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx"
   workflow_dispatch:
 
 permissions:
