@@ -120,3 +120,96 @@ def test_xvfb_status_redacts_untrusted_output(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "63D31_GRAPHICS=PASS" in output
     assert "PASSWORD_DO_NOT_PRINT" not in output
+
+def test_watchdog_lock_collision_retries_only_when_core_is_pristine(
+    monkeypatch, tmp_path, capsys,
+):
+    from types import SimpleNamespace
+    staged = tmp_path / "core.py"
+    staged.write_text("pinned")
+    monkeypatch.setattr(probe, "STAGED", staged)
+    monkeypatch.setattr(probe, "PILOT_SHA", probe.digest(staged))
+    monkeypatch.setattr(probe, "STATE", tmp_path / "state.json")
+    monkeypatch.setattr(probe, "SECRET", tmp_path / "secrets" / "credentials")
+    monkeypatch.setattr(probe, "GUARD_RESIDUALS", (tmp_path / "guard",))
+    monkeypatch.setattr(probe.time, "sleep", lambda amount: None)
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append(args[0][-1])
+        if len(calls) <= 2:
+            return SimpleNamespace(
+                returncode=2,
+                stdout="===== PILOT =====\n"
+                       "PILOT=STOP RuntimeError STOP: Anden pilotoperation kører allerede\n",
+            )
+        return SimpleNamespace(returncode=0, stdout="RDP_FIREWALL_VERIFIED=True\n")
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    assert probe.cmd(staged, "start")
+    assert len(calls) == 3
+    output = capsys.readouterr().out
+    assert output.count("63D31_WATCHDOG_LOCK_RETRY=") == 2
+    assert "RDP_FIREWALL_VERIFIED=True" in output
+
+
+def test_watchdog_collision_never_retries_if_pilot_state_exists(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    staged = tmp_path / "core.py"
+    staged.write_text("pinned")
+    marker = tmp_path / "state.json"
+    marker.write_text("{}")
+    monkeypatch.setattr(probe, "STAGED", staged)
+    monkeypatch.setattr(probe, "PILOT_SHA", probe.digest(staged))
+    monkeypatch.setattr(probe, "STATE", marker)
+    monkeypatch.setattr(probe, "SECRET", tmp_path / "secrets" / "credentials")
+    monkeypatch.setattr(probe, "GUARD_RESIDUALS", (tmp_path / "guard",))
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append(True)
+        return SimpleNamespace(
+            returncode=2,
+            stdout="PILOT=STOP RuntimeError STOP: Anden pilotoperation kører allerede\n",
+        )
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    assert not probe.cmd(staged, "start")
+    assert len(calls) == 1
+
+
+def test_other_start_failures_never_trigger_lock_retry(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    staged = tmp_path / "core.py"
+    staged.write_text("pinned")
+    monkeypatch.setattr(probe, "STAGED", staged)
+    monkeypatch.setattr(probe, "PILOT_SHA", probe.digest(staged))
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append(True)
+        return SimpleNamespace(
+            returncode=2,
+            stdout="PILOT=STOP RuntimeError STOP: GNOME user operation failed\n",
+        )
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    assert not probe.cmd(staged, "start")
+    assert len(calls) == 1
+
+
+def test_lock_collision_retry_is_bounded(monkeypatch, tmp_path, capsys):
+    from types import SimpleNamespace
+    staged = tmp_path / "core.py"
+    staged.write_text("pinned")
+    monkeypatch.setattr(probe, "STAGED", staged)
+    monkeypatch.setattr(probe, "PILOT_SHA", probe.digest(staged))
+    monkeypatch.setattr(probe, "STATE", tmp_path / "state.json")
+    monkeypatch.setattr(probe, "SECRET", tmp_path / "secrets" / "credentials")
+    monkeypatch.setattr(probe, "GUARD_RESIDUALS", (tmp_path / "guard",))
+    monkeypatch.setattr(probe.time, "sleep", lambda amount: None)
+    calls = []
+    def fake_run(*args, **kwargs):
+        calls.append(True)
+        return SimpleNamespace(
+            returncode=2,
+            stdout="PILOT=STOP RuntimeError STOP: Anden pilotoperation kører allerede\n",
+        )
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+    assert not probe.cmd(staged, "start")
+    assert len(calls) == probe.LOCK_RETRIES == 8
+    assert "63D31_LOCK_RETRY_EXHAUSTED=True" in capsys.readouterr().out
