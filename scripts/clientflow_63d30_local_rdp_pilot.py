@@ -23,6 +23,7 @@ from pathlib import Path
 import pwd
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -518,6 +519,74 @@ def probe() -> None:
         raise RuntimeError("STOP: Local RDP X.224 negotiation fejlede")
 
 
+
+def auth_probe() -> None:
+    """Authenticate locally with FreeRDP, without an exposed socket or argv secrets.
+
+    +auth-only performs authentication, NOT a full pixel/input quality test.
+    The test client runs under a disposable virtual X display on this host.
+    """
+    uid, _ = target()
+    data = state_load()
+    if data is None or deadline_expired(data):
+        raise RuntimeError("STOP: Ingen aktiv, ikke-udløbet RDP-pilot")
+    if not watchdog_verified() or not guard.guard_verified():
+        raise RuntimeError("STOP: Root-watchdog eller kernel-firewall ikke verificeret")
+    if get_setting(uid, "enable") != "true" or listeners() != [3389]:
+        raise RuntimeError("STOP: RDP-port og konfiguration ikke verificeret")
+    if SECRET_FILE.is_symlink() or not SECRET_FILE.is_file():
+        raise RuntimeError("STOP: Lokal test-credentialfil mangler/er symlink")
+    st = SECRET_FILE.stat()
+    if st.st_uid != 0 or (st.st_mode & 0o777) != 0o600:
+        raise RuntimeError("STOP: Forkerte root-only credential-rettigheder")
+    credentials = SECRET_FILE.read_text(encoding="utf-8").splitlines()
+    if len(credentials) != 2:
+        raise RuntimeError("STOP: Uventet credential-filformat")
+    username, password = credentials
+    if not re.fullmatch(r"cfpilot[0-9a-f]{8}", username):
+        raise RuntimeError("STOP: Uventet pilotbrugernavn")
+    if len(password) < 40 or any(c in password for c in "\r\n"):
+        raise RuntimeError("STOP: Uventet pilotadgangskode")
+
+    client = shutil.which("xfreerdp") or shutil.which("xfreerdp3")
+    xvfb = shutil.which("xvfb-run")
+    if client is None or xvfb is None:
+        raise RuntimeError("STOP: freerdp-x11 og xvfb skal installeres særskilt")
+    cert = tls_directory(uid) / "tls.crt"
+    if cert.is_symlink() or not cert.is_file():
+        raise RuntimeError("STOP: Midlertidigt TLS-certifikat mangler")
+    # Pin this one-time certificate by DER SHA256. Never use /cert:ignore.
+    # openssl output is DER cert (public), not the private key.
+    result = subprocess.run(
+        ["openssl", "x509", "-in", str(cert), "-outform", "DER"],
+        capture_output=True, timeout=5, check=False,
+    )
+    if result.returncode != 0 or not result.stdout:
+        raise RuntimeError("STOP: TLS-fingerprint kunne ikke beregnes")
+    fingerprint = hashlib.sha256(result.stdout).hexdigest().upper()
+    arguments = [
+        "/v:127.0.0.1:3389", "/u:" + username, "/p:" + password,
+        "+auth-only", "/cert:fingerprint:sha256:" + fingerprint,
+        "/log-level:ERROR",
+    ]
+    # /args-from:stdin accepts exactly one argument per line. The shell,
+    # process table, environment and user-facing output see no credentials.
+    # xvfb-run connects to the virtual display; it does not replace kiosk.
+    response = subprocess.run(
+        [xvfb, "-a", client, "/args-from:stdin"],
+        input="\n".join(arguments) + "\n",
+        capture_output=True, text=True, timeout=25, check=False,
+    )
+    # Do NOT print stdout or stderr; FreeRDP may contain sensitive diagnostics.
+    print("FREERDP_LOCAL_AUTH_ONLY=", "PASS" if response.returncode == 0 else "FAIL")
+    print("TESTED_ENDPOINT=127.0.0.1:3389")
+    print("SECRETS_IN_COMMANDLINE=False")
+    print("SECRETS_PRINTED=False")
+    print("PIXELS_AND_MOUSE_TESTED=False")
+    if response.returncode != 0:
+        raise RuntimeError("STOP: FreeRDP localhost-auth mislykkedes")
+
+
 def status() -> None:
     uid, _ = target()
     data = state_load()
@@ -533,7 +602,7 @@ def status() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="63D-30 local GNOME screen-sharing pilot")
-    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage", "probe"])
+    parser.add_argument("action", choices=["stage", "start", "stop", "tick", "status", "unstage", "probe", "auth-probe"])
     args = parser.parse_args()
     print("===== CLIENTFLOW 63D-30 · LOCAL GNOME RDP PILOT =====", flush=True)
     try:
@@ -548,7 +617,8 @@ def main() -> int:
             {"stage": stage, "start": start, "stop": stop,
              "tick": tick, "status": status,
              "unstage": lambda: unstage(target()[0]),
-             "probe": probe}[args.action]()
+             "probe": probe,
+             "auth-probe": auth_probe}[args.action]()
         return 0
     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print("PILOT=STOP", type(exc).__name__, str(exc), flush=True)
