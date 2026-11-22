@@ -128,6 +128,8 @@ def test_start_arms_and_verifies_firewall_before_any_GNOME_change(monkeypatch, t
     monkeypatch.setattr(pilot, "target", lambda: (1000, tmp_path))
     monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
     monkeypatch.setattr(pilot, "read_baseline", lambda uid: dict(pilot.EXPECTED_BASE))
+    monkeypatch.setattr(pilot, "session_collection_preflight", lambda uid: None)
+    monkeypatch.setattr(pilot, "set_temporary_default_alias", lambda uid: events.append("alias-bound"))
     monkeypatch.setattr(pilot, "boot_id", lambda: "current-boot")
     monkeypatch.setattr(pilot.guard, "guard_exists", lambda: False)
     events = []
@@ -149,9 +151,12 @@ def test_start_arms_and_verifies_firewall_before_any_GNOME_change(monkeypatch, t
     monkeypatch.setattr(pilot, "listeners", lambda: [3389])
     pilot.start()
     assert events[0] == "guard-install"
+    assert events.index("guard-install") < events.index("alias-bound")
+    assert events.index("alias-bound") < events.index("grdctl rdp set-credentials")
     assert events.index("guard-install") < events.index("grdctl rdp set-tls-key")
     assert events.index("grdctl rdp set-credentials") < events.index("grdctl rdp enable")
     assert (state_dir / "state.json").is_file()
+    assert json.loads((state_dir / "state.json").read_text())["temporary_session_alias"] is True
     secret = (secret_dir / "credentials").read_text()
     assert len(secret.splitlines()) == 2
     assert secret.splitlines()[0] not in capsys.readouterr().out
@@ -164,7 +169,7 @@ def test_stop_never_removes_guard_until_rdp_disabled_and_settings_restored(
     state_dir = tmp_path / "pilot"
     state_dir.mkdir()
     marker = state_dir / "state.json"
-    marker.write_text(json.dumps({"phase": "63D-30", "baseline": pilot.EXPECTED_BASE}))
+    marker.write_text(json.dumps({"phase": "63D-30", "baseline": pilot.EXPECTED_BASE, "temporary_session_alias": True}))
     monkeypatch.setattr(pilot, "STATE_ROOT", state_dir)
     monkeypatch.setattr(pilot, "STATE_FILE", marker)
     monkeypatch.setattr(pilot, "SECRET_ROOT", tmp_path / "secrets")
@@ -178,6 +183,7 @@ def test_stop_never_removes_guard_until_rdp_disabled_and_settings_restored(
     monkeypatch.setattr(pilot, "set_setting", lambda uid, key, value:
                         calls.append("restore-" + key))
     monkeypatch.setattr(pilot, "credentials_empty", lambda uid: True)
+    monkeypatch.setattr(pilot, "clear_temporary_default_alias", lambda uid: calls.append("alias-cleared"))
     monkeypatch.setattr(pilot.guard, "ensure_rdp_off",
                         lambda uid: calls.append("verified-off"))
     monkeypatch.setattr(pilot.guard, "guard_exists", lambda: True)
@@ -192,6 +198,8 @@ def test_stop_never_removes_guard_until_rdp_disabled_and_settings_restored(
     ]
     assert calls.index("grdctl rdp clear-credentials") < calls.index("remove-guard")
     assert calls.index("restore-tls-key") < calls.index("remove-guard")
+    assert calls.index("grdctl rdp clear-credentials") < calls.index("alias-cleared")
+    assert calls.index("alias-cleared") < calls.index("remove-guard")
     assert calls.index("verified-off") < calls.index("remove-guard")
     assert calls.index("remove-guard") < calls.index("unstage")
     assert not marker.exists()
@@ -499,3 +507,87 @@ def test_gnome_success_does_not_emit_diagnostic_or_reveal_stdin(monkeypatch, cap
     )
     pilot.kiosk_ok(1000, "grdctl", "rdp", "set-credentials", input=secret)
     assert capsys.readouterr().out == ""
+
+def test_session_collection_preflight_only_accepts_existing_unlocked_ram_keyring(monkeypatch, capsys):
+    path = pilot.SESSION_COLLECTION
+    values = {
+        "Collections": 'ao 1 "' + path + '"',
+        "Locked": "b false",
+    }
+    aliases = {"default": "/", "login": "/"}
+
+    def fake_bus(uid, *args):
+        if args[0] == "get-property":
+            return values[args[-1]]
+        if args[0] == "call" and args[-3] == "ReadAlias":
+            return 'o "' + aliases[args[-1]] + '"'
+        raise AssertionError("Only read calls allowed in preflight")
+
+    monkeypatch.setattr(pilot, "secret_bus", fake_bus)
+    pilot.session_collection_preflight(1000)
+    assert "RAM_ONLY_SESSION_COLLECTION_VERIFIED=True" in capsys.readouterr().out
+    values["Collections"] = 'ao 1 "/org/freedesktop/secrets/collection/other"'
+    with pytest.raises(RuntimeError, match="session collection"):
+        pilot.session_collection_preflight(1000)
+    values["Collections"] = 'ao 1 "' + path + '"'
+    values["Locked"] = "b true"
+    with pytest.raises(RuntimeError, match="locked"):
+        pilot.session_collection_preflight(1000)
+    values["Locked"] = "b false"
+    aliases["default"] = path
+    with pytest.raises(RuntimeError, match="alias"):
+        pilot.session_collection_preflight(1000)
+
+
+def test_temporary_alias_is_set_only_for_verified_session_and_reverted(monkeypatch, capsys):
+    alias = {"default": "/", "login": "/"}
+    calls = []
+    monkeypatch.setattr(pilot, "session_collection_preflight", lambda uid: calls.append("verified"))
+    monkeypatch.setattr(pilot, "secret_alias", lambda uid, name: alias[name])
+
+    def fake_bus(uid, *args):
+        assert args[0] == "call"
+        assert args[-2] == "default"
+        assert args[-1] in {"/", pilot.SESSION_COLLECTION}
+        calls.append("set")
+        alias["default"] = args[-1]
+        return ""
+
+    monkeypatch.setattr(pilot, "secret_bus", fake_bus)
+    pilot.set_temporary_default_alias(1000)
+    assert alias["default"] == pilot.SESSION_COLLECTION
+    pilot.clear_temporary_default_alias(1000)
+    assert alias == {"default": "/", "login": "/"}
+    assert calls == ["verified", "set", "set"]
+    assert "TEMPORARY_SESSION_ALIAS_CLEARED=True" in capsys.readouterr().out
+
+
+def test_clear_alias_rejects_unrelated_default_without_mutation(monkeypatch):
+    monkeypatch.setattr(
+        pilot, "secret_alias",
+        lambda uid, name: "/org/freedesktop/secrets/collection/unrelated",
+    )
+    monkeypatch.setattr(
+        pilot, "secret_bus",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not overwrite")),
+    )
+    with pytest.raises(RuntimeError, match="Unexpected existing"):
+        pilot.clear_temporary_default_alias(1000)
+
+
+def test_session_preflight_failure_must_precede_firewall_or_rdp(monkeypatch, tmp_path):
+    monkeypatch.setattr(pilot, "STAGED_RUNNER", Path(pilot.__file__).resolve())
+    monkeypatch.setattr(pilot, "target", lambda: (1000, tmp_path))
+    monkeypatch.setattr(pilot, "state_load", lambda: None)
+    monkeypatch.setattr(pilot, "watchdog_verified", lambda: True)
+    monkeypatch.setattr(pilot, "read_baseline", lambda uid: dict(pilot.EXPECTED_BASE))
+    monkeypatch.setattr(
+        pilot, "session_collection_preflight",
+        lambda uid: (_ for _ in ()).throw(RuntimeError("STOP: not session collection")),
+    )
+    monkeypatch.setattr(
+        pilot.guard, "install_guard",
+        lambda uid: (_ for _ in ()).throw(AssertionError("firewall must not install")),
+    )
+    with pytest.raises(RuntimeError, match="not session collection"):
+        pilot.start()
