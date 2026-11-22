@@ -312,8 +312,14 @@ export default function RemoteDesktop() {
   const send = useCallback((payload) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-    ws.send(JSON.stringify(payload));
-    return true;
+    try {
+      ws.send(JSON.stringify(payload));
+      return true;
+    } catch {
+      // HTTPS fallback explicitly fails closed on input backpressure.
+      // Do not report a click, key or release as successfully queued.
+      return false;
+    }
   }, []);
 
   // A throttled move must still reach its final position when movement stops.
@@ -1501,6 +1507,7 @@ export default function RemoteDesktop() {
           return stats ? <Typography variant="caption" color="text.secondary">
             HTTPS-inputkø: {stats.pending}{stats.sending ? " + 1 aktiv" : ""}
             {stats.lastSendDurationMs !== null ? ` · sidste send ${stats.lastSendDurationMs} ms` : ""}
+            {stats.lastPollDurationMs !== null ? ` · sidste poll ${stats.lastPollDurationMs} ms` : ""}
             {` · musebevægelser samlet ${stats.replacedMoves}`}
           </Typography> : null;
         })()}
