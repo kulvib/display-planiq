@@ -113,6 +113,10 @@ class BrowserSession:
     pending_frame: Optional[dict[str, Any]] = None
     frame_sender: Optional[asyncio.Task[None]] = None
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # An optional independently authenticated browser JPEG lane. The original
+    # browser socket always owns input, control, and session revocation.
+    media_websocket: Optional[Any] = None
+    frame_sequence: int = 0
 
 
 @dataclass
@@ -362,12 +366,29 @@ async def _send_browser_serialized(browser: BrowserSession, payload: dict[str, A
         await _send_json(browser.websocket, payload)
 
 
+async def _send_browser_frame(browser: BrowserSession, payload: dict[str, Any]) -> None:
+    """Keep JPEG writes off the input/control socket when a media lane exists.
+
+    Legacy clients and HTTPS relays retain the established serialized path.
+    A failed media send immediately falls back to that same path.
+    """
+    media = browser.media_websocket
+    if media is not None:
+        try:
+            await _send_json(media, payload)
+            return
+        except Exception:
+            if browser.media_websocket is media:
+                browser.media_websocket = None
+    await _send_browser_serialized(browser, payload)
+
+
 async def _drain_browser_frames(browser: BrowserSession) -> None:
     try:
         while browser.pending_frame is not None:
             current = browser.pending_frame
             browser.pending_frame = None
-            await _send_browser_serialized(browser, current)
+            await _send_browser_frame(browser, current)
             # Release the event loop so a control event can acquire send_lock.
             await asyncio.sleep(0)
     except asyncio.CancelledError:
@@ -831,6 +852,9 @@ async def _handle_control_agent_message(
                     browser.screen_width = width
                     browser.screen_height = height
         if message_type == "frame":
+            # Monotonic ordering survives control/media lane handover.
+            browser.frame_sequence += 1
+            payload["frame_seq"] = browser.frame_sequence
             # Always send the validated, session-authoritative geometry.
             # setdefault() would retain a malformed agent value (including
             # "invalid") even after the bounded fallback had succeeded.
@@ -1444,6 +1468,78 @@ async def remote_desktop_browser_http_close(client_id: int, relay_id: str, reque
     return {"ok": True}
 
 
+
+def _media_parent_matches(
+    browser: BrowserSession | None, client_id: int, user: User, binding: str | None
+) -> bool:
+    """Bind media to the same logged-in owner, token version and parent session."""
+    return bool(
+        browser is not None
+        and browser.client_id == client_id
+        and user.id is not None
+        and browser.user_id == int(user.id)
+        and browser.user_token_version == int(getattr(user, "token_version", 0) or 0)
+        and binding
+        and browser.auth_session_binding == binding
+    )
+
+
+@router.websocket("/remote-desktop/browser/{client_id}/media/{session_id}/ws")
+async def remote_desktop_browser_media_ws(websocket: WebSocket, client_id: int, session_id: str):
+    """Optional authenticated outbound JPEG lane for one existing RD browser session.
+
+    A fresh one-use browser ticket is required. This endpoint deliberately has
+    no input/control dispatch and creates no independent RD authorization,
+    database activity lease, or browser session.
+    """
+    if not _ws_origin_allowed(websocket):
+        await _close_with_reason(websocket, 4403, "Ugyldig WebSocket Origin")
+        return
+    with Session(engine) as db:
+        user, protocol, binding = authenticate_browser_websocket_with_context(
+            websocket, client_id=client_id, capability="remote_desktop", session=db
+        )
+    if (
+        user is None
+        or not getattr(user, "is_superadmin", False)
+        or user.id is None
+        or not _platform_client_accessible(client_id, user)
+    ):
+        await _close_with_reason(websocket, 4403, "Mediekanalen kræver en gyldig superadmin")
+        return
+
+    async with LOCK:
+        parent = BROWSERS.get(session_id)
+        available = _media_parent_matches(parent, client_id, user, binding) and parent.media_websocket is None
+    if not available:
+        await _close_with_reason(websocket, 4403, "Mediesessionen er ikke tilgængelig")
+        return
+
+    await websocket.accept(subprotocol=protocol)
+    async with LOCK:
+        parent = BROWSERS.get(session_id)
+        if not _media_parent_matches(parent, client_id, user, binding) or parent.media_websocket is not None:
+            attached = False
+        else:
+            parent.media_websocket = websocket
+            attached = True
+    if not attached:
+        await _close_with_reason(websocket, 4403, "Mediesessionen er afbrudt")
+        return
+
+    try:
+        # Read-only from the browser's point of view: any inbound message is
+        # rejected, not forwarded to the privileged client input channel.
+        await websocket.receive_text()
+        await _close_with_reason(websocket, 4400, "Mediekanalen accepterer ikke input")
+    except WebSocketDisconnect:
+        pass
+    finally:
+        async with LOCK:
+            if parent.media_websocket is websocket:
+                parent.media_websocket = None
+
+
 @router.websocket("/remote-desktop/browser/{client_id}/ws")
 async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     if not _ws_origin_allowed(websocket):
@@ -1608,6 +1704,13 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
             )
         async with LOCK:
             BROWSERS.pop(session_id, None)
+        media = browser.media_websocket
+        browser.media_websocket = None
+        if media is not None:
+            try:
+                await media.close(code=1000, reason="parent_session_closed")
+            except Exception:
+                pass
         browser.pending_frame = None
         if browser.frame_sender and not browser.frame_sender.done():
             browser.frame_sender.cancel()
