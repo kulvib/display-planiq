@@ -33,6 +33,7 @@ COLORS = ((219, 39, 55), (31, 192, 108))  # saturated red -> green
 SAMPLE_COUNT = 5
 MIN_MATCHING_SAMPLES = 150
 MAX_WINDOW_SECONDS = 80
+WINDOW_FULLSCREEN = True  # local module default; unprivileged worker overrides it
 
 
 def check(value: bool, message: str) -> None:
