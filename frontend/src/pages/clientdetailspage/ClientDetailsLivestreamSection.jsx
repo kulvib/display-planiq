@@ -1504,7 +1504,7 @@ export default function ClientDetailsLivestreamSection({
               const observedAt = new Date();
               setLastFetched(observedAt);
               setLastSegmentTimestamp(observedAt.toISOString());
-              const measuredLatency = Number(hls.latency);
+              const measuredLatency = typeof hls.latency === "number" ? hls.latency : Number.NaN;
               setLastSegmentLag(Number.isFinite(measuredLatency) && measuredLatency >= 0 ? measuredLatency : null);
               if (hlsBrowserTiming.observe(measuredLatency)) {
                 setHlsLatencyStats(hlsBrowserTiming.snapshot());
