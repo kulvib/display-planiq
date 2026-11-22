@@ -34,13 +34,15 @@
         !/^[A-Za-z0-9_-]{32,256}$/.test(String(data.ticket || "")) ||
         data.subprotocol !== "planiq-ws-ticket" ||
         typeof data.username !== "string" || !data.username || data.username.length > 128 ||
-        typeof data.password !== "string" || !data.password || data.password.length > 512) {
+        typeof data.password !== "string" || !data.password || data.password.length > 512 ||
+        typeof data.fingerprint !== "string" || !/^(?:[0-9a-f]{2}:){31}[0-9a-f]{2}$/.test(data.fingerprint)) {
       error("RDP-login eller sessionsbinding er ugyldig.");
       return;
     }
     update("Starter FreeRDP …");
     let username = data.username;
     let password = data.password;
+    let certFingerprint = data.fingerprint;
     window.Module = {
       canvas: element,
       websocket: {
@@ -52,15 +54,22 @@
       onAbort: () => error("FreeRDP blev afbrudt. Kontrollér GNOME RDP og forbindelsen."),
       onRuntimeInitialized: () => {
         update("Forbinder til GNOME RDP via PlanIQ …");
+        if (typeof window.Module.websocket?.on === "function") {
+          window.Module.websocket.on("open", () => update("Binær RDP-forbindelse etableret · afventer GNOME-billede"));
+          window.Module.websocket.on("close", () => error("RDP-tunnelen blev lukket. Vælg en ny forbindelse."));
+          window.Module.websocket.on("error", () => error("RDP-transportfejl. Kontrollér GNOME og WSS-forbindelsen."));
+        }
         try {
           // GNOME authentication remains inside the end-to-end TLS-protected
           // RDP connection. The Render relay only sees opaque binary data.
           const args = [
             "/v:127.0.0.1:3389", "/u:" + username, "/p:" + password,
-            "/cert:ignore", "/gfx", "/network:lan", "/log-level:ERROR",
+            "/cert:fingerprint:sha256:" + certFingerprint,
+            "/gfx", "/network:lan", "/log-level:ERROR",
           ];
           username = "";
           password = "";
+          certFingerprint = "";
           window.Module.callMain(args);
         } catch {
           error("FreeRDP kunne ikke etablere GNOME RDP-sessionen.");
@@ -70,6 +79,7 @@
     // Zero the transport object after copying into Emscripten configuration.
     data.password = "";
     data.ticket = "";
+    data.fingerprint = "";
     const script = document.createElement("script");
     script.src = "/native-rdp/sdl-freerdp.js";
     script.async = true;

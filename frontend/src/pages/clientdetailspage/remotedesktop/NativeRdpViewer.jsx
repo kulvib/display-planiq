@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
 import { createBrowserWsTicket, getRemoteDesktopBrowserWsUrl } from "../../../api";
+import { normalizeNativeRdpFingerprint } from "./nativeRdpFingerprint";
 
 /**
  * Disposable, same-origin sandbox for the official FreeRDP SDL3/Emscripten client.
@@ -11,6 +12,8 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
   const iframeRef = useRef(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [fingerprint, setFingerprint] = useState("");
+  const normalizedFingerprint = normalizeNativeRdpFingerprint(fingerprint);
   const [boot, setBoot] = useState(null);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("GNOME RDP-pilot er klar til forbindelse.");
@@ -33,7 +36,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
   }, []);
 
   const start = useCallback(async () => {
-    if (!sessionId || !username.trim() || !password || working) return;
+    if (!sessionId || !username.trim() || !password || !normalizedFingerprint || working) return;
     setWorking(true);
     setStatus("Kontrollerer WASM-browsermiljø …");
     try {
@@ -52,7 +55,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
       const tunnelUrl = browserUrl.replace(/\/ws$/, "/native-rdp/" + encodeURIComponent(sessionId) + "/ws");
       setBoot({
         tunnelUrl, ticket: issued.ticket, subprotocol: issued.subprotocol,
-        username: username.trim(), password,
+        username: username.trim(), password, fingerprint: normalizedFingerprint,
       });
       setAttempt((value) => value + 1);
       setPassword("");
@@ -61,7 +64,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
       setStatus(error?.message || "FreeRDP kunne ikke startes.");
       setWorking(false);
     }
-  }, [clientId, sessionId, username, password, working]);
+  }, [clientId, sessionId, username, password, normalizedFingerprint, working]);
 
   const onLoad = useCallback(() => {
     if (!boot || !iframeRef.current?.contentWindow) return;
@@ -73,6 +76,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
       subprotocol: boot.subprotocol,
       username: boot.username,
       password: boot.password,
+      fingerprint: boot.fingerprint,
     }, window.location.origin);
     setBoot(null);
   }, [boot, sessionId]);
@@ -88,7 +92,17 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           og adgangskode indtastes kun i browseren og gemmes ikke i PlanIQ-databasen.
         </Typography>
         {!working && (
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
+          <Stack spacing={1}>
+            <TextField
+              size="small" label="Verificeret SHA-256-fingeraftryk for GNOME RDP-certifikatet"
+              value={fingerprint} onChange={(event) => setFingerprint(event.target.value)}
+              autoComplete="off" placeholder="AA:BB:CC:… (64 hextegn)"
+              error={fingerprint.trim().length > 0 && !normalizedFingerprint}
+              helperText="Hentes fra Viborg1 via en betroet administrationsterminal. Indtast ikke et fingeraftryk fra en ukendt RDP-forbindelse."
+              slotProps={{ htmlInput: { maxLength: 120, spellCheck: "false" } }}
+              sx={{ bgcolor: "white", borderRadius: 1 }}
+            />
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
             <TextField size="small" label="GNOME RDP-brugernavn"
               value={username} onChange={(event) => setUsername(event.target.value)}
               autoComplete="off" slotProps={{ htmlInput: { maxLength: 128 } }}
@@ -96,8 +110,9 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
             <TextField size="small" type="password" label="GNOME RDP-adgangskode"
               value={password} onChange={(event) => setPassword(event.target.value)}
               autoComplete="off" sx={{ bgcolor: "white", borderRadius: 1, flex: 1 }} />
-            <Button variant="contained" disabled={!username.trim() || !password || !sessionId}
+            <Button variant="contained" disabled={!username.trim() || !password || !sessionId || !normalizedFingerprint}
               onClick={start}>Forbind GNOME RDP</Button>
+            </Stack>
           </Stack>
         )}
         <Typography variant="body2" aria-live="polite">{status}</Typography>

@@ -28,6 +28,8 @@ test("same-origin disposable WASM iframe and client side GNOME RDP input", () =>
   assert.match(child, /event\.origin !== window\.location\.origin/);
   assert.match(child, /window\.Module\.callMain\(args\)/);
   assert.match(child, /SharedArrayBuffer/);
+  assert.match(child, /\/cert:fingerprint:sha256:/);
+  assert.doesNotMatch(child, /\/cert:ignore/);
   const executable = child.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   assert.doesNotMatch(executable, /fetch\(|localStorage|document\.cookie/);
 });

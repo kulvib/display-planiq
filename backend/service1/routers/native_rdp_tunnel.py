@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 MAX_BINARY_PACKET = 64 * 1024
 MAX_TUNNELS = 128
+VIBORG1_PILOT_CLIENT_ID = 3  # Fail closed for all other clients until fleet approval.
 MAX_TUNNEL_LIFETIME = 60 * 60
 CHECK_INTERVAL = 15.0
 OPEN_TIMEOUT = 12.0
@@ -153,6 +154,9 @@ async def _cleanup(tunnel: NativeRdpTunnel) -> None:
 
 @router.websocket("/remote-desktop/browser/{client_id}/native-rdp/{session_id}/ws")
 async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) -> None:
+    if client_id != VIBORG1_PILOT_CLIENT_ID:
+        await _reject(ws, "GNOME RDP-piloten gælder kun Viborg1", 4403)
+        return
     if not _ws_origin_allowed(ws):
         await _reject(ws, "Ugyldig Origin")
         return
@@ -217,6 +221,9 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
 
 @router.websocket("/remote-desktop-agent/clients/{client_id}/native-rdp/{session_id}/{tunnel_id}/ws")
 async def native_rdp_agent_ws(ws: WebSocket, client_id: int, session_id: str, tunnel_id: str) -> None:
+    if client_id != VIBORG1_PILOT_CLIENT_ID:
+        await _reject(ws, "GNOME RDP-piloten gælder kun Viborg1", 4403)
+        return
     try:
         token = _extract_agent_bearer(ws)
         with Session(engine) as db:

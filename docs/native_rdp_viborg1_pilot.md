@@ -17,8 +17,8 @@ The browser uses a disposable same-origin iframe running the official SDL3
 FreeRDP 3.33.1 Emscripten build. WebAssembly output is intentionally NOT
 pretended to exist in the repository: the source-pinned GitHub workflow builds
 and publishes a reviewable artifact. The iframe's credential fields are never
-posted to the PlanIQ API. TLS trust is NOT pinned in the current pilot
-("/cert:ignore") and therefore MUST be strengthened before production.
+posted to the PlanIQ API. A trusted GNOME TLS SHA256 fingerprint is required
+before the WASM client can connect; /cert:ignore is explicitly forbidden.
 
 The browser's original JPEG/WebSocket + HTTPS-long-poll transport is retained
 as the functional fallback when RDP's WebSocket Upgrade is blocked. This is
@@ -98,10 +98,9 @@ The client never opens an inbound tunnel and Render never exposes RDP.
   it must show the original JPEG desktop, even if slower than native mode.
 - Test 100 **connected idle clients** separately from 100 active RDP viewers;
   memory/CPU/bandwidth envelopes for 100 active streams are not yet proven.
-- Before production: replace /cert:ignore with validated/pinned GNOME RDP
-  TLS fingerprints; integrate a recent step-up gate for native input; build
-  signed/reproducible artifact provenance, review browser codec compatibility,
-  and implement a clean seamless native reconnect strategy.
+- Before production: enforce and test step-up for native input; complete signed
+  artifact provenance, review browser codec compatibility, verify certificate
+  fingerprint collection/rotation and implement seamless native reconnect.
 
 ## Rollback
 
@@ -109,3 +108,28 @@ Disable VITE_NATIVE_RDP_PILOT on frontend. Remove root marker on Viborg1;
 close GNOME sharing and revoke temporary GNOME RDP credentials; retain nft
 firewall until all sockets are closed. Keep JPEG browser streaming and the
 existing control/files channels. Do not merge PR #407 or deploy from draft.
+
+## Security hardening after initial draft
+
+- Native RDP endpoints are hard-gated server-side to Viborg1 client ID 3,
+  not only gated in the React UI.
+- A trusted **SHA-256 certificate fingerprint is mandatory**. The browser
+  passes `/cert:fingerprint:sha256:<colon-separated-hex>` to the official
+  FreeRDP client and never `/cert:ignore`. Collect the fingerprint from the
+  local GNOME RDP certificate through an independently trusted administrative
+  session, not from the intercepted connection being established.
+- The isolated iframe's scoped CSP includes `wasm-unsafe-eval`, required for
+  instantiating the reviewed WebAssembly module without allowing general JS eval.
+- The Emscripten POSIX socket adapter uses `Module.websocket.url` and
+  `Module.websocket.subprotocol`, which are documented socket-proxy settings.
+  The browser requests the ticket with the normal PlanIQ WebSocket subprotocol;
+  the backend relays bytes unchanged to the fixed loopback target.
+
+## Audited local pilot source incorporated
+
+The physically tested, standalone operator-invoked firewall/watchdog,
+GNOME Desktop Sharing and preflight scripts from the accepted 63D-34 pilot
+are imported as UNMODIFIED files into this draft. They are not installed
+into ClientFlow releases automatically and are not executed by CI. The
+6-minute timeout in the old 63D-30 physical runner remains a fail-closed
+safety feature; extending it requires its own operator-reviewed approval.
