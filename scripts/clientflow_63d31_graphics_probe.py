@@ -27,6 +27,12 @@ PREFLIGHT = ROOT / "clientflow_63d30_physical_preflight.py"
 STAGED = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30/clientflow_63d30_local_rdp_pilot.py")
 STATE = Path("/var/lib/clientflow/rdp-pilot-63d30/state.json")
 SECRET = Path("/run/clientflow-rdp-63d30/credentials")
+GUARD_RESIDUALS = (
+    Path("/etc/clientflow/rdp-guard-63d29"),
+    Path("/etc/systemd/system/clientflow-63d29-rdp-guard.service"),
+    Path("/etc/systemd/system/display-manager.service.d/clientflow-63d29-rdp-guard.conf"),
+)
+LOCK_RETRIES = 8  # strictly bounded: at most 3.5 seconds of retry delay
 
 
 def check(ok: bool, message: str) -> None:
@@ -54,12 +60,45 @@ def verify() -> int:
     return pwd.getpwnam("clientflow-kiosk").pw_uid
 
 
+def idle_before_start_retry() -> bool:
+    """Retry *only* an unstarted core command, never an uncertain RDP state."""
+    if (not STAGED.is_file() or STAGED.is_symlink()
+            or digest(STAGED) != PILOT_SHA):
+        return False
+    residuals = (STATE, SECRET, SECRET.parent, *GUARD_RESIDUALS)
+    return not any(path.exists() or path.is_symlink() for path in residuals)
+
+
 def cmd(path: Path, action: str, timeout: int = 120) -> bool:
-    r = subprocess.run([sys.executable, str(path), action], text=True,
-                       capture_output=True, timeout=timeout, check=False)
-    # Only SHA-pinned pilot stdout; suppress subprocess stderr.
-    print(r.stdout, end="", flush=True)
-    return r.returncode == 0
+    # A 10-second watchdog tick can briefly own the core's nonblocking
+    # flock immediately after staging. Bounded reattempt is permissible
+    # ONLY if no state, guard, or secret has been created; never retry a
+    # partially started RDP operation or any non-lock failure.
+    is_start = action == "start" and path == STAGED
+    for attempt in range(LOCK_RETRIES if is_start else 1):
+        r = subprocess.run([sys.executable, str(path), action], text=True,
+                           capture_output=True, timeout=timeout, check=False)
+        if r.returncode == 0:
+            print(r.stdout, end="", flush=True)
+            return True
+        safe_lock_collision = (
+            is_start
+            and r.returncode == 2
+            and "PILOT=STOP RuntimeError STOP: Anden pilotoperation kører allerede"
+            in r.stdout.splitlines()
+        )
+        if not safe_lock_collision:
+            print(r.stdout, end="", flush=True)
+            return False
+        if not idle_before_start_retry():
+            print("63D31_LOCK_RETRY_BLOCKED_BY_STATE=True", flush=True)
+            return False
+        if attempt + 1 >= LOCK_RETRIES:
+            print("63D31_LOCK_RETRY_EXHAUSTED=True", flush=True)
+            return False
+        print("63D31_WATCHDOG_LOCK_RETRY=", attempt + 1, flush=True)
+        time.sleep(0.5)
+    return False
 
 
 def baseline() -> None:
