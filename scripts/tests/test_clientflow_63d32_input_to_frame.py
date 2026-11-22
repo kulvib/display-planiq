@@ -217,11 +217,15 @@ def test_gtk_pipe_accepts_only_fixed_progress_stages():
             b"63D32_GTK_STAGE=LOOP_RUNNING\n"
             b"63D32_GTK_STAGE=PRESENT_CALLED\n"
             b"63D32_GTK_STAGE=MAPPED\n"
-            b"63D32_GTK_STAGE=FRAME_DRAWN\n"
+            b"63D32_GTK_CSS_PROVIDER=PASS\n"
+            b"63D32_GTK_INITIAL_MARKER=RED\n"
+            b"63D32_GTK_STAGE=FRAME_CLOCK_TICK\n"
+            b"63D32_GTK_FRAME_CLOCK=PASS\n"
             b"63D32_WINDOW_READY=PASS\n"
         ))
         status.pump(0.1)
-        assert status.ready and status.stage == "FRAME_DRAWN"
+        assert status.ready and status.stage == "FRAME_CLOCK_TICK"
+        assert status.css_provider and status.initial_marker and status.frame_clock
         os.write(writer, b"63D32_GTK_STAGE=PASSWORD_LEAK\n")
         with pytest.raises(RuntimeError, match="Unexpected GTK status"):
             status.pump(0.1)
@@ -236,8 +240,8 @@ def test_gtk_smoke_without_rdp_always_cleans(monkeypatch):
     monkeypatch.setattr(phase, "verified", lambda: 1001)
     monkeypatch.setattr(phase, "gtk_launch",
                         lambda uid, fullscreen=True: (object(), object()))
-    monkeypatch.setattr(phase, "gtk_wait_draw",
-                        lambda *args, **kwargs: events.append("draw"))
+    monkeypatch.setattr(phase, "gtk_wait_surface",
+                        lambda *args, **kwargs: events.append("surface"))
     monkeypatch.setattr(phase, "terminate_group",
                         lambda proc: events.append("terminated"))
     monkeypatch.setattr(phase.graphics, "baseline",
@@ -246,7 +250,7 @@ def test_gtk_smoke_without_rdp_always_cleans(monkeypatch):
                         lambda *args, **kwargs: (_ for _ in ()).throw(
                             AssertionError("No RDP operations allowed")))
     phase.gtk_smoke()
-    assert events == ["readiness", "draw", "terminated", "postflight"]
+    assert events == ["readiness", "surface", "terminated", "postflight"]
 
 
 def test_gtk_smoke_failure_still_terminates_and_checks_postflight(monkeypatch):
@@ -255,7 +259,7 @@ def test_gtk_smoke_failure_still_terminates_and_checks_postflight(monkeypatch):
     monkeypatch.setattr(phase, "verified", lambda: 1001)
     monkeypatch.setattr(phase, "gtk_launch",
                         lambda uid, fullscreen=True: (object(), object()))
-    monkeypatch.setattr(phase, "gtk_wait_draw",
+    monkeypatch.setattr(phase, "gtk_wait_surface",
                         lambda *args, **kwargs: (_ for _ in ()).throw(
                             RuntimeError("No paint")))
     monkeypatch.setattr(phase, "terminate_group",
@@ -267,7 +271,7 @@ def test_gtk_smoke_failure_still_terminates_and_checks_postflight(monkeypatch):
     assert events == ["terminated", "postflight"]
 
 
-def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
+def test_gtk_wait_surface_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
     class Worker:
         def poll(self):
             return None
@@ -277,9 +281,9 @@ def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
         loop_running = True
         surface_state = "V1R0M0"
         monitors = 1
-        draw_entered = False
-        draw_failed_stage = "NONE"
-        draw_error = "NONE"
+        css_provider = True
+        frame_clock = False
+        initial_marker = True
         active = False
         area_size = "960x540"
         def pump(self, timeout):
@@ -287,7 +291,7 @@ def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
     iterator = iter((0, 16))
     monkeypatch.setattr(phase.time, "monotonic", lambda: next(iterator))
     with pytest.raises(RuntimeError, match="did not render"):
-        phase.gtk_wait_draw(Worker(), Status(), seconds=15)
+        phase.gtk_wait_surface(Worker(), Status(), seconds=15)
     assert "63D32_GTK_LAST_STAGE= PRESENT_CALLED" in capsys.readouterr().out
 
 def test_smoke_worker_is_normal_window_and_remote_is_fullscreen():
@@ -321,39 +325,71 @@ def test_status_pipe_separates_event_loop_from_actual_mapping():
         os.close(reader)
         os.close(writer)
 
-def test_draw_callback_failures_are_allowlisted_not_raw_exception_text():
+def test_native_gtk_css_marker_is_independent_of_python_cairo():
     source = phase.gtk_worker_script(fullscreen=False).decode("utf-8")
-    assert "63D32_GTK_DRAW_ENTER=PASS" in source
-    assert "63D32_GTK_DRAW_FAILED_STAGE=" in source
-    assert "63D32_GTK_DRAW_ERROR=" in source
-    assert "type(error).__name__" in source
-    assert "print(str(error))" not in source
-    assert "queue_draw()" in source
+    assert "Gtk.CssProvider()" in source
+    assert "css.load_from_data(" in source
+    assert "Gtk.StyleContext.add_provider_for_display(" in source
+    assert 'panel.add_css_class("cfpilotred")' in source
+    assert 'panel.add_css_class("cfpilotgreen")' in source
+    assert 'panel.remove_css_class("cfpilotred")' in source
+    assert 'panel.remove_css_class("cfpilotgreen")' in source
+    assert "Gtk.Box(" in source
+    assert "panel.add_tick_callback(frame_tick)" in source
+    assert "63D32_GTK_FRAME_CLOCK=PASS" in source
+    assert "Gtk.DrawingArea" not in source
+    assert "set_draw_func" not in source
+    assert "gi.require_foreign" not in source
+    assert "import cairo" not in source
 
 
-def test_status_pipe_accepts_safe_draw_and_surface_diagnostics():
+def test_status_pipe_accepts_only_fixed_css_and_frame_clock_statuses():
     reader, writer = os.pipe()
     try:
         status = phase.StatusPipe(reader)
         os.write(writer, (
-            b"63D32_GTK_DRAW_ENTER=PASS\n"
-            b"63D32_GTK_DRAW_FAILED_STAGE= CAIRO_FILL\n"
-            b"63D32_GTK_DRAW_ERROR= AttributeError\n"
+            b"63D32_GTK_CSS_PROVIDER=PASS\n"
+            b"63D32_GTK_INITIAL_MARKER=RED\n"
+            b"63D32_GTK_FRAME_CLOCK=PASS\n"
             b"63D32_GTK_ACTIVE= False\n"
             b"63D32_GTK_AREA_SIZE= 960x540\n"
         ))
         status.pump(0.1)
-        assert status.draw_entered is True
-        assert status.draw_failed_stage == "CAIRO_FILL"
-        assert status.draw_error == "AttributeError"
+        assert status.css_provider is True
+        assert status.initial_marker is True
+        assert status.frame_clock is True
         assert status.active is False
         assert status.area_size == "960x540"
-        os.write(writer, b"63D32_GTK_DRAW_ERROR= EMailAddress\n")
+        os.write(writer, b"63D32_GTK_CSS_PROVIDER=MY_SECRET\n")
         with pytest.raises(RuntimeError, match="Unexpected GTK status"):
             status.pump(0.1)
     finally:
         os.close(reader)
         os.close(writer)
+
+
+def test_gtk_surface_needs_css_initial_marker_and_frame_clock(capsys):
+    class Worker:
+        def poll(self):
+            return None
+
+    class Status:
+        ready = True
+        stage = "FRAME_CLOCK_TICK"
+        loop_running = True
+        surface_state = "V1R1M1"
+        monitors = 1
+        css_provider = True
+        frame_clock = True
+        initial_marker = False
+        active = True
+        area_size = "960x540"
+
+    with pytest.raises(RuntimeError, match="CSS surface prerequisites missing"):
+        phase.gtk_wait_surface(Worker(), Status(), seconds=15)
+    Status.initial_marker = True
+    phase.gtk_wait_surface(Worker(), Status(), seconds=15)
+    assert "63D32_GTK_CSS_SURFACE_READY=PASS" in capsys.readouterr().out
 
 
 def test_fullscreen_mode_kept_for_guarded_rdp_exercise():
