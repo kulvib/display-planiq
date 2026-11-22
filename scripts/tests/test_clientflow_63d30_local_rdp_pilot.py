@@ -571,7 +571,7 @@ def test_clear_alias_rejects_unrelated_default_without_mutation(monkeypatch):
         pilot, "secret_bus",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not overwrite")),
     )
-    with pytest.raises(RuntimeError, match="Unexpected existing"):
+    with pytest.raises(RuntimeError, match="Temporary alias not cleared"):
         pilot.clear_temporary_default_alias(1000)
 
 
