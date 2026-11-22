@@ -44,6 +44,7 @@ from .routers import maintenance
 from .routers import operational_incidents
 from .routers.remote_desktop_auth import router as remote_desktop_auth_router
 from .routers.remote_desktop_v2 import router as remote_desktop_v2_router
+from .routers.native_rdp_pilot import router as native_rdp_pilot_router
 from .routers.terminal import agent_router as terminal_agent_router, router as terminal_router
 from .routers.livestream_media import HLS_DIR
 from .livestream_media_capability import verify_livestream_media_capability
@@ -692,6 +693,7 @@ app.include_router(livestream_v2_router, prefix="/api")
 app.include_router(terminal_auth_router,    prefix="/api")
 app.include_router(remote_desktop_auth_router, prefix="/api")
 app.include_router(remote_desktop_v2_router, prefix="/api")
+app.include_router(native_rdp_pilot_router, prefix="/api")
 app.include_router(terminal_router,        prefix="/api")
 app.include_router(terminal_agent_router,  prefix="/api")
 
