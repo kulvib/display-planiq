@@ -102,9 +102,11 @@ def gtk_window() -> None:
           "Window must be a kiosk-user process")
     check(os.environ.get("GDK_BACKEND") == "wayland", "Window backend not Wayland")
     check(Gtk.init_check() and Gdk.Display.get_default() is not None, "GTK init failed")
+    print("63D32_GTK_STAGE=INITIALIZED", flush=True)
 
     window = Gtk.Window(title="ClientFlow local input latency acceptance")
     window.set_decorated(False)
+    print("63D32_GTK_STAGE=WINDOW_CREATED", flush=True)
     area = Gtk.DrawingArea()
     area.set_content_width(960)
     area.set_content_height(540)
@@ -116,6 +118,7 @@ def gtk_window() -> None:
         cr.fill()
         if not state["ready"]:
             state["ready"] = True
+            print("63D32_GTK_STAGE=FRAME_DRAWN", flush=True)
             print("63D32_WINDOW_READY=PASS", flush=True)
     area.set_draw_func(paint)
     gesture = Gtk.GestureClick.new()
@@ -130,8 +133,10 @@ def gtk_window() -> None:
     gesture.connect("pressed", clicked)
     area.add_controller(gesture)
     window.set_child(area)
+    window.connect("map", lambda *_: print("63D32_GTK_STAGE=MAPPED", flush=True))
     window.fullscreen()
     window.present()
+    print("63D32_GTK_STAGE=PRESENT_CALLED", flush=True)
     loop = GLib.MainLoop()
     GLib.timeout_add_seconds(MAX_WINDOW_SECONDS, lambda: (loop.quit(), False)[1])
     loop.run()
@@ -182,6 +187,7 @@ class StatusPipe:
         self.fd = descriptor
         self.pending = b""
         self.ready = False
+        self.stage = "NOT_STARTED"
         self.acks: dict[int, int] = {}
 
     def pump(self, timeout: float = 0.01) -> None:
@@ -196,6 +202,14 @@ class StatusPipe:
             line, self.pending = self.pending.split(b"\n", 1)
             if line == b"63D32_WINDOW_READY=PASS":
                 self.ready = True
+            elif line in (
+                b"63D32_GTK_STAGE=INITIALIZED",
+                b"63D32_GTK_STAGE=WINDOW_CREATED",
+                b"63D32_GTK_STAGE=PRESENT_CALLED",
+                b"63D32_GTK_STAGE=MAPPED",
+                b"63D32_GTK_STAGE=FRAME_DRAWN",
+            ):
+                self.stage = line.split(b"=", 1)[1].decode("ascii")
             elif re.fullmatch(rb"CLICK_ACK_[1-5]=[0-9]{8,25}", line):
                 key, value = line.split(b"=")
                 sequence = int(key.split(b"_")[-1])
@@ -247,6 +261,50 @@ def summarize(ms: list[float], name: str) -> None:
     print(name + "_MAX_MS=", round(max(ms), 1), flush=True)
 
 
+def gtk_launch(uid: int) -> tuple[subprocess.Popen[bytes], StatusPipe]:
+    # Deliver only benign GTK worker source via stdin; the kiosk user never
+    # receives root-only pilot scripts, TLS material or RDP credentials.
+    proc = subprocess.Popen(
+        ["runuser", "-u", "clientflow-kiosk", "--", "env", "-i",
+         *wayland_env(uid), "/usr/bin/python3", "-u", "-"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    check(proc.stdin is not None and proc.stdout is not None,
+          "GTK worker channels unavailable")
+    proc.stdin.write(gtk_worker_script())
+    proc.stdin.close()
+    return proc, StatusPipe(proc.stdout.fileno())
+
+
+def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
+                  seconds: float = 15) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not status.ready:
+        if proc.poll() is not None:
+            print("63D32_GTK_LAST_STAGE=", status.stage, flush=True)
+            raise RuntimeError("STOP: GTK helper exited before first draw")
+        status.pump(0.2)
+    if not status.ready:
+        print("63D32_GTK_LAST_STAGE=", status.stage, flush=True)
+        raise RuntimeError("STOP: GTK window did not render")
+    print("63D32_GTK_FIRST_DRAW=PASS", flush=True)
+
+
+def gtk_smoke() -> None:
+    # Standalone local GNOME paint check, without staging, firewall or RDP.
+    readiness()
+    uid = verified()
+    worker = None
+    try:
+        worker, status = gtk_launch(uid)
+        gtk_wait_draw(worker, status, seconds=15)
+        print("63D32_GTK_WINDOW_SMOKE=PASS", flush=True)
+    finally:
+        terminate_group(worker)
+        graphics.baseline()
+
+
 def graphic_child() -> None:
     uid = verified()
     active_guard()
@@ -257,24 +315,8 @@ def graphic_child() -> None:
     rd = None
     x = None
     try:
-        window = subprocess.Popen(
-            ["runuser", "-u", "clientflow-kiosk", "--", "env", "-i",
-             *wayland_env(uid), "/usr/bin/python3", "-"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, start_new_session=True,
-        )
-        check(window.stdin is not None and window.stdout is not None,
-              "GTK worker channels unavailable")
-        # The kiosk account cannot and must not read the root-only source
-        # directory. The non-secret GTK helper is streamed via stdin.
-        window.stdin.write(gtk_worker_script())
-        window.stdin.close()
-        status = StatusPipe(window.stdout.fileno())
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and not status.ready:
-            check(window.poll() is None, "GTK window exited before ready")
-            status.pump(0.2)
-        check(status.ready, "GTK window did not render")
+        window, status = gtk_launch(uid)
+        gtk_wait_draw(window, status, seconds=15)
 
         check(graphics.SECRET.is_file() and not graphics.SECRET.is_symlink(),
               "Pilot credentials missing")
@@ -369,7 +411,7 @@ PRINT_PREFIXES = (
     "63D32_VISIBLE_REMOTE_FRAMES=", "63D32_INPUT_TO_GTK_",
     "63D32_INPUT_TO_FREERDP_PIXEL_", "63D32_FRONTEND_RELAY=",
     "63D32_LIVESTREAM_HLS=", "63D32_SCREENSHOTS_SAVED=",
-    "63D32_REAL_INPUT_AND_VISIBLE_FRAMES=", "63D32=STOP",
+    "63D32_REAL_INPUT_AND_VISIBLE_FRAMES=", "63D32_GTK_LAST_STAGE=", "63D32=STOP",
 )
 
 
@@ -426,10 +468,13 @@ def exercise() -> None:
 def main() -> int:
     try:
         check(len(sys.argv) == 2 and sys.argv[1] in
-              ("readiness", "exercise", "child", "window"), "Unknown action")
+              ("readiness", "gtk-smoke", "exercise", "child", "window"),
+              "Unknown action")
         action = sys.argv[1]
         if action == "readiness":
             readiness()
+        elif action == "gtk-smoke":
+            gtk_smoke()
         elif action == "exercise":
             exercise()
         elif action == "child":
