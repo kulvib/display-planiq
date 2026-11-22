@@ -196,6 +196,10 @@ def test_gtk_worker_script_contains_only_unprivileged_window_code():
     assert "Gtk.GestureClick.new()" in code
     assert "gtk_window()" in code
     assert "from gi.repository import Gdk, GLib, Gtk" in code
+    assert "Gtk.ApplicationWindow(" in code
+    assert "app.run([])" in code
+    assert "GLib.MainLoop()" not in code
+    assert "63D32_GTK_STAGE=LOOP_RUNNING" in code
     assert "from clientflow_63d30_local_rdp_pilot" not in code
     assert "RDP_LOCAL_PORT" not in code
     assert "SECRET.read_text" not in code
@@ -207,7 +211,10 @@ def test_gtk_pipe_accepts_only_fixed_progress_stages():
         status = phase.StatusPipe(reader)
         os.write(writer, (
             b"63D32_GTK_STAGE=INITIALIZED\n"
+            b"63D32_GTK_STAGE=APPLICATION_RUN\n"
+            b"63D32_GTK_STAGE=APPLICATION_ACTIVATED\n"
             b"63D32_GTK_STAGE=WINDOW_CREATED\n"
+            b"63D32_GTK_STAGE=LOOP_RUNNING\n"
             b"63D32_GTK_STAGE=PRESENT_CALLED\n"
             b"63D32_GTK_STAGE=MAPPED\n"
             b"63D32_GTK_STAGE=FRAME_DRAWN\n"
