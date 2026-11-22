@@ -217,3 +217,88 @@ test("63D-8 HTTPS input diagnostics are local and preserve button/key order", as
   releasePoll({ messages: [], closed: true });
   await tick();
 });
+
+test("63D-33 HTTPS input queue closes instead of dropping releases when saturated", async () => {
+  let releaseFirst;
+  const first = new Promise((resolve) => { releaseFirst = resolve; });
+  let releasePoll;
+  const poll = new Promise((resolve) => { releasePoll = resolve; });
+  const sent = [];
+  let closed = 0;
+  const socket = createHttpRelaySocket({
+    relayId: "rd-bounded",
+    sendPayload: async (payload) => {
+      sent.push(payload);
+      if (sent.length === 1) await first;
+    },
+    pollMessages: async () => poll,
+    closeRelay: async () => { closed++; },
+  });
+  await tick();
+  socket.send(JSON.stringify({ type: "mouse", action: "down", button: 1 }));
+  // First request is in-flight; all following inputs are preserved in FIFO.
+  for (let i = 0; i < 128; i++) {
+    socket.send(JSON.stringify({ type: "key", key: "x", index: i }));
+  }
+  assert.equal(socket.getDiagnostics().pending, 128);
+  assert.throws(() => socket.send(JSON.stringify({ type: "mouse", action: "up", button: 1 })), /saturated/);
+  await tick();
+  assert.equal(socket.getDiagnostics().overflowClosures, 1);
+  assert.equal(socket.readyState, WebSocket.CLOSED);
+  assert.equal(closed, 1);
+  assert.equal(socket.getDiagnostics().pending, 0);
+  releaseFirst();
+  releasePoll({ messages: [], closed: true });
+  await tick();
+  assert.deepEqual(sent, [{ type: "mouse", action: "down", button: 1 }]);
+});
+
+test("63D-33 HTTPS queue tracks UTF-8 bytes and rejects oversized unicode payload", async () => {
+  let releasePoll;
+  const poll = new Promise((resolve) => { releasePoll = resolve; });
+  const socket = createHttpRelaySocket({
+    relayId: "rd-byte-limit",
+    sendPayload: async () => {},
+    pollMessages: () => poll,
+    closeRelay: async () => {},
+  });
+  await tick();
+  assert.throws(
+    () => socket.send(JSON.stringify({ type: "key", value: "ø".repeat(270_000) })),
+    /saturated/,
+  );
+  assert.equal(socket.getDiagnostics().pending, 0);
+  assert.equal(socket.getDiagnostics().overflowClosures, 1);
+  releasePoll({ messages: [], closed: true });
+  await tick();
+});
+
+test("63D-33 HTTPS timing diagnostics contain no payload and report poll/send timing", async () => {
+  let releasePoll;
+  const poll = new Promise((resolve) => { releasePoll = resolve; });
+  let now = 0;
+  const old = Date.now;
+  Date.now = () => (now += 9);
+  try {
+    const socket = createHttpRelaySocket({
+      relayId: "rd-timing",
+      sendPayload: async () => {},
+      pollMessages: async () => poll,
+      closeRelay: async () => {},
+    });
+    await tick();
+    socket.send(JSON.stringify({ type: "key", key: "secret-should-not-enter-metrics" }));
+    await tick();
+    releasePoll({ messages: [], closed: true });
+    await tick();
+    const metrics = socket.getDiagnostics();
+    assert.equal(metrics.sentCount, 1);
+    assert.equal(metrics.lastSendDurationMs, 9);
+    assert.equal(metrics.maxSendDurationMs, 9);
+    assert.equal(metrics.maxPollDurationMs, 9);
+    assert.equal(JSON.stringify(metrics).includes("secret-should-not-enter-metrics"), false);
+    assert.equal(metrics.pendingBytes, 0);
+  } finally {
+    Date.now = old;
+  }
+});
