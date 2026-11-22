@@ -1,9 +1,13 @@
 /**
- * Bounded, newest-only JPEG presentation. The renderer owns exactly one
- * waiting frame and never copies multi-megabyte JPEGs through React state.
- * All scheduling is local to the browser; no database or transport polling.
+ * Bounded newest-only JPEG presentation with optional content-free timings.
+ *
+ * At most one JPEG waits for a browser animation frame. Metadata contains
+ * timestamps and discard counts, NEVER image bytes. Optional callbacks are
+ * purely local; transport and authentication remain untouched.
  */
-export function createLatestRemoteFramePainter({ requestFrame, cancelFrame, getImage }) {
+export function createLatestRemoteFramePainter({
+  requestFrame, cancelFrame, getImage, onFrameAssigned = null, now = () => Date.now(),
+}) {
   let pending = null;
   let scheduled = null;
   let disposed = false;
@@ -17,15 +21,24 @@ export function createLatestRemoteFramePainter({ requestFrame, cancelFrame, getI
       if (element && pending !== null) {
         const next = pending;
         pending = null;
-        element.src = next;
+        element.src = "data:image/jpeg;base64," + next.encoded;
+        onFrameAssigned?.({
+          receivedAt: next.receivedAt,
+          replacedWhileWaiting: next.replacedWhileWaiting,
+        });
       }
     });
   }
 
   return {
-    push(encodedJpeg) {
+    push(encodedJpeg, { receivedAt } = {}) {
       if (disposed || typeof encodedJpeg !== "string" || !encodedJpeg) return;
-      pending = `data:image/jpeg;base64,${encodedJpeg}`;
+      const replacedWhileWaiting = pending ? pending.replacedWhileWaiting + 1 : 0;
+      pending = {
+        encoded: encodedJpeg,
+        receivedAt: Number.isFinite(receivedAt) ? receivedAt : now(),
+        replacedWhileWaiting,
+      };
       flush();
     },
     flush,
