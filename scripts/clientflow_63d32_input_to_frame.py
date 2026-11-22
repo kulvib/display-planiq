@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ctypes as ct
 import hashlib
+import inspect
 import os
 from pathlib import Path
 import pwd
@@ -137,6 +138,19 @@ def gtk_window() -> None:
     window.destroy()
 
 
+def gtk_worker_script() -> bytes:
+    """Supply public GTK helper code over stdin; kiosk never reads root script."""
+    bootstrap = (
+        "import os, pwd, time\n"
+        f"COLORS = {COLORS!r}\n"
+        f"MAX_WINDOW_SECONDS = {MAX_WINDOW_SECONDS}\n"
+        "def check(value, message):\n"
+        "    if not value: raise RuntimeError('STOP: ' + message)\n\n"
+    )
+    return (bootstrap + inspect.getsource(gtk_window) +
+            "\ngtk_window()\n").encode("utf-8")
+
+
 def marker_count(values: tuple[int, ...], color: tuple[int, int, int]) -> int:
     # Xvfb depth 24 TrueColor; compare with a tolerance for RDP compression.
     return sum(
@@ -245,11 +259,16 @@ def graphic_child() -> None:
     try:
         window = subprocess.Popen(
             ["runuser", "-u", "clientflow-kiosk", "--", "env", "-i",
-             *wayland_env(uid), "/usr/bin/python3", str(Path(__file__).resolve()), "window"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            start_new_session=True,
+             *wayland_env(uid), "/usr/bin/python3", "-"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, start_new_session=True,
         )
-        check(window.stdout is not None, "GTK status pipe unavailable")
+        check(window.stdin is not None and window.stdout is not None,
+              "GTK worker channels unavailable")
+        # The kiosk account cannot and must not read the root-only source
+        # directory. The non-secret GTK helper is streamed via stdin.
+        window.stdin.write(gtk_worker_script())
+        window.stdin.close()
         status = StatusPipe(window.stdout.fileno())
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline and not status.ready:
