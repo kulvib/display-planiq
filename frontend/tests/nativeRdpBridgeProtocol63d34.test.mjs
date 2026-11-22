@@ -5,9 +5,9 @@ import {
   encodeNativeRdpChunk, decodeNativeRdpChunk, createNativeRdpWindow,
 } from "../src/pages/clientdetailspage/remotedesktop/nativeRdpBridgeProtocol.mjs";
 
-const sessionId = "11111111-1111-4111-8111-111111111111";
-const streamId = "22222222-2222-4222-8222-222222222222";
-const otherId = "33333333-3333-4333-8333-333333333333";
+const sessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const streamId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const otherId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const frame = (seq=0) => encodeNativeRdpChunk({
   sessionId, streamId, seq, bytes:new Uint8Array([0, 255, 117, 0]),
 });

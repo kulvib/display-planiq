@@ -10,9 +10,9 @@ from backend.service1.native_rdp_bridge_protocol import (
     decode_chunk, encode_chunk,
 )
 
-SESSION = str(uuid.UUID("11111111-1111-4111-8111-111111111111"))
-STREAM = str(uuid.UUID("22222222-2222-4222-8222-222222222222"))
-OTHER = str(uuid.UUID("33333333-3333-4333-8333-333333333333"))
+SESSION = str(uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+STREAM = str(uuid.UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
+OTHER = str(uuid.UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"))
 
 
 def frame(seq=0, payload=b"rdp\x00"):
