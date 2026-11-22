@@ -93,7 +93,7 @@ def active_guard() -> None:
 
 
 def gtk_window() -> None:
-    """Execute only as the GNOME kiosk account, with its actual Wayland display."""
+    """Use Gtk.Application's native lifecycle on GNOME Wayland."""
     import gi
     gi.require_version("Gtk", "4.0")
     from gi.repository import Gdk, GLib, Gtk
@@ -104,43 +104,68 @@ def gtk_window() -> None:
     check(Gtk.init_check() and Gdk.Display.get_default() is not None, "GTK init failed")
     print("63D32_GTK_STAGE=INITIALIZED", flush=True)
 
-    window = Gtk.Window(title="ClientFlow local input latency acceptance")
-    window.set_decorated(False)
-    print("63D32_GTK_STAGE=WINDOW_CREATED", flush=True)
-    area = Gtk.DrawingArea()
-    area.set_content_width(960)
-    area.set_content_height(540)
+    # No application ID: avoid D-Bus singleton registration/remote activation
+    # of an unrelated process. The lifetime is owned by this one test worker.
+    app = Gtk.Application()
     state = {"n": 0, "ready": False}
-    def paint(_area, cr, width, height):
-        red, green, blue = COLORS[state["n"] % 2]
-        cr.set_source_rgb(red / 255, green / 255, blue / 255)
-        cr.rectangle(0, 0, width, height)
-        cr.fill()
-        if not state["ready"]:
-            state["ready"] = True
-            print("63D32_GTK_STAGE=FRAME_DRAWN", flush=True)
-            print("63D32_WINDOW_READY=PASS", flush=True)
-    area.set_draw_func(paint)
-    gesture = Gtk.GestureClick.new()
-    gesture.set_button(1)
-    def clicked(_gesture, n_press, x, y):
-        # GNOME may classify rapid consecutive clicks as multi-clicks.
-        # Count each callback once; multi-click counts are not extra events.
-        state["n"] += 1
-        stamp = time.monotonic_ns()
-        area.queue_draw()
-        print(f"CLICK_ACK_{state['n']}={stamp}", flush=True)
-    gesture.connect("pressed", clicked)
-    area.add_controller(gesture)
-    window.set_child(area)
-    window.connect("map", lambda *_: print("63D32_GTK_STAGE=MAPPED", flush=True))
-    window.fullscreen()
-    window.present()
-    print("63D32_GTK_STAGE=PRESENT_CALLED", flush=True)
-    loop = GLib.MainLoop()
-    GLib.timeout_add_seconds(MAX_WINDOW_SECONDS, lambda: (loop.quit(), False)[1])
-    loop.run()
-    window.destroy()
+
+    def activate(application):
+        print("63D32_GTK_STAGE=APPLICATION_ACTIVATED", flush=True)
+        window = Gtk.ApplicationWindow(
+            application=application,
+            title="ClientFlow local input latency acceptance",
+        )
+        window.set_decorated(False)
+        print("63D32_GTK_STAGE=WINDOW_CREATED", flush=True)
+
+        area = Gtk.DrawingArea()
+        area.set_content_width(960)
+        area.set_content_height(540)
+
+        def paint(_area, cr, width, height):
+            red, green, blue = COLORS[state["n"] % 2]
+            cr.set_source_rgb(red / 255, green / 255, blue / 255)
+            cr.rectangle(0, 0, width, height)
+            cr.fill()
+            if not state["ready"]:
+                state["ready"] = True
+                print("63D32_GTK_STAGE=FRAME_DRAWN", flush=True)
+                print("63D32_WINDOW_READY=PASS", flush=True)
+
+        area.set_draw_func(paint)
+        gesture = Gtk.GestureClick.new()
+        gesture.set_button(1)
+
+        def clicked(_gesture, n_press, x, y):
+            # Multi-click press-count is a GTK classification, not extra events.
+            state["n"] += 1
+            stamp = time.monotonic_ns()
+            area.queue_draw()
+            print(f"CLICK_ACK_{state['n']}={stamp}", flush=True)
+
+        gesture.connect("pressed", clicked)
+        area.add_controller(gesture)
+        window.set_child(area)
+        window.connect("map", lambda *_: print("63D32_GTK_STAGE=MAPPED", flush=True))
+        window.fullscreen()
+        window.present()
+        print("63D32_GTK_STAGE=PRESENT_CALLED", flush=True)
+
+        # A heartbeat differentiates application event-loop execution from a
+        # compositor mapping/draw failure, without recording user content.
+        def heartbeat():
+            if not state["ready"]:
+                print("63D32_GTK_STAGE=LOOP_RUNNING", flush=True)
+            return False
+
+        GLib.timeout_add_seconds(2, heartbeat)
+        GLib.timeout_add_seconds(MAX_WINDOW_SECONDS,
+                                 lambda: (application.quit(), False)[1])
+
+    app.connect("activate", activate)
+    print("63D32_GTK_STAGE=APPLICATION_RUN", flush=True)
+    code = app.run([])
+    check(code == 0, "GTK application ended unsuccessfully")
 
 
 def gtk_worker_script() -> bytes:
@@ -204,7 +229,10 @@ class StatusPipe:
                 self.ready = True
             elif line in (
                 b"63D32_GTK_STAGE=INITIALIZED",
+                b"63D32_GTK_STAGE=APPLICATION_RUN",
+                b"63D32_GTK_STAGE=APPLICATION_ACTIVATED",
                 b"63D32_GTK_STAGE=WINDOW_CREATED",
+                b"63D32_GTK_STAGE=LOOP_RUNNING",
                 b"63D32_GTK_STAGE=PRESENT_CALLED",
                 b"63D32_GTK_STAGE=MAPPED",
                 b"63D32_GTK_STAGE=FRAME_DRAWN",
