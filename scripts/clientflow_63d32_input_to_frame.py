@@ -122,8 +122,8 @@ def gtk_window() -> None:
     gesture = Gtk.GestureClick.new()
     gesture.set_button(1)
     def clicked(_gesture, n_press, x, y):
-        if n_press != 1:
-            return
+        # GNOME may classify rapid consecutive clicks as multi-clicks.
+        # Count each callback once; multi-click counts are not extra events.
         state["n"] += 1
         stamp = time.monotonic_ns()
         area.queue_draw()
