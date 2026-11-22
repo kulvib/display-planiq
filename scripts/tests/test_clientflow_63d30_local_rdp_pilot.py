@@ -460,3 +460,42 @@ def test_bounded_auth_exercise_does_not_start_without_a_client(monkeypatch):
     with pytest.raises(RuntimeError, match="FreeRDP/Xvfb"):
         pilot.exercise_auth()
     assert events == []
+
+@pytest.mark.parametrize(("arguments", "label"), [
+    (("grdctl", "rdp", "set-tls-key", "/private/KEY_PATH"), "RDP_SET_TLS_KEY"),
+    (("grdctl", "rdp", "set-tls-cert", "/private/CERT_PATH"), "RDP_SET_TLS_CERT"),
+    (("grdctl", "rdp", "set-credentials"), "RDP_SET_CREDENTIALS"),
+    (("grdctl", "rdp", "disable-port-negotiation"), "RDP_DISABLE_PORT_NEGOTIATION"),
+    (("grdctl", "rdp", "disable-view-only"), "RDP_DISABLE_VIEW_ONLY"),
+    (("grdctl", "rdp", "enable"), "RDP_ENABLE"),
+    (("grdctl", "rdp", "disable"), "RDP_DISABLE"),
+    (("grdctl", "rdp", "clear-credentials"), "RDP_CLEAR_CREDENTIALS"),
+    (("systemctl", "--user", "enable", "--now", "gnome-remote-desktop.service"), "USER_RDP_SERVICE_ENABLE"),
+    (("systemctl", "--user", "disable", "--now", "gnome-remote-desktop.service"), "USER_RDP_SERVICE_DISABLE"),
+    (("gsettings", "set", pilot.SCHEMA, "tls-key", "/private/KEY_PATH"), "GSETTINGS_SET"),
+    (("unrecognized", "/private/KEY_PATH"), "OTHER_USER_COMMAND"),
+])
+def test_gnome_failure_reports_only_safe_operation_not_secrets(monkeypatch, capsys, arguments, label):
+    secret = "very-private-password-and-user"
+    monkeypatch.setattr(
+        pilot, "kiosk",
+        lambda uid, *args, input=None: Result(code=23, stdout=secret),
+    )
+    with pytest.raises(RuntimeError, match="GNOME user operation failed"):
+        pilot.kiosk_ok(1000, *arguments, input=secret + "\\n")
+    output = capsys.readouterr().out
+    assert "GNOME_USER_FAILED_OPERATION= " + label in output
+    assert "GNOME_USER_COMMAND_FAILED=True" in output
+    assert secret not in output
+    assert "KEY_PATH" not in output
+    assert "CERT_PATH" not in output
+
+
+def test_gnome_success_does_not_emit_diagnostic_or_reveal_stdin(monkeypatch, capsys):
+    secret = "never-print-me"
+    monkeypatch.setattr(
+        pilot, "kiosk",
+        lambda uid, *args, input=None: Result(code=0, stdout=secret),
+    )
+    pilot.kiosk_ok(1000, "grdctl", "rdp", "set-credentials", input=secret)
+    assert capsys.readouterr().out == ""
