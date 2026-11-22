@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 import stat
 
@@ -15,11 +16,9 @@ SESSION = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 STREAM = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 
-def test_source_approved_mock_unix_socket_delivers_ordered_rfb_bytes(
-    tmp_path: Path, monkeypatch,
-):
-    async def scenario():
-        root = tmp_path / "native-rfb"
+def test_source_approved_mock_unix_socket_delivers_ordered_rfb_bytes(monkeypatch):
+    async def scenario(scratch: Path):
+        root = scratch / "private"
         root.mkdir(mode=0o700)
         path = gate.socket_path(SESSION, runtime_root=root)
         echoed = asyncio.Queue()
@@ -88,4 +87,6 @@ def test_source_approved_mock_unix_socket_delivers_ordered_rfb_bytes(
             server.close()
             await server.wait_closed()
 
-    asyncio.run(scenario())
+    # Keep actual AF_UNIX pathname short on GitHub hosted Linux runners.
+    with tempfile.TemporaryDirectory(prefix="cf-rfb37-", dir="/tmp") as scratch:
+        asyncio.run(scenario(Path(scratch)))

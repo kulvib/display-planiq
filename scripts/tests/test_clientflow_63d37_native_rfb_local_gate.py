@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import socket
 import stat
+import tempfile
 
 import pytest
 
@@ -16,27 +17,27 @@ OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 
 
 @pytest.fixture
-def local_rfb(tmp_path: Path, monkeypatch):
-    root = tmp_path / "native-rfb"
-    root.mkdir(mode=0o700)
-    path = gate.socket_path(SESSION, runtime_root=root)
-    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(path))
-    server.listen(1)
-    path.chmod(0o600)
-    owner = os.getuid()
-    if owner == 0:
-        # Github's Python runner is normally unprivileged. Be robust when
-        # a developer executes CI in root Docker; only the test fixture gets
-        # fake unprivileged ownership. Never chown a production directory.
-        owner = 65534
-        os.chown(root, owner, owner)
-        os.chown(path, owner, owner)
-        monkeypatch.setattr(gate.os, "geteuid", lambda: owner)
-    try:
-        yield root, path, server, owner
-    finally:
-        server.close()
+def local_rfb(monkeypatch):
+    # AF_UNIX path is limited to ~108 bytes on Linux. GitHub runner's
+    # pytest tmp_path can exceed that even though production /run is short.
+    with tempfile.TemporaryDirectory(prefix="cf-rfb37-", dir="/tmp") as scratch:
+        root = Path(scratch) / "private"
+        root.mkdir(mode=0o700)
+        path = gate.socket_path(SESSION, runtime_root=root)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(path))
+        server.listen(1)
+        path.chmod(0o600)
+        owner = os.getuid()
+        if owner == 0:
+            owner = 65534
+            os.chown(root, owner, owner)
+            os.chown(path, owner, owner)
+            monkeypatch.setattr(gate.os, "geteuid", lambda: owner)
+        try:
+            yield root, path, server, owner
+        finally:
+            server.close()
 
 
 def test_canonical_session_and_fixed_socket_leaf():
