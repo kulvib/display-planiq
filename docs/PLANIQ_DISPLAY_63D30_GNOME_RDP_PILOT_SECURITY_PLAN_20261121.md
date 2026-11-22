@@ -105,3 +105,19 @@ Operatøren kørte den SHA-256-fastlåste preflight fra commit `fa343c5b22627b74
 
 
 **Yderligere source-audit (samme rettelse):** `grdctl status` kan både vise `RDP:` og `VNC:` med hvert deres `Password:`-felt. En global `Password`-søgning kan derfor give falsk `UNKNOWN` eller fejlagtig klassifikation. Begge parserfunktioner læser nu **kun den entydige `RDP:`-sektion**, og accepterer dens præcis ét Username/Password-felt. Kilde: GNOME `src/grd-ctl.c` `print_rdp_status`, `print_vnc_status`; GNU/Debian source 51.0, formatet skal stadig verificeres fysisk på 50.2. Negativtests dækker VNC-siden med en anden Password-tilstand samt dublerede RDP-sektioner. Fysisk preflight viser desuden alene ikke-følsomme `GRDCTL_CREDENTIAL_STATUS_QUERY` og `GRDCTL_RDP_STATUS_BLOCK_PRESENT` – ikke hele output eller fejltekst, som kan indeholde indhold fra user-session. RDP forbliver slukket.
+
+
+## Fysisk GNOME 50.2 preflight – **PASS**, 22. november 2026
+
+Brugeren kørte den SHA-256-pinnede, skrivebeskyttede GNOME preflight på commit `8d1bf90aa30e67d8e1da2d8677dd4cb9e7b881f7`. Fysisk resultat: `PHYSICAL_PREFLIGHT=PASS`, `GRDCTL_CREDENTIAL_STATUS_QUERY=PASS`, `GRDCTL_RDP_STATUS_BLOCK_PRESENT=PASS`, `RDP_CREDENTIALS_EMPTY=PASS`/`EMPTY`. Alle otte baseline-GSettings, GNOME service inactive/disabled, ingen RDP TCP/UDP listeners, nul nft/guard/pilot rest, aktiv display-manager og verificeret 10-sekunders timer syntaks: PASS. `SSH_SERVER_RUNNING=False` og `FREERDP_CLIENT_INSTALLED=False`; dette er nu kendte mangler ved en autentificeret fysisk RDP-klienttest, ikke problemer med GNOME RDP.
+
+**Beslutning:** Gå videre med en **localhost-baseret test på den samme Viborg1-testklient** med Ubuntu 26.04 officielle pakker `freerdp-x11`, `xvfb`, `xauth` (ingen SSH-server, ingen ny Render/Neon-infrastruktur, ingen åbne RDP-porte). Før installation undersøges pakke-kandidater og afhængigheder **skrivebeskyttet** med `scripts/clientflow_63d30_local_client_package_preflight.py` / `apt-get -s` (og kontrollerer ingen `Remv`, ledig disk og fortsat RDP-inaktivitet). Foretag ingen pakke-installation, hvis simulationen viser package-removals eller uventet opgradering af systemkritiske pakker.
+
+Når pakken er efterset/installationen særskilt godkendt, kan ny `auth-probe` bruge FreeRDP `+auth-only`, `/args-from:stdin` (password kun på lukket standard input) og `/cert:fingerprint:sha256:<one-time-cert-hash>`, alene på `127.0.0.1:3389` under Xvfb. `exercise-auth` er en samlet root-staged start/auth/rollback-drill og har `finally` cleanup, så scriptets normale afslutning stopper GNOME **før** firewallregler fjernes. Begge må under ingen omstændigheder aktiveres uden korrekt boot-/watchdog-/negative network isolation fysisk verificeret i samme acceptance window. Ingen credential udsendes til terminalen.
+
+**Afgrænsning:** Auth-only viser alene TLS/NLA/credentials, ikke en ægte remote skærm, tydelig tekst, input-to-frame, mus eller browser HTTPS/443. Det er næste acceptgate; ingen produktionsklarhed kan udledes af en grøn auth-only prøve.
+
+Kilder:
+- https://packages.ubuntu.com/resolute/freerdp-x11
+- https://packages.ubuntu.com/resolute/xvfb
+- https://manpages.ubuntu.com/manpages/resolute/man1/xfreerdp3.1.html (`+auth-only`, `/args-from:stdin`, `/cert:fingerprint`)
