@@ -123,12 +123,44 @@ def test_dpkg_version_parser_ignores_untrusted_text():
         "tigervnc-scraping-server:1.16.0+dfsg-1:install ok installed\n"
         "x11vnc:INJECTED:install ok installed\n"
         "unknown:99:install ok installed\n"
-        "freerdp3-x11:$(whoami):install ok installed\n"
+        "freerdp-x11:$(whoami):install ok installed\n"
     )
     assert preflight.installed_versions(raw) == {
         "x11vnc": "0.9.16+dfsg-1",
         "tigervnc-scraping-server": "1.16.0+dfsg-1",
     }
+
+
+
+def test_viborg1_observed_freerdp_xvfb_xauth_with_debian_epochs():
+    # These versions come from the physical 22 Nov 2026 inventory. This
+    # synthetic regression does not assert what packages exist in the future.
+    raw = (
+        "freerdp-x11:3.32.2+dfsg-0ubuntu0.26.04.1:install ok installed\n"
+        "xvfb:2:21.1.22-1ubuntu1.3:install ok installed\n"
+        "xauth:1:1.1.2-1.1build1:install ok installed\n"
+    )
+    expected = {
+        "freerdp-x11": "3.32.2+dfsg-0ubuntu0.26.04.1",
+        "xvfb": "2:21.1.22-1ubuntu1.3",
+        "xauth": "1:1.1.2-1.1build1",
+    }
+    assert preflight.installed_versions(raw) == expected
+    status = valid(commands=records(pkg=raw, pkg_code=1))
+    assert status["installed_versions"] == expected
+    assert status["activation_permitted"] is False
+    assert status["producer_security_approved"] is False
+
+
+def test_freerdp_distro_name_and_epoch_regression():
+    assert "freerdp-x11" in preflight.PACKAGES
+    assert "freerdp3-x11" not in preflight.PACKAGES
+    assert "xauth" in preflight.PACKAGES
+    assert preflight.installed_versions(
+        "xvfb:2:21.1.22-1ubuntu1.3:install ok installed\n"
+        "xvfb:2:21.1.22-1ubuntu1.3:deinstall ok config-files\n"
+    ) == {"xvfb": "2:21.1.22-1ubuntu1.3"}
+
 
 
 def test_id_and_os_parser_fail_closed_on_bad_content():

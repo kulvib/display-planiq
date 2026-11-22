@@ -26,7 +26,7 @@ BLOCKED_CVES = {
     "x11vnc": "CVE-2026-32853",
     "tigervnc-scraping-server": "CVE-2026-34352",
 }
-PACKAGES = ("x11vnc", "tigervnc-scraping-server", "freerdp3-x11", "xvfb")
+PACKAGES = ("x11vnc", "tigervnc-scraping-server", "freerdp-x11", "xvfb", "xauth")
 _READ_ONLY_COMMANDS = (
     ("dpkg-query", "-W", "-f=${Package}:${Version}:${Status}\\n", *PACKAGES),
     ("ss", "-H", "-lntup"),
@@ -106,10 +106,15 @@ def installed_versions(raw: str) -> dict[str, str]:
     """Only expose simple package versions; never execute or trust output."""
     found = {}
     for line in raw.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) != 3:
+        name, first_colon, tail = line.partition(":")
+        if not first_colon:
             continue
-        name, version, status = parts
+        # Debian package versions may contain an epoch (e.g. Xvfb 2:21).
+        # Preserve it: package name is before the first colon, status after
+        # the last colon. Never trust output from a shell or an unknown pkg.
+        version, last_colon, status = tail.rpartition(":")
+        if not last_colon:
+            continue
         if (
             name in PACKAGES and name not in found
             and re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,100}", version)

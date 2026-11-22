@@ -135,3 +135,23 @@ reuse `st_ino` immediately. The local gate now:
 These are Linux-specific primitives and remain unavailable for
 production activation until the RFB producer CVE and root supervisor gate
 are independently accepted. No physical client operation is performed.
+
+## Actual physical inventory and corrected dpkg parser (22 Nov 2026)
+
+Read-only evidence from Viborg1: GNOME RDP system and kiosk-user services
+both inactive/disabled; `freerdp-x11` installed
+`3.32.2+dfsg-0ubuntu0.26.04.1` and `xfreerdp` present; `xvfb` installed
+`2:21.1.22-1ubuntu1.3`; `xauth` installed `1:1.1.2-1.1build1`;
+`xvfb-run` and `xauth` executables available. Package
+`freerdp3-x11` / executable `xfreerdp3` not present. Neither x11vnc nor
+TigerVNC scraping server installed. Earlier read-only inventory reported
+no external RDP/VNC ports and no currently installed RFB runtime.
+
+The original preflight queried an incorrect package name
+`freerdp3-x11`. Its installed-version parser also split at the wrong
+colon when a Debian version had an epoch such as Xvfb's `2:`.
+Corrected the package inventory to query the physically verified
+`freerdp-x11`, `xvfb`, and `xauth` names and retain Debian epochs.
+Synthetic tests now use precisely these observed version formats.
+The correction does **not** approve a local RFB producer or native
+browser activation, and does not install or change host packages.
