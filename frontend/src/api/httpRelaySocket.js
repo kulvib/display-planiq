@@ -4,6 +4,11 @@
  * This is a fallback only. WSS remains the fast path, but municipal networks
  * that reject WebSocket upgrades retain the same component message handlers.
  */
+// This cap includes only *pending* commands, never an in-flight HTTP request.
+// On overflow, fail closed rather than silently dropping a button release.
+export const MAX_PENDING_HTTPS_SENDS = 128;
+export const MAX_PENDING_HTTPS_BYTES = 512 * 1024;
+
 export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, closeRelay }) {
   let stopped = false;
   // Only adjacent, not-yet-sent mouse movements are replaceable. Keep every
@@ -15,7 +20,13 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
   let sentCount = 0;
   let replacedMoves = 0;
   let lastSendDurationMs = null;
+  let maxSendDurationMs = null;
+  let lastPollDurationMs = null;
+  let maxPollDurationMs = null;
   let maxPending = 0;
+  let pendingBytes = 0;
+  let maxPendingBytes = 0;
+  let overflowClosures = 0;
   const isMove = (value) => value?.type === "mouse" && value.action === "move";
 
   async function drainSends() {
@@ -24,10 +35,12 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
     try {
       while (!stopped && pendingSends.length) {
         const payload = pendingSends.shift();
+        pendingBytes = Math.max(0, pendingBytes - JSON.stringify(payload).length);
         try {
           const started = Date.now();
           await sendPayload(payload);
           lastSendDurationMs = Math.max(0, Date.now() - started);
+          maxSendDurationMs = Math.max(maxSendDurationMs ?? 0, lastSendDurationMs);
           sentCount += 1;
         } catch (error) {
           socket.onerror?.(error);
@@ -59,13 +72,28 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
         throw new Error("HTTPS relay kræver JSON-meddelelser");
       }
       const last = pendingSends[pendingSends.length - 1];
-      if (isMove(payload) && isMove(last) && Boolean(payload.dragging) === Boolean(last.dragging)) {
+      const replace = isMove(payload) && isMove(last)
+        && Boolean(payload.dragging) === Boolean(last.dragging);
+      const lastBytes = replace ? JSON.stringify(last).length : 0;
+      const candidateBytes = pendingBytes - lastBytes + String(raw).length;
+      const candidateLength = pendingSends.length + (replace ? 0 : 1);
+      if (candidateLength > MAX_PENDING_HTTPS_SENDS || candidateBytes > MAX_PENDING_HTTPS_BYTES) {
+        // Never silently discard clicks, releases or keystrokes. A broken
+        // control session must be visibly reconnected and resynchronized.
+        overflowClosures += 1;
+        socket.onerror?.(new Error("HTTPS inputkø er fyldt; forbindelsen lukkes sikkert"));
+        void stop(1013, "HTTPS input queue saturated");
+        throw new Error("HTTPS input queue saturated");
+      }
+      if (replace) {
         pendingSends[pendingSends.length - 1] = payload;
         replacedMoves += 1;
       } else {
         pendingSends.push(payload);
       }
+      pendingBytes = candidateBytes;
       maxPending = Math.max(maxPending, pendingSends.length);
+      maxPendingBytes = Math.max(maxPendingBytes, pendingBytes);
       void drainSends();
     },
     close(code = 1000, reason = "") {
@@ -73,7 +101,9 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
     },
     getDiagnostics() {
       return { transport: "https_long_poll", pending: pendingSends.length,
-        sending, sentCount, replacedMoves, lastSendDurationMs, maxPending };
+        sending, sentCount, replacedMoves, lastSendDurationMs,
+        maxSendDurationMs, lastPollDurationMs, maxPollDurationMs,
+        pendingBytes, maxPendingBytes, overflowClosures, maxPending };
     },
   };
 
@@ -81,6 +111,7 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
     if (stopped) return;
     stopped = true;
     pendingSends.length = 0;
+    pendingBytes = 0;
     socket.readyState = WebSocket.CLOSING;
     try {
       await closeRelay();
@@ -96,7 +127,11 @@ export function createHttpRelaySocket({ relayId, sendPayload, pollMessages, clos
     socket.onopen?.();
     while (!stopped) {
       try {
+        const pollStarted = Date.now();
         const result = await pollMessages();
+        if (stopped) return;
+        lastPollDurationMs = Math.max(0, Date.now() - pollStarted);
+        maxPollDurationMs = Math.max(maxPollDurationMs ?? 0, lastPollDurationMs);
         const messages = Array.isArray(result?.messages) ? result.messages : [];
         for (const raw of messages) {
           let parsed = null;
