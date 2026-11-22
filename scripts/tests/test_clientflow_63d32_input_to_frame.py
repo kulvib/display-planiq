@@ -174,9 +174,9 @@ def test_no_password_in_argv_and_no_persistent_screenshot():
     assert "SCREENSHOTS_SAVED=False" in text
     assert "XTestFakeButtonEvent" in text
     assert "GTK" in text
-    assert "gtk_worker_script()" in text
+    assert "gtk_worker_script(fullscreen=fullscreen)" in text
     assert '"/usr/bin/python3", "-u", "-"' in text
-    assert "proc.stdin.write(gtk_worker_script())" in text
+    assert "proc.stdin.write(gtk_worker_script(fullscreen=fullscreen))" in text
     assert "guard.guard_verified()" in text
     assert "time.monotonic_ns()" in text
     assert "marker_count" in text
@@ -234,7 +234,8 @@ def test_gtk_smoke_without_rdp_always_cleans(monkeypatch):
     events = []
     monkeypatch.setattr(phase, "readiness", lambda: events.append("readiness"))
     monkeypatch.setattr(phase, "verified", lambda: 1001)
-    monkeypatch.setattr(phase, "gtk_launch", lambda uid: (object(), object()))
+    monkeypatch.setattr(phase, "gtk_launch",
+                        lambda uid, fullscreen=True: (object(), object()))
     monkeypatch.setattr(phase, "gtk_wait_draw",
                         lambda *args, **kwargs: events.append("draw"))
     monkeypatch.setattr(phase, "terminate_group",
@@ -252,7 +253,8 @@ def test_gtk_smoke_failure_still_terminates_and_checks_postflight(monkeypatch):
     events = []
     monkeypatch.setattr(phase, "readiness", lambda: None)
     monkeypatch.setattr(phase, "verified", lambda: 1001)
-    monkeypatch.setattr(phase, "gtk_launch", lambda uid: (object(), object()))
+    monkeypatch.setattr(phase, "gtk_launch",
+                        lambda uid, fullscreen=True: (object(), object()))
     monkeypatch.setattr(phase, "gtk_wait_draw",
                         lambda *args, **kwargs: (_ for _ in ()).throw(
                             RuntimeError("No paint")))
@@ -272,6 +274,9 @@ def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
     class Status:
         ready = False
         stage = "PRESENT_CALLED"
+        loop_running = True
+        surface_state = "V1R0M0"
+        monitors = 1
         def pump(self, timeout):
             pass
     iterator = iter((0, 16))
@@ -279,3 +284,34 @@ def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
     with pytest.raises(RuntimeError, match="did not render"):
         phase.gtk_wait_draw(Worker(), Status(), seconds=15)
     assert "63D32_GTK_LAST_STAGE= PRESENT_CALLED" in capsys.readouterr().out
+
+def test_smoke_worker_is_normal_window_and_remote_is_fullscreen():
+    assert "WINDOW_FULLSCREEN = False" in phase.gtk_worker_script(False).decode("utf-8")
+    assert "WINDOW_FULLSCREEN = True" in phase.gtk_worker_script(True).decode("utf-8")
+    text = Path(phase.__file__).read_text()
+    assert "gtk_launch(uid, fullscreen=False)" in text
+    assert "window.set_default_size(960, 540)" in text
+    assert "window.fullscreen()" in text
+
+
+def test_status_pipe_separates_event_loop_from_actual_mapping():
+    reader, writer = os.pipe()
+    try:
+        status = phase.StatusPipe(reader)
+        os.write(writer, (
+            b"63D32_GTK_STAGE=PRESENT_CALLED\n"
+            b"63D32_GTK_STAGE=LOOP_RUNNING\n"
+            b"63D32_GTK_SURFACE_STATE= V1R0M0\n"
+            b"63D32_GDK_MONITORS= 1\n"
+        ))
+        status.pump(0.1)
+        assert status.stage == "PRESENT_CALLED"
+        assert status.loop_running is True
+        assert status.surface_state == "V1R0M0"
+        assert status.monitors == 1
+        os.write(writer, b"63D32_GTK_SURFACE_STATE= SECRET\n")
+        with pytest.raises(RuntimeError, match="Unexpected GTK status"):
+            status.pump(0.1)
+    finally:
+        os.close(reader)
+        os.close(writer)
