@@ -215,7 +215,8 @@ services:
 
       - path: /*
         name: X-Frame-Options
-        value: DENY
+        # Blocks third-party embedding; the same-origin RDP iframe is allowed.
+        value: SAMEORIGIN
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
@@ -224,7 +225,7 @@ services:
         value: "max-age=31536000; includeSubDomains"
       - path: /*
         name: Content-Security-Policy
-        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
       - path: /*
         name: Referrer-Policy
         value: strict-origin-when-cross-origin

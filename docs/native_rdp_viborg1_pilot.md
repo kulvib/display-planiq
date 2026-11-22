@@ -182,3 +182,23 @@ reviewed source must first be deployed to the correct client and Render
 backend, then operator-run on the actual Viborg1 machine. The server,
 agent, frontend, GNOME Desktop Sharing, nftables kernel state and remaining
 six-minute timer must all be accepted before displaying a remote frame.
+
+## Render anti-framing headers and runtime validation
+
+Render static sites can apply overlapping wildcard and path-specific response
+headers. The wildcard X-Frame-Options `DENY` and CSP
+`frame-ancestors 'none'` would block the intentionally embedded same-origin
+FreeRDP iframe EVEN IF the narrower `/native-rdp/*` header says SAMEORIGIN.
+The wildcard now consistently uses `X-Frame-Options: SAMEORIGIN` and
+`frame-ancestors 'self'`: external framing remains prohibited. The
+`/remote-desktop/*` page retains the stricter `frame-ancestors 'none'`,
+while `/native-rdp/*` is permitted to be embedded only by the same origin.
+
+Before starting the physical GNOME pilot, inspect **deployed** HTTP response
+headers for both `/remote-desktop/3` (SPA rewrite) and
+`/native-rdp/viewer.html`: COOP `same-origin`, COEP `require-corp`,
+X-Frame-Options `SAMEORIGIN` on the iframe, and no restrictive
+`frame-ancestors 'none'` on the iframe response. Check that
+`window.crossOriginIsolated === true` in both browser contexts.
+Changes to `render.yaml` do not themselves prove the live Render service's
+headers were updated; Render Dashboard/Blueprint rules must match deployment.

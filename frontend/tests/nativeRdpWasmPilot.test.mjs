@@ -33,3 +33,16 @@ test("same-origin disposable WASM iframe and client side GNOME RDP input", () =>
   const executable = child.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   assert.doesNotMatch(executable, /fetch\(|localStorage|document\.cookie/);
 });
+
+
+test("RDP iframe cannot be blocked by broad clickjacking headers", () => {
+  const render = readFileSync(new URL("../../render.yaml", import.meta.url), "utf8");
+  // The wildcard applies to the entire static site, including /native-rdp/.
+  assert.match(render, /name: X-Frame-Options[\s\S]*?value: SAMEORIGIN/);
+  assert.doesNotMatch(render, /name: X-Frame-Options\s*\n\s*value: DENY/);
+  const wildcardCsp = render.split("name: Content-Security-Policy")[1]?.split("\n")[1] || "";
+  assert.match(wildcardCsp, /frame-ancestors 'self'/);
+  assert.match(render, /path: \/remote-desktop\/\*[\s\S]*?name: Cross-Origin-Embedder-Policy/);
+  assert.match(render, /path: \/native-rdp\/\*[\s\S]*?name: Cross-Origin-Embedder-Policy/);
+  assert.match(render, /name: Content-Security-Policy[\s\S]*?wasm-unsafe-eval/);
+});
