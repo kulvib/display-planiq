@@ -37,7 +37,7 @@ def ensure_native_rdp_guard(*, client_id: int) -> None:
         info = GUARD_MARKER.lstat()
         if (
             not stat.S_ISREG(info.st_mode) or info.st_uid != 0
-            or stat.S_IMODE(info.st_mode) != 0o600
+            or stat.S_IMODE(info.st_mode) != 0o644
             or GUARD_MARKER.read_text(encoding="ascii") != f"{socket.gethostname()}:{client_id}\n"
         ):
             raise NativeRdpNotApproved("GNOME RDP mangler fysisk firewallgodkendelse")

@@ -775,6 +775,7 @@ export default function RemoteDesktop() {
     };
   }, [
     clientId,
+    nativeRequested,
     framePainter,
     markRemoteActivity,
     paintLatestFrame,
