@@ -31,6 +31,7 @@ import {
   closeRemoteDesktopBrowserHttpRelay,
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
+import NativeRdpViewer from "./NativeRdpViewer";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
 import { createRemoteDesktopTiming } from "./remoteDesktopTiming.mjs";
 import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
@@ -196,6 +197,10 @@ export default function RemoteDesktop() {
   const [connected, setConnected] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const nativeRdpPilotEnabled = import.meta.env.VITE_NATIVE_RDP_PILOT === "true" && Number(clientId) === 3;
+  const nativeRequested = nativeRdpPilotEnabled && new URLSearchParams(window.location.search).get("native_rdp") === "1";
+  const [nativeRdpMode, setNativeRdpMode] = useState(nativeRequested);
+  const nativeRdpModeRef = useRef(nativeRequested);
   const [status, setStatus] = useState("Ikke forbundet");
   const [error, setError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
@@ -364,6 +369,7 @@ export default function RemoteDesktop() {
   useEffect(() => () => framePainter.clear(), [framePainter]);
 
   const startStream = useCallback((mode = "active", force = false) => {
+    if (nativeRdpModeRef.current) return false;
     const fps = mode === "deep_idle" ? RD_DEEP_IDLE_FPS : mode === "idle" ? RD_IDLE_FPS : RD_ACTIVE_FPS;
     if (!force && streamModeRef.current === mode) return true;
     const quality = wsRef.current?.transport === "https_long_poll"
@@ -411,6 +417,8 @@ export default function RemoteDesktop() {
     setConnected(false);
     setAgentConnected(false);
     setKeyboardEnabled(false);
+    nativeRdpModeRef.current = nativeRequested;
+    setNativeRdpMode(nativeRequested);
     setHasRemoteFrame(false);
     lastFrameStateChangeRef.current = 0;
     lastFrameGeometryRef.current = null;
@@ -1363,7 +1371,9 @@ export default function RemoteDesktop() {
   }, [canControl, fileOperationBusy, send]);
 
   const requestFullscreen = useCallback(() => {
-    const el = containerRef.current;
+    const el = nativeRdpModeRef.current
+      ? document.querySelector('iframe[title="PlanIQ indbygget GNOME Remote Desktop"]')
+      : containerRef.current;
     if (el?.requestFullscreen) el.requestFullscreen();
   }, []);
 
@@ -1386,7 +1396,18 @@ export default function RemoteDesktop() {
     send(action);
   }, [keyboardEnabled, canControl, keyboardMode, markRemoteActivity, send]);
 
-  const remoteScreenPanel = (
+  const remoteScreenPanel = nativeRdpMode ? (
+    <NativeRdpViewer
+      clientId={clientId}
+      sessionId={sessionId}
+      onFallback={() => {
+        nativeRdpModeRef.current = false;
+        setNativeRdpMode(false);
+        window.history.replaceState({}, "", window.location.pathname);
+        startStream("active", true);
+      }}
+    />
+  ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>
       <Paper
         ref={containerRef}
@@ -1597,6 +1618,29 @@ export default function RemoteDesktop() {
           <Chip label={connected ? "Browser forbundet" : "Browser ikke forbundet"} sx={compactDarkChipSx(connected ? "success" : "neutral")} />
           <Chip label={agentConnected ? "Klient-agent forbundet" : "Venter på klient-agent"} sx={compactDarkChipSx(agentConnected ? "success" : "warning")} />
 
+          {nativeRdpPilotEnabled && (
+            <Button
+              disabled={!connected || !agentConnected || !sessionId}
+              variant={nativeRdpMode ? "contained" : "outlined"}
+              onClick={() => {
+                if (nativeRdpMode) {
+                  nativeRdpModeRef.current = false;
+                  setNativeRdpMode(false);
+                  window.history.replaceState({}, "", window.location.pathname);
+                  startStream("active", true);
+                } else if (!window.crossOriginIsolated) {
+                  window.location.assign(window.location.pathname + "?native_rdp=1");
+                } else {
+                  stopStream();
+                  nativeRdpModeRef.current = true;
+                  setNativeRdpMode(true);
+                  setKeyboardEnabled(false);
+                }
+              }}
+            >
+              {nativeRdpMode ? "GNOME RDP aktiv · skift til JPEG" : "GNOME RDP · ny pilot"}
+            </Button>
+          )}
           <Button onClick={connect} startIcon={<RefreshIcon />} variant="outlined">Genforbind</Button>
           <Button onClick={requestFullscreen} startIcon={<FullscreenIcon />} variant="outlined">Fuld skærm</Button>
           <Button

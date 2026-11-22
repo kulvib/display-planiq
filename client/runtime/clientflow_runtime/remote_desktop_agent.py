@@ -20,6 +20,7 @@ from .config import DomainCredential
 from .constants import Domain
 from .logging_utils import configure_logging
 from .remote_desktop_net import DomainTransport, TransportError, backoff_seconds
+from .native_rdp_forwarder import NativeRdpNotApproved, ensure_native_rdp_guard, forward_native_rdp
 from .remote_desktop_files import FileArea
 from .remote_desktop_input_queue import InputLaneQueue
 from .status import report_status
@@ -90,6 +91,7 @@ class RemoteDesktopAgent:
         self.transport = DomainTransport(self.credential)
         self.file_area = FileArea(FILE_ROOT, FILE_STAGING_ROOT)
         self.stream_tasks: dict[str, asyncio.Task[None]] = {}
+        self.native_rdp_tasks: dict[str, asyncio.Task[None]] = {}
         self.stream_options: dict[str, dict[str, Any]] = {}
         self.last_frame_digest: dict[str, str] = {}
         self.last_frame_sent_at: dict[str, float] = {}
@@ -384,6 +386,48 @@ class RemoteDesktopAgent:
                 pass
         await self._stop_capture_if_idle()
 
+    async def _stop_native_rdp(self, session_id: str) -> None:
+        task = self.native_rdp_tasks.pop(session_id, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _start_native_rdp(self, session_id: str, tunnel_id: str) -> None:
+        # The backend must already have opened the matching control session.
+        uuid.UUID(tunnel_id)
+        ensure_native_rdp_guard(client_id=self.credential.client_id)
+        await self._stop_native_rdp(session_id)
+
+        async def run_tunnel() -> None:
+            try:
+                await forward_native_rdp(
+                    transport=self.transport,
+                    client_id=self.credential.client_id,
+                    session_id=session_id,
+                    tunnel_id=tunnel_id,
+                    ssl_context=self.ssl_context(),
+                )
+            except asyncio.CancelledError:
+                raise
+            except (OSError, RuntimeError, WebSocketException, ValueError) as exc:
+                # RDP/TLS/credentials never appear in logs; use only error class.
+                self.logger.warning(
+                    "native_rdp_pilot_disconnected",
+                    extra={"event": type(exc).__name__},
+                )
+                try:
+                    await self._send_control({
+                        "type": "error", "session_id": session_id,
+                        "error": "GNOME RDP er ikke forbundet. Kontroller lokal firewallgodkendelse og Desktop Sharing.",
+                    })
+                except (OSError, RuntimeError, WebSocketException):
+                    pass
+            finally:
+                if self.native_rdp_tasks.get(session_id) is asyncio.current_task():
+                    self.native_rdp_tasks.pop(session_id, None)
+
+        self.native_rdp_tasks[session_id] = asyncio.create_task(run_tunnel())
+
     async def _handle_control(self, message: dict[str, Any]) -> None:
         message_type = str(message.get("type") or "")
         session_id = self._session_id(message)
@@ -395,12 +439,15 @@ class RemoteDesktopAgent:
         if session_id not in self.control_sessions:
             raise ValueError("Remote Desktop-controlsessionen er ikke åbnet")
         if message_type == "session_close":
+            await self._stop_native_rdp(session_id)
             await self._stop_stream(session_id)
             self.control_sessions.discard(session_id)
             self.input_demand.set()
             await self._release_session_input(session_id)
             await self._close_mutter_if_idle()
             await self._send_control({"type": "session_closed", "session_id": session_id})
+        elif message_type == "native_rdp_open":
+            await self._start_native_rdp(session_id, str(message.get("tunnel_id") or ""))
         elif message_type == "start_stream":
             await self._start_stream(session_id, message)
         elif message_type == "stop_stream":
@@ -782,6 +829,12 @@ class RemoteDesktopAgent:
             finally:
                 if channel == "control":
                     self.control_ws = None
+                    native_tasks = list(self.native_rdp_tasks.values())
+                    for task in native_tasks:
+                        task.cancel()
+                    if native_tasks:
+                        await asyncio.gather(*native_tasks, return_exceptions=True)
+                    self.native_rdp_tasks.clear()
                     tasks = list(self.stream_tasks.values())
                     for task in tasks:
                         task.cancel()
