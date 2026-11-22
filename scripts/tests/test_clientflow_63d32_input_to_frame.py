@@ -277,6 +277,11 @@ def test_gtk_wait_draw_reports_fixed_stage_not_raw_error(monkeypatch, capsys):
         loop_running = True
         surface_state = "V1R0M0"
         monitors = 1
+        draw_entered = False
+        draw_failed_stage = "NONE"
+        draw_error = "NONE"
+        active = False
+        area_size = "960x540"
         def pump(self, timeout):
             pass
     iterator = iter((0, 16))
@@ -315,3 +320,44 @@ def test_status_pipe_separates_event_loop_from_actual_mapping():
     finally:
         os.close(reader)
         os.close(writer)
+
+def test_draw_callback_failures_are_allowlisted_not_raw_exception_text():
+    source = phase.gtk_worker_script(fullscreen=False).decode("utf-8")
+    assert "63D32_GTK_DRAW_ENTER=PASS" in source
+    assert "63D32_GTK_DRAW_FAILED_STAGE=" in source
+    assert "63D32_GTK_DRAW_ERROR=" in source
+    assert "type(error).__name__" in source
+    assert "print(str(error))" not in source
+    assert "queue_draw()" in source
+
+
+def test_status_pipe_accepts_safe_draw_and_surface_diagnostics():
+    reader, writer = os.pipe()
+    try:
+        status = phase.StatusPipe(reader)
+        os.write(writer, (
+            b"63D32_GTK_DRAW_ENTER=PASS\n"
+            b"63D32_GTK_DRAW_FAILED_STAGE= CAIRO_FILL\n"
+            b"63D32_GTK_DRAW_ERROR= AttributeError\n"
+            b"63D32_GTK_ACTIVE= False\n"
+            b"63D32_GTK_AREA_SIZE= 960x540\n"
+        ))
+        status.pump(0.1)
+        assert status.draw_entered is True
+        assert status.draw_failed_stage == "CAIRO_FILL"
+        assert status.draw_error == "AttributeError"
+        assert status.active is False
+        assert status.area_size == "960x540"
+        os.write(writer, b"63D32_GTK_DRAW_ERROR= EMailAddress\n")
+        with pytest.raises(RuntimeError, match="Unexpected GTK status"):
+            status.pump(0.1)
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+def test_fullscreen_mode_kept_for_guarded_rdp_exercise():
+    code = Path(phase.__file__).read_text()
+    assert 'gtk_launch(uid, fullscreen=False)' in code
+    assert 'window, status = gtk_launch(uid)' in code
+    assert "RDP" in code
