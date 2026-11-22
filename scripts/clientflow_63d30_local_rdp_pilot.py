@@ -238,7 +238,7 @@ def kiosk_set_rdp_credentials_pty(uid: int, username: str, password: str) -> Non
         if process.returncode != 0:
             raise RuntimeError("STOP: GNOME credential store returned failure")
         print("GNOME_CREDENTIALS_STDIN_PTY=PASS", flush=True)
-    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
         # Only fixed phases are logged; raw PTY output can contain secrets.
         print("GNOME_USER_FAILED_OPERATION= RDP_SET_CREDENTIALS", flush=True)
         print("GNOME_CREDENTIAL_PTY_PHASE=", stage, flush=True)
