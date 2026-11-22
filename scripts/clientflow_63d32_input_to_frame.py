@@ -94,7 +94,7 @@ def active_guard() -> None:
 
 
 def gtk_window() -> None:
-    """Use Gtk.Application's native lifecycle on GNOME Wayland."""
+    """Use native GTK4 CSS for color changes; no Cairo GI converter needed."""
     import gi
     gi.require_version("Gtk", "4.0")
     from gi.repository import Gdk, GLib, Gtk
@@ -104,13 +104,24 @@ def gtk_window() -> None:
     check(os.environ.get("GDK_BACKEND") == "wayland", "Window backend not Wayland")
     check(Gtk.init_check() and Gdk.Display.get_default() is not None, "GTK init failed")
     print("63D32_GTK_STAGE=INITIALIZED", flush=True)
-    monitors = Gdk.Display.get_default().get_monitors().get_n_items()
+    display = Gdk.Display.get_default()
+    monitors = display.get_monitors().get_n_items()
     print("63D32_GDK_MONITORS=", min(monitors, 64), flush=True)
 
-    # No application ID: avoid D-Bus singleton registration/remote activation
-    # of an unrelated process. The lifetime is owned by this one test worker.
-    app = Gtk.Application()
-    state = {"n": 0, "ready": False, "draw_attempted": False}
+    # Application CSS is rendered by GTK itself without PyGObject's
+    # optional cairo.Context foreign-struct converter.
+    css = Gtk.CssProvider()
+    css.load_from_data(
+        b"box.cfpilotred { background-color: rgb(219, 39, 55); }"
+        b"box.cfpilotgreen { background-color: rgb(31, 192, 108); }"
+    )
+    Gtk.StyleContext.add_provider_for_display(
+        display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    print("63D32_GTK_CSS_PROVIDER=PASS", flush=True)
+
+    app = Gtk.Application()  # no singleton ID or external D-Bus activation
+    state = {"n": 0, "ready": False}
 
     def activate(application):
         print("63D32_GTK_STAGE=APPLICATION_ACTIVATED", flush=True)
@@ -121,52 +132,29 @@ def gtk_window() -> None:
         window.set_decorated(False)
         print("63D32_GTK_STAGE=WINDOW_CREATED", flush=True)
 
-        area = Gtk.DrawingArea()
-        area.set_content_width(960)
-        area.set_content_height(540)
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        panel.set_hexpand(True)
+        panel.set_vexpand(True)
+        panel.add_css_class("cfpilotred")
+        print("63D32_GTK_INITIAL_MARKER=RED", flush=True)
 
-        def paint(_area, cr, width, height):
-            if not state["draw_attempted"]:
-                state["draw_attempted"] = True
-                print("63D32_GTK_DRAW_ENTER=PASS", flush=True)
-            stage = "COLOR_LOOKUP"
-            try:
-                red, green, blue = COLORS[state["n"] % 2]
-                stage = "CAIRO_SOURCE"
-                cr.set_source_rgb(red / 255, green / 255, blue / 255)
-                stage = "CAIRO_RECTANGLE"
-                cr.rectangle(0, 0, width, height)
-                stage = "CAIRO_FILL"
-                cr.fill()
-                if not state["ready"]:
-                    state["ready"] = True
-                    print("63D32_GTK_STAGE=FRAME_DRAWN", flush=True)
-                    print("63D32_WINDOW_READY=PASS", flush=True)
-            except Exception as error:
-                # Never disclose raw GTK exception text or user content.
-                error_name = type(error).__name__
-                if error_name not in {
-                    "AttributeError", "TypeError", "RuntimeError",
-                    "ValueError", "OSError", "OverflowError",
-                }:
-                    error_name = "OTHER"
-                print("63D32_GTK_DRAW_FAILED_STAGE=", stage, flush=True)
-                print("63D32_GTK_DRAW_ERROR=", error_name, flush=True)
-
-        area.set_draw_func(paint)
         gesture = Gtk.GestureClick.new()
         gesture.set_button(1)
 
         def clicked(_gesture, n_press, x, y):
-            # Multi-click press-count is a GTK classification, not extra events.
             state["n"] += 1
+            if state["n"] % 2:
+                panel.remove_css_class("cfpilotred")
+                panel.add_css_class("cfpilotgreen")
+            else:
+                panel.remove_css_class("cfpilotgreen")
+                panel.add_css_class("cfpilotred")
             stamp = time.monotonic_ns()
-            area.queue_draw()
             print(f"CLICK_ACK_{state['n']}={stamp}", flush=True)
 
         gesture.connect("pressed", clicked)
-        area.add_controller(gesture)
-        window.set_child(area)
+        panel.add_controller(gesture)
+        window.set_child(panel)
         window.connect("map", lambda *_: print("63D32_GTK_STAGE=MAPPED", flush=True))
         if WINDOW_FULLSCREEN:
             window.fullscreen()
@@ -175,8 +163,21 @@ def gtk_window() -> None:
         window.present()
         print("63D32_GTK_STAGE=PRESENT_CALLED", flush=True)
 
-        # A heartbeat differentiates application event-loop execution from a
-        # compositor mapping/draw failure, without recording user content.
+        # This is evidence of a GTK frame-clock tick, NOT evidence of
+        # actual rendered remote pixels. The FreeRDP sample proves those.
+        def frame_tick(_widget, _frame_clock):
+            if (not state["ready"] and panel.get_mapped()
+                    and panel.get_allocated_width() > 0
+                    and panel.get_allocated_height() > 0):
+                state["ready"] = True
+                print("63D32_GTK_STAGE=FRAME_CLOCK_TICK", flush=True)
+                print("63D32_GTK_FRAME_CLOCK=PASS", flush=True)
+                print("63D32_WINDOW_READY=PASS", flush=True)
+                return False
+            return not state["ready"]
+
+        panel.add_tick_callback(frame_tick)
+
         def heartbeat():
             if not state["ready"]:
                 print("63D32_GTK_STAGE=LOOP_RUNNING", flush=True)
@@ -187,12 +188,10 @@ def gtk_window() -> None:
                 )
                 print("63D32_GTK_SURFACE_STATE=", flags, flush=True)
                 print("63D32_GTK_ACTIVE=", bool(window.is_active()), flush=True)
-                width = max(0, min(area.get_allocated_width(), 9999))
-                height = max(0, min(area.get_allocated_height(), 9999))
+                width = max(0, min(panel.get_allocated_width(), 9999))
+                height = max(0, min(panel.get_allocated_height(), 9999))
                 print("63D32_GTK_AREA_SIZE=", str(width) + "x" + str(height),
                       flush=True)
-                if width > 0 and height > 0:
-                    area.queue_draw()  # one safe re-render request
             return False
 
         GLib.timeout_add_seconds(2, heartbeat)
@@ -254,9 +253,9 @@ class StatusPipe:
         self.loop_running = False
         self.surface_state = "UNKNOWN"
         self.monitors: int | None = None
-        self.draw_entered = False
-        self.draw_failed_stage = "NONE"
-        self.draw_error = "NONE"
+        self.css_provider = False
+        self.frame_clock = False
+        self.initial_marker = False
         self.active: bool | None = None
         self.area_size = "UNKNOWN"
         self.acks: dict[int, int] = {}
@@ -275,14 +274,12 @@ class StatusPipe:
                 self.ready = True
             elif line == b"63D32_GTK_STAGE=LOOP_RUNNING":
                 self.loop_running = True
-            elif line == b"63D32_GTK_DRAW_ENTER=PASS":
-                self.draw_entered = True
-            elif re.fullmatch(rb"63D32_GTK_DRAW_FAILED_STAGE= "
-                              rb"(COLOR_LOOKUP|CAIRO_SOURCE|CAIRO_RECTANGLE|CAIRO_FILL)", line):
-                self.draw_failed_stage = line.split(b"=", 1)[1].strip().decode("ascii")
-            elif re.fullmatch(rb"63D32_GTK_DRAW_ERROR= "
-                              rb"(AttributeError|TypeError|RuntimeError|ValueError|OSError|OverflowError|OTHER)", line):
-                self.draw_error = line.split(b"=", 1)[1].strip().decode("ascii")
+            elif line == b"63D32_GTK_CSS_PROVIDER=PASS":
+                self.css_provider = True
+            elif line == b"63D32_GTK_FRAME_CLOCK=PASS":
+                self.frame_clock = True
+            elif line == b"63D32_GTK_INITIAL_MARKER=RED":
+                self.initial_marker = True
             elif line in (b"63D32_GTK_ACTIVE= True", b"63D32_GTK_ACTIVE= False"):
                 self.active = line.endswith(b"True")
             elif re.fullmatch(rb"63D32_GTK_AREA_SIZE= [0-9]{1,4}x[0-9]{1,4}", line):
@@ -298,7 +295,7 @@ class StatusPipe:
                 b"63D32_GTK_STAGE=WINDOW_CREATED",
                 b"63D32_GTK_STAGE=PRESENT_CALLED",
                 b"63D32_GTK_STAGE=MAPPED",
-                b"63D32_GTK_STAGE=FRAME_DRAWN",
+                b"63D32_GTK_STAGE=FRAME_CLOCK_TICK",
             ):
                 self.stage = line.split(b"=", 1)[1].decode("ascii")
             elif re.fullmatch(rb"CLICK_ACK_[1-5]=[0-9]{8,25}", line):
@@ -368,7 +365,7 @@ def gtk_launch(uid: int, fullscreen: bool = True) -> tuple[subprocess.Popen[byte
     return proc, StatusPipe(proc.stdout.fileno())
 
 
-def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
+def gtk_wait_surface(proc: subprocess.Popen[bytes], status: StatusPipe,
                   seconds: float = 15) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline and not status.ready:
@@ -377,9 +374,9 @@ def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
             print("63D32_GTK_LOOP_RUNNING=", status.loop_running, flush=True)
             print("63D32_GTK_SURFACE_STATE=", status.surface_state, flush=True)
             print("63D32_GDK_MONITORS=", status.monitors, flush=True)
-            print("63D32_GTK_DRAW_ENTERED=", status.draw_entered, flush=True)
-            print("63D32_GTK_DRAW_FAILED_STAGE=", status.draw_failed_stage, flush=True)
-            print("63D32_GTK_DRAW_ERROR=", status.draw_error, flush=True)
+            print("63D32_GTK_CSS_PROVIDER=", status.css_provider, flush=True)
+            print("63D32_GTK_FRAME_CLOCK=", status.frame_clock, flush=True)
+            print("63D32_GTK_INITIAL_MARKER=", status.initial_marker, flush=True)
             print("63D32_GTK_ACTIVE=", status.active, flush=True)
             print("63D32_GTK_AREA_SIZE=", status.area_size, flush=True)
             raise RuntimeError("STOP: GTK helper exited before first draw")
@@ -389,13 +386,15 @@ def gtk_wait_draw(proc: subprocess.Popen[bytes], status: StatusPipe,
         print("63D32_GTK_LOOP_RUNNING=", status.loop_running, flush=True)
         print("63D32_GTK_SURFACE_STATE=", status.surface_state, flush=True)
         print("63D32_GDK_MONITORS=", status.monitors, flush=True)
-        print("63D32_GTK_DRAW_ENTERED=", status.draw_entered, flush=True)
-        print("63D32_GTK_DRAW_FAILED_STAGE=", status.draw_failed_stage, flush=True)
-        print("63D32_GTK_DRAW_ERROR=", status.draw_error, flush=True)
+        print("63D32_GTK_CSS_PROVIDER=", status.css_provider, flush=True)
+        print("63D32_GTK_FRAME_CLOCK=", status.frame_clock, flush=True)
+        print("63D32_GTK_INITIAL_MARKER=", status.initial_marker, flush=True)
         print("63D32_GTK_ACTIVE=", status.active, flush=True)
         print("63D32_GTK_AREA_SIZE=", status.area_size, flush=True)
         raise RuntimeError("STOP: GTK window did not render")
-    print("63D32_GTK_FIRST_DRAW=PASS", flush=True)
+    check(status.css_provider and status.frame_clock and status.initial_marker,
+          "GTK CSS surface prerequisites missing")
+    print("63D32_GTK_CSS_SURFACE_READY=PASS", flush=True)
 
 
 def gtk_smoke() -> None:
@@ -405,7 +404,7 @@ def gtk_smoke() -> None:
     worker = None
     try:
         worker, status = gtk_launch(uid, fullscreen=False)
-        gtk_wait_draw(worker, status, seconds=15)
+        gtk_wait_surface(worker, status, seconds=15)
         print("63D32_GTK_WINDOW_MODE=NORMAL", flush=True)
         print("63D32_GTK_WINDOW_SMOKE=PASS", flush=True)
     finally:
@@ -424,7 +423,7 @@ def graphic_child() -> None:
     x = None
     try:
         window, status = gtk_launch(uid)
-        gtk_wait_draw(window, status, seconds=15)
+        gtk_wait_surface(window, status, seconds=15)
 
         check(graphics.SECRET.is_file() and not graphics.SECRET.is_symlink(),
               "Pilot credentials missing")
@@ -521,8 +520,8 @@ PRINT_PREFIXES = (
     "63D32_LIVESTREAM_HLS=", "63D32_SCREENSHOTS_SAVED=",
     "63D32_REAL_INPUT_AND_VISIBLE_FRAMES=", "63D32_GTK_LAST_STAGE=",
     "63D32_GTK_LOOP_RUNNING=", "63D32_GTK_SURFACE_STATE=",
-    "63D32_GDK_MONITORS=", "63D32_GTK_DRAW_ENTERED=",
-    "63D32_GTK_DRAW_FAILED_STAGE=", "63D32_GTK_DRAW_ERROR=",
+    "63D32_GDK_MONITORS=", "63D32_GTK_CSS_PROVIDER=",
+    "63D32_GTK_FRAME_CLOCK=", "63D32_GTK_INITIAL_MARKER=",
     "63D32_GTK_ACTIVE=", "63D32_GTK_AREA_SIZE=", "63D32=STOP",
 )
 
