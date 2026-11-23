@@ -1,7 +1,6 @@
 bcb2422592f22e74fe97598ae2b05202340303225fd31d68c820aa048294fa81  .dockerignore
 1dc12f0db255c0d1f0f5d5f00e70023be071d1270a08eae8b5de4b49d858a532  .github/workflows/ci.yml
-530b3c6cba250059970f4a23691c6c4194e8acf48772afec056311c8d2070454  .github/workflows/freerdp-pinned-wasm-chromium.yml
-470d412b8dee8c242b70648b484a9a0d85ce07a58bf301f1029dcb0b3099d3a7  .github/workflows/freerdp-wasm-pilot.yml
+370f41c1d8d8e5e04452c4344e6358f4138144ecc99b58df92bd030098663902  .github/workflows/freerdp-wasm-pilot.yml
 d780695dab777e340203ad2b26f3ab71873e76586690d0aad371d4937acc412c  .github/workflows/python-runtime-input-build.yml
 ec9a4694b1d9361ad673ca96f140f86a2dee41e20434b1f7f9b6fa8a82e19bd9  .github/workflows/release-approve.yml
 4f6373e0ca5303dcf4fd5ce6d7542d39d83a93cf557af32a1cb11af29cae8384  .github/workflows/release-archive-approved.yml

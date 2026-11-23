@@ -114,12 +114,13 @@ jobs:
           name: planiq-freerdp-3.33.1-wasm
           path: ${{ runner.temp }}/verified-native-rdp
 
-      - name: Prove browser startup, real screen and WebSocket Upgrade
+      - name: Prove SDL3 display and real Chromium WebSocket Upgrade
         shell: bash
         env:
           CF_FREERDP_ASSET_ROOT: ${{ runner.temp }}/verified-native-rdp
         run: |
           set -euo pipefail
-          python3 -m py_compile scripts/diagnose_freerdp_wasm_browser.py
+          python3 -m pip install 'playwright==1.57.0'
+          python3 -m py_compile scripts/prove_freerdp_pinned_wasm_chromium.py
           command -v google-chrome || command -v chromium || command -v chromium-browser
-          python3 scripts/diagnose_freerdp_wasm_browser.py
+          python3 scripts/prove_freerdp_pinned_wasm_chromium.py
