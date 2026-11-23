@@ -392,3 +392,51 @@ RDP input channels until actual behavior is measured. FreeRDP/SDL3 upstream
 also reports input lag in graphics-heavy sessions, so changing a network flag
 without evidence is not an accepted fix. Keep PR draft, retain immutable
 release 1248, six-minute GNOME firewall/watchdog and ten-minute agent rollback.
+
+## 63D-47 — RDP-viewer resolution fidelity and operator choice (2026-11-23)
+
+Physical operator feedback: the GNOME image in native RDP does not appear to
+match the physical Viborg1 monitor resolution; mouse response remains too slow.
+Neither the true primary-monitor pixel dimensions nor actual end-to-end latency
+has been measured in this report. Do not declare a resolution or latency fix
+based on tests of the browser alone.
+
+GNOME 63D-30 is explicitly `screen-share-mode='mirror-primary'`: the existing
+kiosk session is shared rather than starting a headless/virtual desktop. A
+physical-session mirror's resolution is not safely controlled through a browser
+window or the RDP dynamic-resolution extension. The browser must not issue
+`/dynamic-resolution`, `/size` or `/smart-sizing` speculatively; avoid
+changing the physical monitor settings, creating virtual monitors or enabling
+a second RDP service.
+
+This draft changes only CSS presentation of the already-decoded SDL3 canvas:
+
+- The default **Fit without upscaling** mode can shrink a large canvas, but
+  NEVER enlarge a small one to disguise a possible source resolution mismatch.
+- **Original pixel size (1:1)** uses canvas width/height directly as CSS pixels,
+  and uses scrollbars instead of cropping when larger than the iframe.
+- Display-state changes send one message per actual dimension/mode change,
+  authenticated by the existing same-origin iframe message provenance.
+  Messages contain *only* validated canvas dimensions, CSS dimensions and
+  a mode value; no pixel contents, mouse positions, passwords, tickets or
+  session IDs. They do NOT measure GNOME's physical monitor resolution.
+- No RDP framebuffer dimensions, Emscripten JS/WASM artifacts, websocket
+  contents, GNOME display settings or transport security parameters change.
+
+Physical acceptance (one combined guarded Viborg1 test after CI and staging):
+
+1. Record Viborg1's **actual active GNOME primary monitor mode** with
+   read-only session tools (do not make any `gsettings` / `xrandr` changes).
+2. In the web viewer compare its displayed FreeRDP canvas size with the
+   physical primary mode. If different, capture both integer measurements
+   and stop: investigate FreeRDP/SDL/RDP graphics negotiation, without
+   silently treating CSS resizing as a protocol-resolution fix.
+3. Test default no-upscale and original 1:1 mode. Confirm proper cursor
+   alignment, clicks, drag, scrolling and keyboard in both modes; verify
+   large desktop can be scrolled and image aspect is correct.
+4. Record browser event lag, WS queue depth and timer slip, plus physical
+   input-to-visible-pixel timing before approving the transport hotpath change.
+5. Keep the existing 6-minute independent GNOME watchdog, nftables guard,
+   10-minute temporary-agent rollback, release 1248 and draft PR #413.
+   Release 1249 stays blocked until an actual resolution match and responsive
+   mouse are observed on the physical client.
