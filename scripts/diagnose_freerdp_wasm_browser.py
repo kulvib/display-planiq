@@ -137,29 +137,42 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
-def main():
+APPROVED_ASSETS = {
+    "sdl-freerdp.js": ("c7d0a7e20a7b6473c5743892086b00dfb096807b8386adf992ab294867ad8112", 269234),
+    "sdl-freerdp.wasm": ("f5cfa907421b47c3ed6acdee329f5ebda7e9279c4a5972e02139dc8e2fe6f315", 11086426),
+}
+SOURCE_COMMIT = "65bcca1913a28cbdd7eb913599f692bd2b707991"
+
+
+def validate_pinned_assets(root: Path) -> None:
+    """Both modes require the SAME reviewed artifact, not arbitrary provenance."""
     import hashlib
-    js=ROOT/"sdl-freerdp.js"
-    wasm=ROOT/"sdl-freerdp.wasm"
-    original={
-      "sdl-freerdp.js":"609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5",
-      "sdl-freerdp.wasm":"808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90",
-    }
-    if ARTIFACT_DIR:
-        provenance=json.loads((ROOT/"provenance.json").read_text(encoding="utf-8"))
-        if (provenance.get("freerdp_source_commit") !=
-            "65bcca1913a28cbdd7eb913599f692bd2b707991" or
-            provenance.get("emsdk") != "6.0.12"):
-            raise RuntimeError("Untrusted WASM artifact provenance")
-        expected={name:provenance["files"][name]["sha256"] for name in original}
-        if expected==original:
-            raise RuntimeError("No rebuilt artifact: hashes match old broken SDL3 build")
-    else:
-        expected=original
-    for f in (js,wasm):
-        actual=hashlib.sha256(f.read_bytes()).hexdigest()
-        if actual!=expected[f.name]:
-            raise RuntimeError("Untrusted or different compiled FreeRDP artifact: "+f.name)
+    if not root.is_dir() or root.is_symlink():
+        raise RuntimeError("Untrusted FreeRDP asset directory")
+    prov_file = root / "provenance.json"
+    if not prov_file.is_file() or prov_file.is_symlink():
+        raise RuntimeError("Untrusted FreeRDP provenance file")
+    provenance = json.loads(prov_file.read_text(encoding="utf-8"))
+    if (provenance.get("freerdp_source_commit") != SOURCE_COMMIT or
+        provenance.get("freerdp_version") != "3.33.1" or
+        provenance.get("emsdk") != "6.0.12" or
+        set(provenance.get("files", {})) != set(APPROVED_ASSETS)):
+        raise RuntimeError("Untrusted FreeRDP 3.33.1 WASM provenance")
+    for name, (expected_sha, expected_size) in APPROVED_ASSETS.items():
+        path = root / name
+        if (not path.is_file() or path.is_symlink() or
+            path.stat().st_size != expected_size or
+            provenance["files"][name] != {"sha256": expected_sha, "bytes": expected_size}):
+            raise RuntimeError("Untrusted or different compiled FreeRDP artifact: " + name)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha:
+            raise RuntimeError("FreeRDP SHA-256 mismatch: " + name)
+    if (root / "sdl-freerdp.wasm").read_bytes()[:4] != b"\x00asm":
+        raise RuntimeError("Invalid FreeRDP WASM magic")
+    print("PINNED_FREERDP_3_33_1_ASSET_INTEGRITY=PASS", flush=True)
+
+
+def main():
+    validate_pinned_assets(ROOT)
     browser=next((shutil.which(x) for x in ("google-chrome","chromium","chromium-browser")
                   if shutil.which(x)),None)
     if not browser:
