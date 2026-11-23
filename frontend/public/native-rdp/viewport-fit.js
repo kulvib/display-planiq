@@ -1,37 +1,44 @@
-/* 63D-44: Scale the actual SDL3 canvas to the iframe using a uniform scale.
- * Emscripten SDL3 maps browser CSS pointer coordinates back into window space;
- * never stretch X and Y independently and never rewrite the backing bitmap.
- * No network, credentials, session data, or transport access.
+/* 63D-47: Display existing GNOME primary-monitor pixels without inventing
+ * resolution. CSS fit may DOWNSCALE but must never upscale a small RDP canvas.
+ * Native mode is 1 canvas pixel per CSS pixel; the browser can scroll.
+ * Neither mode modifies the SDL3 backing buffer, GNOME monitor, FreeRDP
+ * protocol, RDP transport or credentials.
  */
 (function (root) {
   "use strict";
 
-  function calculateFit(sourceWidth, sourceHeight, viewportWidth, viewportHeight) {
+  function calculateFit(sourceWidth, sourceHeight, viewportWidth, viewportHeight, mode = "fit") {
     const sizes = [sourceWidth, sourceHeight, viewportWidth, viewportHeight];
     if (sizes.some((n) => !Number.isFinite(n) || n <= 0 || n > 32768)) return null;
-    const scale = Math.min(viewportWidth / sourceWidth, viewportHeight / sourceHeight);
-    const width = Math.min(viewportWidth, Math.max(1, Math.floor(sourceWidth * scale)));
-    const height = Math.min(viewportHeight, Math.max(1, Math.floor(sourceHeight * scale)));
-    return { width, height };
+    if (mode !== "fit" && mode !== "native") return null;
+    if (mode === "native") return { width: sourceWidth, height: sourceHeight };
+    // Do not enlarge the framebuffer to hide a resolution mismatch. The
+    // result is a presentation-only downscale with unchanged aspect ratio.
+    const scale = Math.min(1, viewportWidth / sourceWidth, viewportHeight / sourceHeight);
+    return {
+      width: Math.max(1, Math.floor(sourceWidth * scale)),
+      height: Math.max(1, Math.floor(sourceHeight * scale)),
+    };
   }
 
-  function install({ canvas, viewport }) {
+  function install({ canvas, viewport, mode = "fit", onResize = () => {} }) {
     if (!canvas || canvas.id !== "canvas" || canvas.tagName !== "CANVAS" ||
-        !viewport || viewport.id !== "viewport" || !viewport.contains(canvas)) {
+        !viewport || viewport.id !== "viewport" || !viewport.contains(canvas) ||
+        (mode !== "fit" && mode !== "native") || typeof onResize !== "function") {
       throw new TypeError("SDL3-viewport er ikke gyldigt");
     }
 
     let disposed = false;
     let scheduled = false;
     let animationId = null;
+    let lastReport = "";
 
     function applyFit() {
       if (disposed) return;
       const result = calculateFit(
-        canvas.width, canvas.height, viewport.clientWidth, viewport.clientHeight
+        canvas.width, canvas.height, viewport.clientWidth, viewport.clientHeight, mode
       );
-      // SDL3 briefly sets a 1x1 framebuffer during initialization. Do not
-      // scale this placeholder to fill the page.
+      // SDL3's temporary 1x1 framebuffer must not be shown as a desktop.
       if (!result || canvas.width < 16 || canvas.height < 16) return;
       const width = result.width + "px";
       const height = result.height + "px";
@@ -40,6 +47,16 @@
       }
       if (canvas.style.getPropertyValue("--rdp-fit-height") !== height) {
         canvas.style.setProperty("--rdp-fit-height", height);
+      }
+      const report = {
+        sourceWidth: canvas.width, sourceHeight: canvas.height,
+        displayWidth: result.width, displayHeight: result.height, mode,
+      };
+      const key = [report.sourceWidth, report.sourceHeight, report.displayWidth,
+        report.displayHeight, report.mode].join(":");
+      if (key !== lastReport) {
+        lastReport = key;
+        onResize(report);
       }
     }
 
@@ -53,8 +70,6 @@
       });
     }
 
-    // Source resolution changes update width/height attributes. Viewport
-    // changes are observed separately, without polling or RDP frame hooks.
     const sizeObserver = typeof root.ResizeObserver === "function"
       ? new root.ResizeObserver(scheduleFit) : null;
     const pixelObserver = typeof root.MutationObserver === "function"
@@ -67,6 +82,14 @@
     scheduleFit();
 
     return {
+      setMode(nextMode) {
+        if (nextMode !== "fit" && nextMode !== "native") {
+          throw new TypeError("Ugyldig RDP-visningstilstand");
+        }
+        if (disposed || mode === nextMode) return;
+        mode = nextMode;
+        scheduleFit();
+      },
       dispose() {
         if (disposed) return;
         disposed = true;
