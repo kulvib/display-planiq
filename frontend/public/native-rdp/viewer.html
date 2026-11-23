@@ -7,8 +7,8 @@
   <title>PlanIQ indbygget GNOME Remote Desktop</title>
   <style>
     html, body { margin:0; padding:0; width:100%; height:100%; background:#05070b; color:#f8fafc; font:14px system-ui, sans-serif; overflow:hidden; }
-    #viewport { width:100%; height:100%; display:flex; align-items:center; justify-content:center; overflow:hidden; }
-    #canvas { display:block; flex:none; outline:none; width:var(--rdp-fit-width, auto) !important; height:var(--rdp-fit-height, auto) !important; max-width:100%; max-height:100%; image-rendering:auto; }
+    #viewport { width:100%; height:100%; display:flex; overflow:auto; }
+    #canvas { display:block; flex:none; margin:auto; outline:none; width:var(--rdp-fit-width, auto) !important; height:var(--rdp-fit-height, auto) !important; image-rendering:auto; }
     #status { position:absolute; top:8px; left:8px; z-index:2; pointer-events:none; padding:5px 9px; border-radius:5px; background:#121b2dcc; }
   </style>
 </head>
