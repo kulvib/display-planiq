@@ -113,13 +113,6 @@
       return;
     }
     update("Starter FreeRDP …");
-    // 63D-48 physical evidence: Viborg1's real GNOME primary is 2560x1080
-    // at scale 1. Force that size for this exact authorized test client.
-    // This requests an RDP client framebuffer, NEVER reconfigures GNOME.
-    // Other clients retain the original launch configuration.
-    const isViborg1 = /^\/api\/remote-desktop\/browser\/3\/native-rdp\/[0-9a-f-]{36}\/ws$/
-      .test(new URL(data.tunnelUrl).pathname);
-
     // The separate transport adapter is installed only in this disposable
     // same-origin iframe, without retaining credentials or inspecting payloads.
     try {
@@ -200,12 +193,7 @@
           const args = [
             "/v:127.0.0.1:3389", "/u:" + username, "/p:" + password,
             "/cert:fingerprint:sha256:" + certFingerprint,
-            // Source-locked Viborg1 GNOME primary monitor 2560x1080, 60 Hz,
-            // 100% scale. Supported by FreeRDP 3.33.1 client/common/cmdline.c.
-            // Do not use /dynamic-resolution or an iframe-size-derived value:
-            // those could request a different remote mode on physical GNOME.
-            ...(isViborg1 ? ["/size:2560x1080"] : []),
-            // Pilot: only mandatory parameters plus the physical display size.
+            // Pilot: only mandatory parameters, keeping strict TLS pinning.
             // Optional GFX/network/log flags made the first WASM startup abort
             // before a socket could be observed; enable only when proven.
 
