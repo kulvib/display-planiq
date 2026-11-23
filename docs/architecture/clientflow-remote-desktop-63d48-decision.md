@@ -1,0 +1,80 @@
+# ClientFlow Remote Desktop — Architecture decision gate (63D-48)
+
+**Date:** 2026-11-23 · **Status:** Research-backed provisional decision; physical A/B gate NOT PASSED · **Owner:** PlanIQ Display/ClientFlow · **Scope:** Ubuntu 26.04 GNOME/Wayland kiosks, 100+ registered clients, only the test client Viborg1 (client ID 3, active release 1248).
+
+## Decision
+
+**Keep** GNOME Remote Desktop *desktop sharing of the existing physical kiosk session*, GNOME/Mutter/PipeWire/libei, local-only RDP firewall, outbound-only authenticated connection over HTTPS/WSS 443, PlanIQ identity/RBAC and separate machine identity, on-demand session activation, and strict watchdog/rollback. **Do not yet approve** FreeRDP 3.33.1 SDL3 Emscripten/WASM as ClientFlow's permanent browser client. Test it against Apache Guacamole 1.6 as an alternate browser protocol implementation, using the same physical GNOME source and comparable network route. Consider a properly engineered direct media WebRTC branch only if the two RDP browser implementations fail objective latency/quality gates. Do not migrate the kiosk to Xorg, expose RDP/VNC ports, add Neon or paid services merely to get a test.
+
+The present FreeRDP WebAssembly browser feature was officially introduced in **3.33.0, 2026-11-02**, with 3.33.1 patch **2026-11-10**; it is a promising new capability, not yet operationally proven by our physical tests. Guacamole 1.6 already has an established HTML5 browser client and FreeRDP server-side decoder/Guacamole protocol, plus new RDP GFX support. Neither is guaranteed faster until tested.
+
+## ClientFlow physical evidence (operator supplied)
+
+- GNOME/Mutter current primary physical monitor: **2560x1080 at 60Hz and scale 1.00** via read-only DisplayConfig query; physical mode MUST stay unchanged.
+- RDP browser canvas reported a **different resolution**, exact canvas pixels have not yet been recorded. 63D-47 CSS fit / 1:1 are display transformations and cannot fix negotiated RDP graphics size.
+- Pointer remains **very delayed** in physical 63D-47 trial. Keyboard, scroll, drag acceptance are unverified.
+- Render backend 2026-11-23 ~20:48–20:50Z: three browser and agent RDP WSS pairs accepted; bounded safe traffic summaries available, including bidirectional packet/byte counts. First browser/agent bytes in ~220–340ms are connection startup offsets, **not input-to-visible-pixel latency**.
+- Backend CPU light in previous snapshots; that alone does NOT localize latency or prove performance.
+- Release 1248 was retained, six-minute GNOME and ten-minute shadow-agent timers, on-demand test only. PR #413 must remain draft; release 1249 is blocked.
+
+## Evaluated options
+
+| Option | Fit to same GNOME physical kiosk | Browser integration | Operational/security trade-off | Decision |
+|---|---|---|---|---|
+| GNOME Desktop Sharing RDP + PlanIQ WSS relay + FreeRDP 3.33.1 WASM | Strong (native GNOME) | Native RDP in browser, E2E RDP TLS certificate pin; no extra decoding service | New browser runtime (SDL3/Emscripten), mismatched dimensions and severe pointer lag observed; WebSocket buffering/backpressure; deep debugging burden | **Keep as A/B candidate only** |
+| GNOME Desktop Sharing RDP + Apache Guacamole 1.6 (guacd + HTML5) | Strong | Mature browser client, RDP GFX support in 1.6 | Additional CPU/containers, secure reverse path for guacd needed; server-side RDP decryption, credentials/certificate must be protected on guacd; extra server trust boundary | **Primary comparison candidate** |
+| GNOME PipeWire -> WebRTC low-latency video with separately prioritized input/libei | Possible, if implemented via GNOME-approved portal/session permissions | Native browser media pipeline, possible codec acceleration | Substantial capture/control/security engineering; STUN/TURN may be needed and adds relay bandwidth cost; previous ClientFlow WebRTC trial also lagged, not a proof the protocol cannot work | **Conditional third candidate** |
+| GNOME VNC + noVNC | Depends on VNC backend and GNOME version | Mature JS VNC client | May have weaker compression/performance/security and additional desktop backend compatibility checks | **Fallback only** |
+| RustDesk OSS | Wayland support exists, but unattended GNOME functionality has changed during 2026 | Separate client/server; OSS web integration/control-plane fit must be verified | Additional identity/tunnel stack and potential licensing/product-tier mismatch; separate management | **Do not replace current control plane now** |
+| wayvnc | **No**: targets wlroots, not GNOME/Mutter | Browser only through noVNC | Wrong compositor | **Reject** |
+| MeshCentral classic Linux desktop | GNOME/Wayland capture and input not yet proven on our environment | Browser capable generally | Project issue reports Wayland screen capture gap | **Reject as drop-in replacement** |
+
+**Guacamole security note:** It terminates RDP inside `guacd` before delivering the Guacamole protocol to HTML5. It cannot simply be swapped in while preserving current browser-to-GNOME TLS end-to-end semantics. Explicitly document and protect this revised trust boundary; do not advertise E2E RDP TLS if using guacd. Guac can be run in Render Docker on demand for pilot, but concurrency/memory and audit/access must be verified first.
+
+## Best-practice target architecture (technology-neutral)
+
+`PlanIQ Display login + RBAC + step-up -> short-lived, single-client, single-session ticket -> Render session broker -> authenticated outbound ClientFlow agent (HTTPS/WSS 443) -> loopback-only physical GNOME screen-sharing service`
+
+- No inbound RDP 3389/VNC 5900 on the public internet; nftables guard and per-session kill/revoke are fail closed.
+- Display's human identities and authorization remain separate from unattended kiosk machine identity (no human MFA prompt on the kiosk).
+- Never persist passwords, TLS private keys, screen pixels, or raw RDP packets in app logs/PostgreSQL; bound telemetry only.
+- Only active remote-control sessions should consume graphics bandwidth/CPU, not all 100+ registered kiosks.
+- Render's WebSocket load balancer assigns each new connection to an arbitrary instance: current in-memory browser/agent matching is **single-instance only** unless session-aware coordination is explicitly added and tested.
+- Handle deploy interruptions with explicit disconnect, bounded reconnect and fresh authorized session; do not automatically resurrect privileged control.
+- Do not let the admin browser viewport change the physical kiosk monitor resolution (especially 2560x1080 on Viborg1).
+
+## Single physical A/B investigation BEFORE new feature changes
+
+1. **Freeze** active Render frontend/backend at `e58a1f2a2fe52df79df5c0dc50649077d042ccc1`, physical release 1248, and draft PR #413. A speculative untested `/size:2560x1080` was reverted on the draft branch to avoid treating a CLI hint as proof.
+2. **Source:** measure GNOME primary `2560x1080`, session mode mirror-primary and local GNOME capture/encoder event timings with read-only telemetry.
+3. **RDP reference:** run a standard supported native FreeRDP client against the **same** GNOME desktop via a temporary authenticated private tunnel/loopback path; do **not** open port 3389 to the internet. Inspect its negotiated framebuffer, cursor response and screen refresh. This is the decisive discriminator between GNOME/RDP origin and browser/WASM/relay issues. Prevent recursive capture when doing the local-control test.
+4. **Browser A:** run existing WASM through PlanIQ WSS, record precise `FreeRDP-canvas: WxH` and CSS WxH, input->network send, queue depth and timer slip, Render traffic summaries (not mistaken for RTT), decoded-frame completion and observed input-to-visible change. Test click, drag, scroll and keyboard.
+5. **Browser B:** isolated, security-reviewed Guacamole 1.6 pilot with GNOME source, same protected agent/Render route and physical test, without third-party external desktop accounts. Make browser/guacd tunnel and TLS trust boundaries explicit. Record the same metrics.
+6. **Conditional C:** if RDP browser implementations do not meet targets, evaluate direct GNOME/PipeWire -> WebRTC SRTP with hardware-assisted encoding where available, prioritized reliable input path and TURN economics. The old 15-second-lag ClientFlow pipeline is not an acceptable implementation baseline.
+
+## Proposed acceptance gate — targets, not claims
+
+- **Fidelity:** native RDP/HTML5 displays entire primary 2560x1080 (or an explicitly documented verified negotiated mirror format) with correct aspect and no physical monitor mode change. All click coordinates line up in normal and 1:1 modes.
+- **Interactive latency:** illustrative provisional service targets p50 <=150ms, p95 <=250ms for pointer/visible-change under a defined normal network, measured end-to-end with repeatable methods rather than WebSocket first byte or local event delay. Adjust only following an explicit user-approved SLA and measured network baseline.
+- **Interaction:** successful consecutive movement, clicks, drag, scroll and typing with no broken keyboard layouts or stuck buttons; re-auth/session expiry works.
+- **Security:** short-lived authorization, TLS identity, 3389 local only, independent watchdog and agent rollback, no credentials or screen pixels logged, no post-revocation input.
+- **Scalability/cost:** report both 100 idle/registered clients and separately 1/5/10/15 concurrent viewed desktops. Per-session RAM/CPU, Render bandwidth and realistic monthly cost must be measured. No assumptions that 100 registered equals 100 concurrent.
+- **Release 1249:** no approval until all physical gates pass and no new security or cost regression.
+
+## Primary references (as checked 2026-11-23)
+
+1. Canonical, *Ubuntu 26.04 Desktop Sharing vs Remote Login*: https://ubuntu.com/desktop/docs/en/26.04/how-to/share-your-desktop-remotely/
+2. GNOME remote-desktop internals (PipeWire, libei, Mutter): https://github.com/GNOME/gnome-remote-desktop/blob/main/README.md
+3. FreeRDP 3.33.0 (2026-11-02; new browser WASM): https://www.freerdp.com/2026/11/02/3_33_0-release
+4. FreeRDP 3.33.1 patch (2026-11-10): https://www.freerdp.com/2026/11/10/3_33_1-release
+5. Apache Guacamole 1.6 architecture: https://guacamole.apache.org/doc/gug/guacamole-architecture.html
+6. Guacamole 1.6 RDP graphics pipeline/resize config: https://guacamole.apache.org/doc/gug/configuring-guacamole.html
+7. Guacamole 1.6 release graphics optimizer: https://guacamole.apache.org/releases/1.6.0/
+8. RustDesk OSS/Pro features: https://rustdesk.com/docs/en/self-host/rustdesk-server-oss/
+9. RustDesk unattended Wayland (preview): https://rustdesk.com/blog/unattended-remote-access-wayland/
+10. wayvnc compositor support: https://github.com/any1/wayvnc
+11. MeshCentral Wayland limitation: https://github.com/Ylianst/MeshCentral/issues/7875
+12. Render WebSockets load distribution: https://render.com/docs/websocket
+13. Render deployment interruption behavior: https://render.com/docs/uptime-best-practices
+14. Browser WebSocket queuing/backpressure: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
+15. WebRTC real-time RTP and TURN economics: https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Intro_to_RTP and https://webrtc.org/getting-started/turn-server
