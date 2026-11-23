@@ -68,6 +68,12 @@
       }
       return;
     }
+    if (data?.type === "planiq-native-rdp-display-mode" && started && !failed) {
+      if (data.mode === "native" || data.mode === "fit") {
+        viewportFit?.setMode(data.mode);
+      }
+      return;
+    }
     if (started || !data || data.type !== "planiq-native-rdp-start") return;
     started = true;
     if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
@@ -92,6 +98,15 @@
     try {
       viewportFit = window.PlanIQNativeRdpViewport.install({
         canvas: element, viewport: document.getElementById("viewport"),
+        mode: data.displayMode === "native" ? "native" : "fit",
+        onResize: ({ sourceWidth, sourceHeight, displayWidth, displayHeight, mode }) => {
+          // Only integer canvas and CSS dimensions. This is not a measurement
+          // of physical GNOME monitor resolution or RDP input latency.
+          window.parent.postMessage({
+            type: "planiq-native-rdp-resolution",
+            sourceWidth, sourceHeight, displayWidth, displayHeight, mode,
+          }, window.location.origin);
+        },
       });
     } catch {
       error("RDP-skærmen kunne ikke tilpasses visningsrammen.");
