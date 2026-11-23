@@ -126,3 +126,46 @@ test("bounded websocket buffer prevents silent unbounded queue growth", () => {
   assert.equal(h.failures.length, 1);
   assert.equal(ws.sent.length, 0);
 });
+
+test("high-frequency RDP frames do not flood UI callbacks or lose any packet counts", () => {
+  const h = harness();
+  const probe = h.install();
+  const ws = new h.root.WebSocket(
+    "wss://api.example.test/api/remote-desktop/browser/3/native-rdp/test/ws",
+    h.protocol
+  );
+  ws.emit("open");
+  for (let i = 0; i < 2000; i++) {
+    ws.send(Uint8Array.from([i % 251]));
+    ws.emit("message", Uint8Array.from([i % 251]).buffer);
+  }
+  assert.ok(h.signals.length <= 2);
+  assert.equal(probe.snapshot().toAgentFrames, 2000);
+  assert.equal(probe.snapshot().fromAgentFrames, 2000);
+  h.clock(1100);
+  ws.send(Uint8Array.from([7]));
+  assert.ok(h.signals.length <= 3);
+  assert.equal(probe.snapshot().toAgentFrames, 2001);
+  probe.dispose();
+});
+
+test("WSS queue and browser timer diagnostics contain only numbers", () => {
+  const h = harness();
+  const probe = h.install();
+  const ws = new h.root.WebSocket(
+    "wss://api.example.test/api/remote-desktop/browser/3/native-rdp/test/ws",
+    h.protocol
+  );
+  ws.emit("open");
+  ws.bufferedAmount = 128 * 1024;
+  ws.send(new Uint8Array([1, 2, 3]));
+  const stats = probe.snapshot();
+  assert.equal(stats.peakOutboundQueueBytes, 128 * 1024);
+  assert.equal(stats.lastOutboundQueueBytes, 128 * 1024);
+  assert.equal(stats.toAgentBytes, 3);
+  assert.equal(JSON.stringify(stats).includes("example.test"), false);
+  h.clock(1800);
+  h.tick();
+  assert.equal(probe.snapshot().maxTimerSlipMs, 800);
+  probe.dispose();
+});
