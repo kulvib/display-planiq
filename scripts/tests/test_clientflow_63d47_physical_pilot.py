@@ -39,7 +39,7 @@ def test_pinned_sources_and_executable_shadow_entrypoint(monkeypatch):
 
 
 def test_source_watches_and_timeouts_fails_closed(monkeypatch):
-    pilot = load_operator(monkeypatch)
+    load_operator(monkeypatch)
     source = SCRIPT.read_text()
     assert '"--on-active=10m"' in source
     assert '"GNOME_START"' not in source  # named GNOME action, not a separate bypass
