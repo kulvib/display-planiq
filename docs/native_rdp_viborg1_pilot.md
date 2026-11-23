@@ -323,3 +323,34 @@ fix. Only rerun physical Viborg1 after reviewing and passing CI and redeploying
 the matching frontend source commit; confirm actual GNOME pixels, mouse and
 keyboard before merging or cutting release 1249. Do not repeat the six-minute
 pilot until its preceding cleanup state is verified.
+  
+## 63D-44 — Physical GNOME image succeeds; viewport sizing remains incorrect
+
+A new 2026-11-23 Viborg1 physical screenshot shows **actual GNOME desktop
+pixels** rendered by the pinned FreeRDP 3.33.1 SDL3 WASM client via the existing
+secure binary tunnel (11,567 B / 146 frames to GNOME and 715,795 B /
+193 frames from GNOME at capture). This supersedes the earlier black-screen
+result for video rendering only. Mouse/keyboard input and latency are **not**
+yet independently accepted.
+
+The image was approximately 520x390 and pinned in the upper-left of a much
+larger iframe. Root cause in the frontend: 63D-43 changed the canvas element ID
+from `desktop` to `canvas` to fix the missing SDL3 target, but the HTML CSS
+continued to style `#desktop`; there was no responsive fit or centering for
+the actual `#canvas`.
+
+63D-44 adds an independent source-only viewport fitter. It observes only the
+canvas backing-resolution attributes and the iframe's viewport, computes one
+uniform scale (min(width ratio, height ratio)), centers the result and preserves
+aspect ratio on browser resizing. SDL3's Emscripten pointer event path scales
+CSS target coordinates into its SDL window coordinates; this must be verified
+physically for mouse/drag/scroll after deployment. The fitter writes **only
+CSS custom presentation properties**; it never changes canvas bitmap
+resolution, RDP PDUs, TLS pinning, authenticated WSS transport, or FreeRDP
+WASM artifacts. It ignores SDL3's transient 1x1 initialization framebuffer.
+
+Acceptance: maximize remote pixels within the iframe without aspect distortion,
+correct pointer alignment across scaled canvas, keyboard, 6-minute watchdog,
+and measured latency. RDP-native dynamic resolution and higher sharpness would
+be a later separate change, not assumed or faked by this CSS-only fix.
+Keep all related PRs draft and release 1249 blocked until physical acceptance.
