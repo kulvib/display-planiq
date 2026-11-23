@@ -22,6 +22,7 @@ test("HTML and Module.canvas use the same SDL3 default canvas target", () => {
 
 test("GNOME RDP startup binds FreeRDP to SDL3's real iframe canvas, not another element", () => {
   const canvas = { tagName: "CANVAS", id: "canvas", width: 300, height: 150 };
+  const viewport = { id: "viewport", contains: (element) => element === canvas };
   const status = { textContent: "" };
   const listeners = new Map();
   const parent = { postMessage() {} };
@@ -32,11 +33,18 @@ test("GNOME RDP startup binds FreeRDP to SDL3's real iframe canvas, not another 
     PlanIQNativeRdpProbe: {
       install() { return { dispose() {}, confirmVisible() { return false; } }; }
     },
+    PlanIQNativeRdpViewport: {
+      install({ canvas: actualCanvas, viewport: actualViewport }) {
+        assert.equal(actualCanvas, canvas);
+        assert.equal(actualViewport, viewport);
+        return { dispose() {} };
+      }
+    },
     addEventListener(type, callback) { listeners.set(type, callback); },
   };
   const requests = [];
   const document = {
-    getElementById(id) { return id === "canvas" ? canvas : id === "status" ? status : null; },
+    getElementById(id) { return id === "canvas" ? canvas : id === "viewport" ? viewport : id === "status" ? status : null; },
     querySelector(selector) { return selector === "#canvas" ? canvas : null; },
     createElement(tag) { return { tagName: tag }; },
     body: { appendChild(element) { requests.push(element); } },
