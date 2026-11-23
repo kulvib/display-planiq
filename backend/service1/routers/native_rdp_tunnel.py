@@ -141,28 +141,36 @@ async def _reject(ws: WebSocket, reason: str, code: int = 4403) -> None:
 
 
 async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: bool) -> None:
-    """Backpressure is TCP-like: await every byte send, never latest-frame drop."""
+    """Constant-task, byte-preserving RDP relay with periodic authorization.
+
+    Keep the receive task alive across idle authorization checks, rather than
+    cancelling and restarting it every 15 seconds or allocating two tasks and
+    a gather per RDP frame. No RDP payload is inspected, buffered or dropped.
+    """
     next_check = time.monotonic() + CHECK_INTERVAL
-    while not tunnel.closed.is_set():
-        if time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
-            return
-        receive = asyncio.create_task(incoming.receive())
-        stop = asyncio.create_task(tunnel.closed.wait())
-        try:
+    receive_task: asyncio.Task | None = None
+    closed_task = asyncio.create_task(tunnel.closed.wait())
+    try:
+        while not tunnel.closed.is_set():
+            if time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
+                return
+            if receive_task is None:
+                receive_task = asyncio.create_task(incoming.receive())
             done, _ = await asyncio.wait(
-                (receive, stop),
+                (receive_task, closed_task),
                 timeout=max(0.0, min(CHECK_INTERVAL, next_check - time.monotonic())),
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if stop in done or tunnel.closed.is_set():
+            if closed_task in done or tunnel.closed.is_set():
                 return
-            if receive not in done:
+            if receive_task not in done:
                 if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
                     return
                 next_check = time.monotonic() + CHECK_INTERVAL
                 continue
 
-            message = receive.result()
+            message = receive_task.result()
+            receive_task = None
             if message.get("type") == "websocket.disconnect":
                 return
             packet = message.get("bytes")
@@ -182,22 +190,24 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
                 return
             lock = tunnel.to_agent if browser_side else tunnel.to_browser
             async with lock:
-                # A peer that stops reading must not hold a websocket task or
-                # the single Render worker indefinitely. TCP ordering stays
-                # intact: a stalled send terminates both endpoints.
-                await asyncio.wait_for(peer.send_bytes(packet), timeout=SEND_TIMEOUT)
-            # Count only successful relayed sends, not frames merely received.
+                # asyncio.timeout avoids a separate wait_for task on every RDP
+                # frame; stalled peers still fail closed after SEND_TIMEOUT.
+                async with asyncio.timeout(SEND_TIMEOUT):
+                    await peer.send_bytes(packet)
             flow = tunnel.browser_to_agent if browser_side else tunnel.agent_to_browser
             flow.record(len(packet))
             if time.monotonic() >= next_check:
                 if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
                     return
                 next_check = time.monotonic() + CHECK_INTERVAL
-        finally:
-            for task in (receive, stop):
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(receive, stop, return_exceptions=True)
+    finally:
+        tasks = [closed_task]
+        if receive_task is not None:
+            tasks.append(receive_task)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _cleanup(tunnel: NativeRdpTunnel) -> None:
