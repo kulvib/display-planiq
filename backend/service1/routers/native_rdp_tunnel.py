@@ -49,6 +49,20 @@ _LOCK = asyncio.Lock()
 
 
 @dataclass
+class BinaryFlow:
+    """Opaque frame/byte counters; never parse or retain RDP contents."""
+    frames: int = 0
+    bytes: int = 0
+    first_at: float | None = None
+
+    def record(self, length: int) -> None:
+        if self.first_at is None:
+            self.first_at = time.monotonic()
+        self.frames += 1
+        self.bytes += length
+
+
+@dataclass
 class NativeRdpTunnel:
     client_id: int
     session_id: str
@@ -63,6 +77,8 @@ class NativeRdpTunnel:
     to_agent: asyncio.Lock = field(default_factory=asyncio.Lock)
     agent_credential_id: str | None = None
     agent_token_version: int | None = None
+    browser_to_agent: BinaryFlow = field(default_factory=BinaryFlow)
+    agent_to_browser: BinaryFlow = field(default_factory=BinaryFlow)
 
     def authorized_browser(self) -> bool:
         active = BROWSERS.get(self.session_id)
@@ -88,6 +104,31 @@ class NativeRdpTunnel:
             return _remote_desktop_agent_channel_valid(control)
         except Exception:
             return False
+
+
+def _traffic_summary(tunnel: NativeRdpTunnel, phase: str) -> None:
+    """Periodic bounded diagnostics; no tickets, secrets, packet content or IDs."""
+    logger.info(
+        "native_rdp_flow client_id=%d phase=%s elapsed_s=%d "
+        "browser_to_agent_frames=%d browser_to_agent_bytes=%d "
+        "agent_to_browser_frames=%d agent_to_browser_bytes=%d "
+        "first_browser_byte_ms=%d first_agent_byte_ms=%d",
+        tunnel.client_id, phase, int(time.monotonic() - tunnel.created_at),
+        tunnel.browser_to_agent.frames, tunnel.browser_to_agent.bytes,
+        tunnel.agent_to_browser.frames, tunnel.agent_to_browser.bytes,
+        int((tunnel.browser_to_agent.first_at - tunnel.created_at) * 1000)
+        if tunnel.browser_to_agent.first_at is not None else -1,
+        int((tunnel.agent_to_browser.first_at - tunnel.created_at) * 1000)
+        if tunnel.agent_to_browser.first_at is not None else -1,
+    )
+
+
+async def _watch_traffic(tunnel: NativeRdpTunnel) -> None:
+    while not tunnel.closed.is_set():
+        try:
+            await asyncio.wait_for(tunnel.closed.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            _traffic_summary(tunnel, "active")
 
 
 async def _reject(ws: WebSocket, reason: str, code: int = 4403) -> None:
@@ -126,6 +167,15 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
                 return
             packet = message.get("bytes")
             if not isinstance(packet, bytes) or not (0 < len(packet) <= MAX_BINARY_PACKET):
+                frame_class = (
+                    "nonbinary" if not isinstance(packet, bytes)
+                    else "empty" if not packet else "oversized"
+                )
+                logger.warning(
+                    "native_rdp_invalid_frame client_id=%d direction=%s class=%s",
+                    tunnel.client_id, "browser_to_agent" if browser_side else "agent_to_browser",
+                    frame_class,
+                )
                 return
             peer = tunnel.agent if browser_side else tunnel.browser
             if peer is None:
@@ -136,6 +186,9 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
                 # the single Render worker indefinitely. TCP ordering stays
                 # intact: a stalled send terminates both endpoints.
                 await asyncio.wait_for(peer.send_bytes(packet), timeout=SEND_TIMEOUT)
+            # Count only successful relayed sends, not frames merely received.
+            flow = tunnel.browser_to_agent if browser_side else tunnel.agent_to_browser
+            flow.record(len(packet))
             if time.monotonic() >= next_check:
                 if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
                     return
@@ -148,7 +201,10 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
 
 
 async def _cleanup(tunnel: NativeRdpTunnel) -> None:
+    if tunnel.closed.is_set():
+        return
     tunnel.closed.set()
+    _traffic_summary(tunnel, "closed")
     async with _LOCK:
         if _TUNNELS.get(tunnel.tunnel_id) is tunnel:
             _TUNNELS.pop(tunnel.tunnel_id, None)
@@ -208,6 +264,7 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
             _CLIENT_TUNNELS[client_id] = tunnel.tunnel_id
 
         await ws.accept(subprotocol=protocol)
+        monitor: asyncio.Task | None = None
         try:
             await _send_agent(CONTROL_AGENTS[client_id], {
                 "type": "native_rdp_open",
@@ -217,10 +274,14 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
             await asyncio.wait_for(tunnel.ready.wait(), timeout=OPEN_TIMEOUT)
             if tunnel.agent is None or tunnel.closed.is_set():
                 return
+            monitor = asyncio.create_task(_watch_traffic(tunnel))
             await _pump(tunnel, ws, browser_side=True)
         except (asyncio.TimeoutError, WebSocketDisconnect, OSError, RuntimeError) as exc:
             logger.info("native_rdp_browser_closed client_id=%s reason=%s", client_id, type(exc).__name__)
         finally:
+            if monitor is not None:
+                monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
             await _cleanup(tunnel)
     except WebSocketDisconnect:
         return
