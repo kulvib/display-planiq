@@ -21,7 +21,7 @@ integrated in separate staging commit 8b4939715566406763cb6f54a4398be82735c383:
 sdl-freerdp.js (269234 bytes, sha256 c7d0a7e20a7b6473c5743892086b00dfb096807b8386adf992ab294867ad8112)
 and sdl-freerdp.wasm (11086426 bytes, sha256
 f5cfa907421b47c3ed6acdee329f5ebda7e9279c4a5972e02139dc8e2fe6f315).
-The exact files are staged in draft PR #412, **not merged or deployed**. The iframe's credential fields are never
+The exact files are staged in unmerged draft PR #412. On 2026-11-23 the *frontend* was temporarily deployed from staging commit d5e5db2; the Render backend remained on main 9898ab5. This is not release approval. The iframe's credential fields are never
 posted to the PlanIQ API. A trusted GNOME TLS SHA256 fingerprint is required
 before the WASM client can connect; /cert:ignore is explicitly forbidden.
 
@@ -203,3 +203,96 @@ X-Frame-Options `SAMEORIGIN` on the iframe, and no restrictive
 `window.crossOriginIsolated === true` in both browser contexts.
 Changes to `render.yaml` do not themselves prove the live Render service's
 headers were updated; Render Dashboard/Blueprint rules must match deployment.
+
+## 63D-42 — Physical black-screen failure and next isolated fix (23 November 2026)
+
+**Status: development candidate, NOT an approved Remote Desktop release.**
+Do not merge PR #411 or #412, deploy a new backend/agent, or approve release
+1249 until the new candidate is reviewed and the *physical* Viborg1 pilot
+works. The physical client was restored after the failed pilot: original
+1248 agent active, temporary systemd override removed, GNOME RDP disabled,
+expired browser grant removed and rollback timer stopped.
+
+### What the physical evidence actually proves
+
+At 14:25:43.960 UTC GNOME logged an initial OTHER_ERROR, followed by
+GRAPHICS at 14:25:44.050. At 14:28:06.369 the later READ_FAILURE and
+TRANSPORT_ERROR appeared, then disconnect/write failures. A later
+OTHER_ERROR/GRAPHICS pair appeared at 14:28:40.880/14:28:40.974.
+The browser and agent WSS both connected for approximately 144 seconds,
+but the browser remained black. The later transport close does **not**
+prove that it caused the initial failure. Existing GNOME journals alone
+do not distinguish missing client bytes, incomplete GNOME negotiation,
+unavailable graphics codec or an SDL render issue.
+
+Inspecting the **actual** pinned FreeRDP 3.33.1 generated Emscripten
+SOCKFS shows that it sends typed-array binary WebSocket messages and
+receives ArrayBuffer messages. It maps multiple WS frames to a TCP
+byte-stream abstraction; this does not itself prove correct end-to-end
+RDP behavior. A browser frame larger than 64 KiB was previously rejected
+by the Render relay. The 63D-42 browser adapter now splits outgoing bytes
+in order into 16 KiB frames, rejects text and has a 2 MiB max buffered
+send cap. No compiled JS/WASM hash, FreeRDP options, TLS pin or
+credential handling has changed.
+
+### Content-blind boundary measurements
+
+The following counters are integers only. Do not log or persist
+RDP PDU data, TLS handshake content, WebSocket tickets, GNOME credentials,
+session UUIDs, tunnel identifiers or binary payload samples.
+
+| Boundary | Diagnostic / direction |
+| --- | --- |
+| FreeRDP iframe | Browser binary sent/received frame counts and bytes |
+| Render WSS relay | native_rdp_flow browser_to_agent_frames/bytes and agent_to_browser_frames/bytes, first-byte elapsed times |
+| Viborg1 GNOME agent | native_rdp_agent_flow wss_to_tcp and tcp_to_wss frames/bytes |
+| GNOME journal | First real handshake/graphics error in exact timestamp order, without printing secrets |
+
+The relay periodically logs aggregate counts (at most once per 10 seconds
+while active plus once at close) with **client ID only**. The agent logs
+equivalent aggregates at most once per 10 seconds and at close. Both
+measure only successful forwarding calls, never merely an open WSS
+handshake; there is no DB query per packet and no new Render service.
+
+### Decision table for ONE physical rerun
+
+1. Browser outgoing bytes = 0: investigate FreeRDP/SDL/SOCKFS startup
+   before the backend, not GNOME graphics.
+2. Browser outgoing bytes > 0, Render browser_to_agent = 0: inspect
+   WebSocket send/receive, protocol rejection or relay backpressure.
+3. Render browser_to_agent > 0, Viborg1 wss_to_tcp = 0:
+   investigate Render-to-agent pipe and connection lifetime.
+4. Viborg1 wss_to_tcp > 0, tcp_to_wss = 0: inspect GNOME's earliest
+   RDP/TLS/credentials/transport journal event.
+5. Viborg1 tcp_to_wss > 0, Render agent_to_browser = 0:
+   investigate the return relay.
+6. All directions > 0 including browser received bytes, but screen
+   black: focus next on GNOME negotiated graphics capabilities,
+   compiled FreeRDP decoder capabilities and SDL3 rendering. Do not
+   declare success just because RDP bytes flow.
+
+The iframe fails closed if no outgoing RDP bytes are sent within 12 s
+after WSS open or GNOME returns no bytes within 20 s, and ends an
+unconfirmed visible-screen pilot after 45 s. A physical operator can
+explicitly confirm **visible** GNOME pixels only *after* bytes have flowed
+in both directions. This manual confirmation prevents an open socket
+from being mistaken for a working desktop; it does not replace physical
+mouse, drag, scroll, keyboard or latency tests.
+
+### Mandatory controls and acceptance
+
+- New development branch fix/63d42-viborg1-binary-rdp-telemetry
+  is based on staging PR #412, **not** the Render auto-deployed staging
+  branch. It must remain draft until independently reviewed.
+- Keep release 1248 and its rollback, TLS SHA-256 pin, short-lived ticket
+  and existing session binding. No open/externally reachable TCP/UDP
+  3389. Restore GNOME root-watchdog + nftables guard using the official,
+  immutable six-minute physical procedure before another pilot.
+- Check actual deployment commits of frontend and backend, and that
+  the temporary physical agent contains the new forwarder code before
+  claiming that all four boundary counters are instrumented. A frontend
+  deploy alone does not activate backend/agent counters.
+- Require CI (including negative security/byte-preservation tests),
+  Docker/PostgreSQL smoke and an observed actual GNOME image with mouse
+  click/drag/scroll, keyboard and measured input-to-visible-pixel
+  latency. JPEG fallback must work. No release 1249 on green CI alone.
