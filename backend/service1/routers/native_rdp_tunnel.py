@@ -108,7 +108,13 @@ class NativeRdpTunnel:
 
 def _traffic_summary(tunnel: NativeRdpTunnel, phase: str) -> None:
     """Periodic bounded diagnostics; no tickets, secrets, packet content or IDs."""
-    logger.info(
+    # Uvicorn configures uvicorn.error at INFO, while other module loggers may
+    # inherit root WARNING. The latter silently hid the physical 63D-45 flow
+    # counters even though the browser/agent WebSockets were accepted.
+    # Preserve normal module logging when enabled (including pytest caplog),
+    # otherwise route ONLY these content-blind summaries via uvicorn.error.
+    flow_logger = logger if logger.isEnabledFor(logging.INFO) else logging.getLogger("uvicorn.error")
+    flow_logger.info(
         "native_rdp_flow client_id=%d phase=%s elapsed_s=%d "
         "browser_to_agent_frames=%d browser_to_agent_bytes=%d "
         "agent_to_browser_frames=%d agent_to_browser_bytes=%d "
