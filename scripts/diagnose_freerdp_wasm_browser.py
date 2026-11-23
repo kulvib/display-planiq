@@ -10,7 +10,6 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from html import unescape
 from pathlib import Path
 import json
-import os
 import re
 import shutil
 import subprocess
