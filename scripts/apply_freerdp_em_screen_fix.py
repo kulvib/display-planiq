@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Reviewable Emscripten-only SDL3 display fallback for FreeRDP 3.33.1.
 
-The unmodified pinned upstream SDL3 client may get 0x0 from SDL_GetDisplayBounds
-despite a nonzero browser screen and canvas. Normal desktop clients are unchanged.
+The pinned upstream SDL3 Web client can query a dummy 0x0 monitor despite a
+nonzero browser screen. Patch only the actual Emscripten SdlWindow::query path;
+native desktop clients are unchanged.
 Fail on unexpected upstream source, never silently patch another version.
 """
 from __future__ import annotations
@@ -22,40 +23,37 @@ INCLUDE_PATCHED = INCLUDE + """
 """
 
 BEFORE = """\
-	r.w = static_cast<int>(std::roundf(static_cast<float>(r.w) * mode->pixel_density));
-	r.h = static_cast<int>(std::roundf(static_cast<float>(r.h) * mode->pixel_density));
-	return makeMonitor(id, r, mode->pixel_density * SDL_GetDisplayContentScale(id), forceAsPrimary);
+rdpMonitor SdlWindow::query(SDL_DisplayID id, bool forceAsPrimary)
+{
+	if (sdl::utils::isWaylandDriver() || sdl::utils::isX11Driver())
+		return queryDisplay(id, forceAsPrimary);
 """
 
 AFTER = """\
-	const float density = mode->pixel_density > 0.0f ? mode->pixel_density : 1.0f;
-	r.w = static_cast<int>(std::roundf(static_cast<float>(r.w) * density));
-	r.h = static_cast<int>(std::roundf(static_cast<float>(r.h) * density));
+rdpMonitor SdlWindow::query(SDL_DisplayID id, bool forceAsPrimary)
+{
 #if defined(__EMSCRIPTEN__)
-	/* A WASM canvas can exist while SDL3 reports display bounds as 0x0.
-	 * Use the actual browser screen as a bounded fallback, not a guessed
-	 * resolution and never an override on native desktop platforms.
-	 * GNOME RDP is still authenticated independently and TLS-pinned.
+	/* The SDL3 Emscripten driver can report a dummy window/display of 0x0.
+	 * Unlike the native Wayland/X11 queryDisplay path, SDL3 Web runs through
+	 * createDummy() -> query(window), so patch the *actual* browser path.
+	 * Use the browser's screen dimensions only when bounded and nonzero.
 	 */
-	if (r.w <= 0 || r.h <= 0)
+	int browserWidth = 0;
+	int browserHeight = 0;
+	emscripten_get_screen_size(&browserWidth, &browserHeight);
+	if (browserWidth >= 320 && browserWidth <= 8192 &&
+	    browserHeight >= 200 && browserHeight <= 4320)
 	{
-		int screenW = 0;
-		int screenH = 0;
-		emscripten_get_screen_size(&screenW, &screenH);
-		if (screenW >= 320 && screenW <= 8192 && screenH >= 200 && screenH <= 4320)
-		{
-			SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Browser SDL3 display fallback: %dx%d",
-			            screenW, screenH);
-			r.x = 0;
-			r.y = 0;
-			r.w = screenW;
-			r.h = screenH;
-		}
+		const SDL_Rect browserBounds{ 0, 0, browserWidth, browserHeight };
+		SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO, "FreeRDP browser monitor: %dx%d",
+		            browserWidth, browserHeight);
+		return makeMonitor(id, browserBounds, 1.0f, forceAsPrimary);
 	}
+	SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Invalid browser monitor dimensions");
+	return {};
 #endif
-	const float displayScale = SDL_GetDisplayContentScale(id);
-	return makeMonitor(id, r, density * (displayScale > 0.0f ? displayScale : 1.0f),
-	                   forceAsPrimary);
+	if (sdl::utils::isWaylandDriver() || sdl::utils::isX11Driver())
+		return queryDisplay(id, forceAsPrimary);
 """
 
 
