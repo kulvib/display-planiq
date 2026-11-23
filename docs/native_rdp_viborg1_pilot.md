@@ -16,11 +16,12 @@ PlanIQ Display superadmin session and one-time browser ticket
 The browser uses a disposable same-origin iframe running the official SDL3
 FreeRDP 3.33.1 Emscripten build. The compiled JavaScript and WASM runtime ARE
 NOW source-pinned in frontend/public/native-rdp with their complete provenance:
-GitHub Actions build 45066909031 passed and independently SHA256-verified
-sdl-freerdp.js (269234 bytes, sha256 609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5)
-and sdl-freerdp.wasm (11089855 bytes, sha256
-808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90).
-The exact compiled files were integrated into PR #408, not deployed. The iframe's credential fields are never
+GitHub Actions build 45178692053 passed the SDL3/Chromium/WebSocket proof,
+integrated in separate staging commit 8b4939715566406763cb6f54a4398be82735c383:
+sdl-freerdp.js (269234 bytes, sha256 c7d0a7e20a7b6473c5743892086b00dfb096807b8386adf992ab294867ad8112)
+and sdl-freerdp.wasm (11086426 bytes, sha256
+f5cfa907421b47c3ed6acdee329f5ebda7e9279c4a5972e02139dc8e2fe6f315).
+The exact files are staged in draft PR #412, **not merged or deployed**. The iframe's credential fields are never
 posted to the PlanIQ API. A trusted GNOME TLS SHA256 fingerprint is required
 before the WASM client can connect; /cert:ignore is explicitly forbidden.
 
@@ -148,7 +149,7 @@ safety feature; extending it requires its own operator-reviewed approval.
 ## Verified artifact integration and current gates (2026-11-22)
 
 - Official FreeRDP 3.33.1 WASM build **PASS**, including upstream Node tests.
-- Source-pinned JS/WASM artifact **verified and committed into PR #408**.
+- Corrected SDL3/Chromium-verified JS/WASM artifact **staged in draft PR #412**; no Render deploy or Viborg1 release change.
 - The write-permitted artifact integration workflow was temporary and removed
   after the reviewed files were committed. Normal branch CI remains read-only.
 - Frontend now fails its build on missing or modified FreeRDP assets if the
