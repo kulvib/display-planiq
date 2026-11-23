@@ -33,7 +33,7 @@ def test_pinned_sources_and_executable_shadow_entrypoint(monkeypatch):
     assert all(len(digest) == 64 for digest in pilot.EXPECTED.values())
     compile(pilot.ENTRY, "shadow-entrypoint.py", "exec")
     assert pilot.BUNDLE.as_posix() in pilot.EXPECTED_DROPIN
-    assert "compression=None" not in pilot.ENTRY  # use only hash-pinned source
+    assert "compression=None" in pilot.ENTRY  # verifies hash-pinned source opts out of deflate
     assert "Path(module.__file__).resolve().parent != ROOT" in pilot.ENTRY
     assert "remote_desktop_agent.main()" in pilot.ENTRY
 
