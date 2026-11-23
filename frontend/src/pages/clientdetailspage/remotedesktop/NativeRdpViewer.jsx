@@ -19,6 +19,8 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
   const [status, setStatus] = useState("GNOME RDP-pilot er klar til forbindelse.");
   const [working, setWorking] = useState(false);
   const [performance, setPerformance] = useState(null);
+  const [resolution, setResolution] = useState(null);
+  const [displayMode, setDisplayMode] = useState("fit");
 
   useEffect(() => {
     const onMessage = (event) => {
@@ -45,6 +47,14 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           });
         }
       }
+      if (event.data?.type === "planiq-native-rdp-resolution") {
+        const { sourceWidth, sourceHeight, displayWidth, displayHeight, mode } = event.data;
+        const pixels = [sourceWidth, sourceHeight, displayWidth, displayHeight];
+        if (pixels.every((n) => Number.isSafeInteger(n) && n >= 1 && n <= 32768) &&
+            (mode === "fit" || mode === "native")) {
+          setResolution({ sourceWidth, sourceHeight, displayWidth, displayHeight, mode });
+        }
+      }
       if (event.data?.type === "planiq-native-rdp-error") {
         setStatus(String(event.data.message || "RDP-fejl").slice(0, 180));
         setWorking(false);
@@ -58,6 +68,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
     if (!sessionId || !username.trim() || !password || !normalizedFingerprint || working) return;
     setWorking(true);
     setPerformance(null);
+    setResolution(null);
     setStatus("Kontrollerer WASM-browsermiljø …");
     try {
       if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
@@ -97,9 +108,19 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
       username: boot.username,
       password: boot.password,
       fingerprint: boot.fingerprint,
+      displayMode,
     }, window.location.origin);
     setBoot(null);
-  }, [boot, sessionId]);
+  }, [boot, sessionId, displayMode]);
+
+  const chooseDisplayMode = useCallback((mode) => {
+    if (mode !== "fit" && mode !== "native") return;
+    setDisplayMode(mode);
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: "planiq-native-rdp-display-mode", mode },
+      window.location.origin
+    );
+  }, []);
 
   return (
     <Paper sx={{ p: 2, bgcolor: "rgba(2,6,23,0.9)", color: "white" }}>
@@ -136,6 +157,26 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           </Stack>
         )}
         <Typography variant="body2" aria-live="polite">{status}</Typography>
+        {working && (
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <Button variant={displayMode === "fit" ? "contained" : "outlined"}
+              color="inherit" onClick={() => chooseDisplayMode("fit")}>
+              Tilpas uden opskalering
+            </Button>
+            <Button variant={displayMode === "native" ? "contained" : "outlined"}
+              color="inherit" onClick={() => chooseDisplayMode("native")}>
+              Original pixelstørrelse (1:1)
+            </Button>
+          </Stack>
+        )}
+        {working && resolution && (
+          <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
+            FreeRDP-canvas: {resolution.sourceWidth} × {resolution.sourceHeight} px ·
+            vist: {resolution.displayWidth} × {resolution.displayHeight} CSS-px
+            ({resolution.mode === "native" ? "1:1" : "tilpasset uden opskalering"}).
+            Dette er browserens billedflade, ikke en verificeret måling af Viborg1’s fysiske skærmopløsning.
+          </Typography>
+        )}
         {working && performance?.pointerEvents > 0 && (
           <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
             Browserens musehændelser: {performance.pointerEvents} ·
@@ -154,6 +195,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           setBoot(null);
           setWorking(false);
           setStatus("RDP-session lukket. Indtast login igen for at genforbinde.");
+          setResolution(null);
         }}>Afbryd RDP</Button>}
         {working && (
           <Box sx={{ width: "100%", minHeight: 520, bgcolor: "#000", borderRadius: 1, overflow: "hidden" }}>
