@@ -115,6 +115,9 @@ async def forward_native_rdp(
             close_timeout=3,
             ping_interval=15,
             ping_timeout=15,
+            # GNOME RDP is TLS-encrypted already: deflating opaque ciphertext
+            # wastes CPU and can delay interactive packets on the outbound hop.
+            compression=None,
             max_queue=4,
         ) as websocket:
 
