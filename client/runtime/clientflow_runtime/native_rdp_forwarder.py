@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ GNOME_RDP_PORT = 3389
 GUARD_MARKER = Path("/run/clientflow/native-rdp-approved")
 MAX_PDU_CHUNK = 16 * 1024
 MAX_WSS_MESSAGE = 64 * 1024
+logger = logging.getLogger(__name__)
 
 
 class NativeRdpNotApproved(RuntimeError):
@@ -82,6 +84,23 @@ async def forward_native_rdp(
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection(GNOME_RDP_HOST, GNOME_RDP_PORT), timeout=4.0
     )
+    started_at = time.monotonic()
+    counters = {
+        "tcp_to_wss_frames": 0, "tcp_to_wss_bytes": 0,
+        "wss_to_tcp_frames": 0, "wss_to_tcp_bytes": 0,
+    }
+
+    def log_flow(phase: str) -> None:
+        # Log only sizes and lifetimes. Never log RDP content, auth or socket URLs.
+        logger.info(
+            "native_rdp_agent_flow client_id=%d phase=%s elapsed_s=%d "
+            "tcp_to_wss_frames=%d tcp_to_wss_bytes=%d "
+            "wss_to_tcp_frames=%d wss_to_tcp_bytes=%d",
+            client_id, phase, int(time.monotonic() - started_at),
+            counters["tcp_to_wss_frames"], counters["tcp_to_wss_bytes"],
+            counters["wss_to_tcp_frames"], counters["wss_to_tcp_bytes"],
+        )
+
     try:
         path = (
             f"/api/remote-desktop-agent/clients/{client_id}/native-rdp/"
@@ -106,6 +125,8 @@ async def forward_native_rdp(
                         raise ConnectionError("Ugyldig binær RDP-pakke")
                     writer.write(packet)
                     await writer.drain()
+                    counters["wss_to_tcp_frames"] += 1
+                    counters["wss_to_tcp_bytes"] += len(packet)
 
             async def send_remote_bytes() -> None:
                 while True:
@@ -114,11 +135,17 @@ async def forward_native_rdp(
                     if not packet:
                         return
                     await websocket.send(packet)
+                    counters["tcp_to_wss_frames"] += 1
+                    counters["tcp_to_wss_bytes"] += len(packet)
 
             async def monitor_guard_expiry() -> None:
+                last_report = time.monotonic()
                 while True:
                     await asyncio.sleep(1)
                     ensure_native_rdp_guard(client_id=client_id)
+                    if time.monotonic() - last_report >= 10:
+                        log_flow("active")
+                        last_report = time.monotonic()
 
             tasks = [
                 asyncio.create_task(send_local_bytes()),
@@ -135,6 +162,7 @@ async def forward_native_rdp(
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
     finally:
+        log_flow("closed")
         writer.close()
         try:
             await asyncio.wait_for(writer.wait_closed(), timeout=3)
