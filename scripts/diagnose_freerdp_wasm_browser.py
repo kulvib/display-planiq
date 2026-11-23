@@ -10,14 +10,20 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from html import unescape
 from pathlib import Path
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 from threading import Thread
 
-ROOT = Path(__file__).resolve().parents[1] / "frontend" / "public" / "native-rdp"
-CASES = ("version", "minimal", "no_cert", "invalid_arg", "canvas_styled", "screen_fallback", "canvas_id")
+ORIGINAL_ROOT = Path(__file__).resolve().parents[1] / "frontend" / "public" / "native-rdp"
+ARTIFACT_DIR = os.environ.get("CF_FREERDP_ASSET_ROOT")
+ROOT = Path(ARTIFACT_DIR).resolve() if ARTIFACT_DIR else ORIGINAL_ROOT
+CASES = ("version", "minimal") if ARTIFACT_DIR else (
+    "version", "minimal", "no_cert", "invalid_arg",
+    "canvas_styled", "screen_fallback", "canvas_id"
+)
 
 HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"></head>
@@ -80,7 +86,7 @@ const collect=(category,line)=>{
 };
 window.Module={
  canvas:document.querySelector("canvas"),
- websocket:{url:"ws://127.0.0.1:9/never-open",subprotocol:"binary"},
+ websocket:{url:"ws://"+location.host+"/socket",subprotocol:"binary"},
  print:(line)=>collect("out",line),
  printErr:(line)=>collect("err",line),
  onAbort:(error)=>collect("abort",error),
@@ -102,6 +108,12 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def do_GET(self):
+        if self.path == "/socket":
+            # Count real browser WebSocket Upgrade attempts, not HTTP probes.
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                self.server.ws_attempts += 1
+            self.send_error(403, "Offline test: intentionally no RDP server")
+            return
         if self.path.startswith("/probe?"):
             data = HTML.encode("utf-8")
             self.send_response(200)
@@ -129,10 +141,21 @@ def main():
     import hashlib
     js=ROOT/"sdl-freerdp.js"
     wasm=ROOT/"sdl-freerdp.wasm"
-    expected={
+    original={
       "sdl-freerdp.js":"609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5",
       "sdl-freerdp.wasm":"808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90",
     }
+    if ARTIFACT_DIR:
+        provenance=json.loads((ROOT/"provenance.json").read_text(encoding="utf-8"))
+        if (provenance.get("freerdp_source_commit") !=
+            "65bcca1913a28cbdd7eb913599f692bd2b707991" or
+            provenance.get("emsdk") != "6.0.12"):
+            raise RuntimeError("Untrusted WASM artifact provenance")
+        expected={name:provenance["files"][name]["sha256"] for name in original}
+        if expected==original:
+            raise RuntimeError("No rebuilt artifact: hashes match old broken SDL3 build")
+    else:
+        expected=original
     for f in (js,wasm):
         actual=hashlib.sha256(f.read_bytes()).hexdigest()
         if actual!=expected[f.name]:
@@ -142,6 +165,8 @@ def main():
     if not browser:
         raise RuntimeError("Chromium/Chrome not installed: cannot claim an actual browser test")
     server=ThreadingHTTPServer(("127.0.0.1",0),Handler)
+    server.ws_attempts=0
+    captured={}
     thread=Thread(target=server.serve_forever,daemon=True);thread.start()
     try:
         for name in CASES:
@@ -167,10 +192,26 @@ def main():
                     print(f"{name}: INVALID_DOM_RESULT",flush=True)
                     continue
                 print(json.dumps(state,ensure_ascii=False),flush=True)
+                captured[name]=state
                 if not state.get("initialized"):
                     print(f"{name}: INITIALIZATION_UNVERIFIED",flush=True)
     finally:
         server.shutdown()
+    if ARTIFACT_DIR:
+        minimal=captured.get("minimal")
+        version=captured.get("version")
+        if not version or not version.get("initialized"):
+            raise RuntimeError("Rebuilt FreeRDP version command did not initialize")
+        if not minimal or not minimal.get("initialized"):
+            raise RuntimeError("Rebuilt FreeRDP client did not initialize for RDP start")
+        diagnostics=" ".join(minimal.get("output",[])).lower()
+        if ("invalid size 0x0" in diagnostics or
+            "no usable size" in diagnostics or
+            "none of the 1 displays" in diagnostics):
+            raise RuntimeError("SDL3 still reports the original 0x0 display failure")
+        if server.ws_attempts < 1:
+            raise RuntimeError("FreeRDP did not attempt any browser WebSocket Upgrade")
+        print("SDL3_SCREEN_AND_RDP_WEBSOCKET_ATTEMPT=PASS",flush=True)
     print("OFFLINE_BROWSER_DIAGNOSTIC_COMPLETE=True",flush=True)
 
 if __name__=="__main__":

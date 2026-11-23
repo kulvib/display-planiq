@@ -44,9 +44,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C upstream-freerdp rev-parse HEAD)" = "65bcca1913a28cbdd7eb913599f692bd2b707991"
-          apt-get update -q
-          apt-get install -y --no-install-recommends ninja-build cmake git ca-certificates
+          if ! command -v ninja >/dev/null || ! command -v cmake >/dev/null || ! command -v git >/dev/null; then
+            apt-get update -q
+            apt-get install -y --no-install-recommends ninja-build cmake git ca-certificates
+          fi
           emcc --version
+          cmake --version
           ninja --version
 
       - name: Build official Emscripten SDL3 client and run native-WASM unit suite
@@ -93,3 +96,30 @@ jobs:
           path: verified-native-rdp/
           if-no-files-found: error
           retention-days: 14
+
+  chromium-wasm-proof:
+    name: Proof of SDL3 screen + outgoing WebSocket in Chromium
+    needs: compile-wasm
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout candidate probe source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Retrieve exact rebuilt FreeRDP WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: planiq-freerdp-3.33.1-wasm
+          path: ${{ runner.temp }}/verified-native-rdp
+
+      - name: Prove browser startup, real screen and WebSocket Upgrade
+        shell: bash
+        env:
+          CF_FREERDP_ASSET_ROOT: ${{ runner.temp }}/verified-native-rdp
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/diagnose_freerdp_wasm_browser.py
+          command -v google-chrome || command -v chromium || command -v chromium-browser
+          python3 scripts/diagnose_freerdp_wasm_browser.py
