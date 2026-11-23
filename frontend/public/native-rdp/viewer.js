@@ -13,6 +13,18 @@
   let probe = null;
   let viewportFit = null;
   let lastProgressReport = 0;
+  let pointerEventCount = 0;
+  let pointerEventLagMaxMs = 0;
+  // Passive observation only: SDL3 remains the sole owner of pointer input.
+  element?.addEventListener?.("pointermove", (event) => {
+    const mark = window.performance?.now?.();
+    if (typeof mark !== "number" || !Number.isFinite(event.timeStamp)) return;
+    const delay = mark - event.timeStamp;
+    if (delay >= 0 && delay <= 10000) {
+      pointerEventCount++;
+      pointerEventLagMaxMs = Math.max(pointerEventLagMaxMs, Math.round(delay));
+    }
+  }, { passive: true });
   let safeFailureClass = "UNKNOWN";
   const tell = (type, message) => {
     status.textContent = String(message).slice(0, 180);
@@ -98,6 +110,14 @@
           if (now - lastProgressReport < 3000 &&
               stats.toAgentBytes > 0 && stats.fromAgentBytes > 0) return;
           lastProgressReport = now;
+          // These indicators measure browser-local responsiveness, NOT RDP RTT.
+          window.parent.postMessage({
+            type: "planiq-native-rdp-performance",
+            pointerEvents: pointerEventCount,
+            maxBrowserEventLagMs: pointerEventLagMaxMs,
+            peakOutboundQueueBytes: stats.peakOutboundQueueBytes || 0,
+            maxBrowserTimerSlipMs: stats.maxTimerSlipMs || 0,
+          }, window.location.origin);
           if (stats.toAgentBytes && stats.fromAgentBytes) {
             update("RDP-data begge veje · til GNOME " + stats.toAgentBytes +
               " bytes / " + stats.toAgentFrames + " rammer · fra GNOME " +
