@@ -54,3 +54,13 @@ test("WASM reports early exit and no-socket timeout without exposing secrets", (
   assert.match(child, /if \(!transportOpened\)/);
   assert.doesNotMatch(child, /console\.(?:error|log|warn)\(/);
 });
+
+test("pilot uses minimal FreeRDP arguments and keeps mandatory TLS pin", () => {
+  const args = child.match(/const args = \[([\s\S]*?)\];/);
+  assert.ok(args, "explicit FreeRDP argument list");
+  assert.match(args[1], /\/v:127\.0\.0\.1:3389/);
+  assert.match(args[1], /\/u:/);
+  assert.match(args[1], /\/p:/);
+  assert.match(args[1], /\/cert:fingerprint:sha256:/);
+  assert.doesNotMatch(args[1].replace(/\/\/[^\n]*/g, ""), /\/gfx|\/network:|\/log-level:/);
+});

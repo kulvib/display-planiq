@@ -102,7 +102,10 @@
           const args = [
             "/v:127.0.0.1:3389", "/u:" + username, "/p:" + password,
             "/cert:fingerprint:sha256:" + certFingerprint,
-            "/gfx", "/network:lan", "/log-level:ERROR",
+            // Pilot: only mandatory parameters, keeping strict TLS pinning.
+            // Optional GFX/network/log flags made the first WASM startup abort
+            // before a socket could be observed; enable only when proven.
+
           ];
           username = "";
           password = "";
