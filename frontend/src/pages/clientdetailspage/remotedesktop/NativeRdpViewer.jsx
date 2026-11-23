@@ -117,6 +117,11 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
         )}
         <Typography variant="body2" aria-live="polite">{status}</Typography>
         {working && <Button variant="outlined" color="inherit" onClick={() => {
+          iframeRef.current?.contentWindow?.postMessage(
+            { type: "planiq-native-rdp-visible-confirmed" }, window.location.origin
+          );
+        }}>Jeg kan se GNOME-skrivebordet (bekræft fysisk billede)</Button>}
+        {working && <Button variant="outlined" color="inherit" onClick={() => {
           setBoot(null);
           setWorking(false);
           setStatus("RDP-session lukket. Indtast login igen for at genforbinde.");
