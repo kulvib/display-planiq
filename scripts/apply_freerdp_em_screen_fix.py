@@ -41,8 +41,8 @@ AFTER = """\
 	{
 		int screenW = 0;
 		int screenH = 0;
-		if (emscripten_get_screen_size(&screenW, &screenH) == EMSCRIPTEN_RESULT_SUCCESS &&
-		    screenW >= 320 && screenW <= 8192 && screenH >= 200 && screenH <= 4320)
+		emscripten_get_screen_size(&screenW, &screenH);
+		if (screenW >= 320 && screenW <= 8192 && screenH >= 200 && screenH <= 4320)
 		{
 			SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Browser SDL3 display fallback: %dx%d",
 			            screenW, screenH);
