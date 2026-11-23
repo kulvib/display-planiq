@@ -31,12 +31,23 @@
       toAgentBytes: 0, toAgentFrames: 0,
       fromAgentBytes: 0, fromAgentFrames: 0,
       visibleConfirmed: false,
+      peakOutboundQueueBytes: 0,
+      lastOutboundQueueBytes: 0,
+      maxTimerSlipMs: 0,
     };
     let currentSocket = null;
     let stopped = false;
     let timer = null;
     const snapshot = () => ({ ...state });
-    const update = () => { if (!stopped) options.onProgress(snapshot()); };
+    // Exact packet counters, but only one diagnostic UI callback per second.
+    let lastProgressAt = -Infinity;
+    const update = () => {
+      if (stopped) return;
+      const at = now();
+      if (at - lastProgressAt < 1000) return;
+      lastProgressAt = at;
+      options.onProgress(snapshot());
+    };
     const fail = (reason) => {
       if (stopped) return;
       stopped = true;
@@ -44,9 +55,17 @@
       options.onFailure(reason);
       try { currentSocket?.close(); } catch { /* socket already closed */ }
     };
+    let lastTickAt = now();
     const tick = () => {
-      if (stopped || state.openedAt === null) return;
-      const elapsed = now() - state.openedAt;
+      if (stopped) return;
+      const current = now();
+      const slip = current - lastTickAt - 1000;
+      if (slip > 0 && slip < 60000) {
+        state.maxTimerSlipMs = Math.max(state.maxTimerSlipMs, Math.round(slip));
+      }
+      lastTickAt = current;
+      if (state.openedAt === null) return;
+      const elapsed = current - state.openedAt;
       if (elapsed >= 12000 && state.toAgentBytes === 0) {
         fail("FreeRDP åbnede WSS, men sendte ingen RDP-bytes inden 12 sekunder.");
       } else if (elapsed >= 20000 && state.toAgentBytes > 0 &&
@@ -92,7 +111,8 @@
           fail("FreeRDP forsøgte at sende en ikke-binær eller tom ramme.");
           throw new TypeError("Kun binære RDP-data accepteres");
         }
-        if (this.bufferedAmount + bytes.byteLength > MAX_BUFFERED) {
+        const bufferedBefore = this.bufferedAmount;
+        if (bufferedBefore + bytes.byteLength > MAX_BUFFERED) {
           fail("RDP-forbindelsen blev afbrudt på grund af for stor afsendelseskø.");
           throw new Error("RDP backpressure");
         }
@@ -104,6 +124,11 @@
           state.toAgentBytes += part.byteLength;
           state.toAgentFrames++;
         }
+        const queued = this.bufferedAmount;
+        state.lastOutboundQueueBytes = queued;
+        state.peakOutboundQueueBytes = Math.max(
+          state.peakOutboundQueueBytes, bufferedBefore, queued
+        );
         if (state.firstSendAt === null) state.firstSendAt = now();
         update();
       }
