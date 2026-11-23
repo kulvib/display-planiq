@@ -10,6 +10,8 @@
   let failed = false;
   let transportOpened = false;
   let transportTimer = null;
+  let probe = null;
+  let lastProgressReport = 0;
   let safeFailureClass = "UNKNOWN";
   const tell = (type, message) => {
     status.textContent = String(message).slice(0, 180);
@@ -19,6 +21,7 @@
     if (failed) return;
     failed = true;
     if (transportTimer !== null) clearTimeout(transportTimer);
+    probe?.dispose();
     tell("planiq-native-rdp-error", message);
   };
   const update = (message) => {
@@ -41,9 +44,17 @@
     } catch { return false; }
   };
   window.addEventListener("message", (event) => {
-    if (started || event.source !== window.parent || event.origin !== window.location.origin) return;
+    if (event.source !== window.parent || event.origin !== window.location.origin) return;
     const data = event.data;
-    if (!data || data.type !== "planiq-native-rdp-start") return;
+    if (data?.type === "planiq-native-rdp-visible-confirmed" && started) {
+      if (probe?.confirmVisible()) {
+        update("Fysisk GNOME-billede bekræftet · RDP-data går begge veje");
+      } else {
+        update("Skærmbillede kan først bekræftes efter binære data i begge retninger.");
+      }
+      return;
+    }
+    if (started || !data || data.type !== "planiq-native-rdp-start") return;
     started = true;
     if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
       error("GNOME RDP kræver COOP/COEP browserisolering.");
@@ -59,6 +70,35 @@
       return;
     }
     update("Starter FreeRDP …");
+    // The separate transport adapter is installed only in this disposable
+    // same-origin iframe, without retaining credentials or inspecting payloads.
+    try {
+      probe = window.PlanIQNativeRdpProbe.install({
+        url: data.tunnelUrl,
+        onFailure: error,
+        onProgress: (stats) => {
+          if (failed || stats.openedAt === null) return;
+          const now = Date.now();
+          if (now - lastProgressReport < 3000 &&
+              stats.toAgentBytes > 0 && stats.fromAgentBytes > 0) return;
+          lastProgressReport = now;
+          if (stats.toAgentBytes && stats.fromAgentBytes) {
+            update("RDP-data begge veje · til GNOME " + stats.toAgentBytes +
+              " bytes / " + stats.toAgentFrames + " rammer · fra GNOME " +
+              stats.fromAgentBytes + " bytes / " + stats.fromAgentFrames +
+              " rammer · bekræft synligt skrivebord");
+          } else if (stats.toAgentBytes) {
+            update("RDP-klient har sendt " + stats.toAgentBytes +
+              " bytes · afventer første svar fra GNOME");
+          } else {
+            update("Binær RDP-WebSocket etableret · afventer første RDP-byte");
+          }
+        },
+      });
+    } catch {
+      error("RDP-transportens sikkerhedskontrol kunne ikke initialiseres.");
+      return;
+    }
     let username = data.username;
     let password = data.password;
     let certFingerprint = data.fingerprint;
@@ -91,7 +131,7 @@
           window.Module.websocket.on("open", () => {
             transportOpened = true;
             if (transportTimer !== null) clearTimeout(transportTimer);
-            update("Binær RDP-WebSocket etableret · afventer GNOME-billede");
+            update("Binær RDP-WebSocket etableret · afventer første RDP-byte");
           });
           window.Module.websocket.on("close", () => error("RDP-tunnelen blev lukket. Vælg en ny forbindelse."));
           window.Module.websocket.on("error", () => error("RDP-transportfejl. Kontrollér GNOME og WSS-forbindelsen."));
