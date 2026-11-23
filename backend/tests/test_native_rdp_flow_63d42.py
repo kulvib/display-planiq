@@ -256,3 +256,28 @@ def test_relay_send_timeout_closes_stalled_path_without_counting_bytes(monkeypat
         assert tunnel.browser_to_agent.frames == 0
 
     asyncio.run(exercise())
+
+
+def test_flow_logging_falls_back_to_uvicorn_without_sensitive_values(monkeypatch):
+    """Render's Uvicorn INFO handler must receive bounded, secret-free counters."""
+    emitted = []
+    uvicorn_logger = logging.getLogger("uvicorn.error")
+    with monkeypatch.context() as patch:
+        patch.setattr(relay.logger, "isEnabledFor", lambda _level: False)
+        patch.setattr(uvicorn_logger, "info", lambda template, *args: emitted.append(template % args))
+        browser, agent = SocketStub(), SocketStub()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        tunnel.browser_to_agent.record(42)
+        tunnel.agent_to_browser.record(120)
+        relay._traffic_summary(tunnel, "active")
+    assert len(emitted) == 1
+    assert "native_rdp_flow client_id=3 phase=active" in emitted[0]
+    assert "browser_to_agent_bytes=42" in emitted[0]
+    assert "agent_to_browser_bytes=120" in emitted[0]
+    assert "bd29ed7a" not in emitted[0]
+    assert "8457d398" not in emitted[0]
+    assert "PRIVATE-MOCK" not in emitted[0]
