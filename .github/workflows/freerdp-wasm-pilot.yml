@@ -4,6 +4,11 @@ name: FreeRDP 3.33.1 browser WASM reproducible build
 # at EVERY frontend build; avoid 80-minute CMake rebuilds on unrelated PR pushes.
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/apply_freerdp_em_screen_fix.py
+      - .github/workflows/freerdp-wasm-pilot.yml
 
 permissions:
   contents: read
@@ -28,6 +33,12 @@ jobs:
           path: upstream-freerdp
           submodules: recursive
           persist-credentials: false
+
+      - name: Apply pinned Emscripten-only SDL3 display fix
+        run: |
+          set -euo pipefail
+          python3 scripts/apply_freerdp_em_screen_fix.py upstream-freerdp
+          git -C upstream-freerdp diff --check
 
       - name: Verify immutable upstream identity and tools
         run: |
