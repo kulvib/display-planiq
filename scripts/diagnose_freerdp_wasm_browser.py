@@ -18,7 +18,7 @@ import tempfile
 from threading import Thread
 
 ROOT = Path(__file__).resolve().parents[1] / "frontend" / "public" / "native-rdp"
-CASES = ("version", "minimal", "no_cert", "invalid_arg")
+CASES = ("version", "minimal", "no_cert", "invalid_arg", "canvas_styled", "screen_fallback")
 
 HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"></head>
@@ -32,10 +32,35 @@ const variants = {
   version: ["/version"],
   minimal: [...common, cert],
   no_cert: [...common],
-  invalid_arg: ["/this-option-does-not-exist"]
+  invalid_arg: ["/this-option-does-not-exist"],
+  canvas_styled: [...common, cert],
+  screen_fallback: [...common, cert]
 };
+if(variant==="canvas_styled") {
+  document.documentElement.style.height="100%";
+  document.body.style.cssText="margin:0;width:100vw;height:100vh";
+  const canvas=document.getElementById("desktop");
+  canvas.style.cssText="width:100vw;height:100vh;display:block";
+  canvas.width=1200;
+  canvas.height=720;
+}
+const nativeScreen={width:window.screen.width,height:window.screen.height};
+let screenShim="not-requested";
+if(variant==="screen_fallback") {
+  try {
+    Object.defineProperty(window.screen,"width",{value:1280,configurable:true});
+    Object.defineProperty(window.screen,"height",{value:720,configurable:true});
+    screenShim="attempted";
+  } catch(e) {screenShim="rejected"; }
+}
 let events=[];
-const state={variant, isolated:crossOriginIsolated, initialized:false,
+const state={variant, isolated:crossOriginIsolated,
+             viewport:{innerWidth:innerWidth,innerHeight:innerHeight,
+              screenWidth:screen.width,screenHeight:screen.height,
+              nativeScreenWidth:nativeScreen.width,nativeScreenHeight:nativeScreen.height,
+              canvasWidth:document.getElementById("desktop").width,
+              canvasHeight:document.getElementById("desktop").height,screenShim},
+             initialized:false,
              exit:null, exception:null, output:[]};
 function report(){
   state.output=events.slice(-28);
@@ -120,7 +145,7 @@ def main():
             with tempfile.TemporaryDirectory(prefix="cf-wasm-chrome-") as profile:
                 url=f"http://127.0.0.1:{server.server_port}/probe?case={name}"
                 cmd=[browser,"--headless=new","--no-sandbox","--disable-dev-shm-usage",
-                     "--no-first-run","--disable-background-networking","--disable-extensions",
+                     "--no-first-run","--disable-background-networking","--disable-extensions","--window-size=1280,800",
                      f"--user-data-dir={profile}","--virtual-time-budget=16000",
                      "--dump-dom",url]
                 try:
