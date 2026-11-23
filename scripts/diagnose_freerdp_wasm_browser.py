@@ -17,7 +17,7 @@ import tempfile
 from threading import Thread
 
 ROOT = Path(__file__).resolve().parents[1] / "frontend" / "public" / "native-rdp"
-CASES = ("version", "minimal", "no_cert", "invalid_arg", "canvas_styled", "screen_fallback")
+CASES = ("version", "minimal", "no_cert", "invalid_arg", "canvas_styled", "screen_fallback", "canvas_id")
 
 HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"></head>
@@ -33,7 +33,8 @@ const variants = {
   no_cert: [...common],
   invalid_arg: ["/this-option-does-not-exist"],
   canvas_styled: [...common, cert],
-  screen_fallback: [...common, cert]
+  screen_fallback: [...common, cert],
+  canvas_id: [...common, cert]
 };
 if(variant==="canvas_styled") {
   document.documentElement.style.height="100%";
@@ -42,6 +43,9 @@ if(variant==="canvas_styled") {
   canvas.style.cssText="width:100vw;height:100vh;display:block";
   canvas.width=1200;
   canvas.height=720;
+}
+if (variant==="canvas_id") {
+  document.getElementById("desktop").id = "canvas";
 }
 const nativeScreen={width:window.screen.width,height:window.screen.height};
 let screenShim="not-requested";
@@ -57,8 +61,8 @@ const state={variant, isolated:crossOriginIsolated,
              viewport:{innerWidth:innerWidth,innerHeight:innerHeight,
               screenWidth:screen.width,screenHeight:screen.height,
               nativeScreenWidth:nativeScreen.width,nativeScreenHeight:nativeScreen.height,
-              canvasWidth:document.getElementById("desktop").width,
-              canvasHeight:document.getElementById("desktop").height,screenShim},
+              canvasWidth:document.querySelector("canvas").width,
+              canvasHeight:document.querySelector("canvas").height,screenShim},
              initialized:false,
              exit:null, exception:null, output:[]};
 function report(){
@@ -75,7 +79,7 @@ const collect=(category,line)=>{
   report();
 };
 window.Module={
- canvas:document.getElementById("desktop"),
+ canvas:document.querySelector("canvas"),
  websocket:{url:"ws://127.0.0.1:9/never-open",subprotocol:"binary"},
  print:(line)=>collect("out",line),
  printErr:(line)=>collect("err",line),
