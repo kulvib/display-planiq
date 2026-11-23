@@ -18,8 +18,6 @@ import json
 import os
 from pathlib import Path
 import pwd
-import re
-import shutil
 import socket
 import stat
 import subprocess
@@ -177,7 +175,7 @@ def ensure_download(relpath: str) -> Path:
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ClientFlow-63D47-Pinned-Pilot"}), timeout=20) as response:
                 data = response.read(128 * 1024 + 1)
-        except (OSError, TimeoutError) as exc:
+        except (OSError, TimeoutError):
             raise RuntimeError("SOURCE_DOWNLOAD_FAILED_" + path.name) from None
         if len(data) > 128 * 1024 or hashlib.sha256(data).hexdigest() != expected:
             raise RuntimeError("SOURCE_DOWNLOAD_SHA_MISMATCH_" + path.name)
