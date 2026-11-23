@@ -18,6 +18,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("GNOME RDP-pilot er klar til forbindelse.");
   const [working, setWorking] = useState(false);
+  const [performance, setPerformance] = useState(null);
 
   useEffect(() => {
     const onMessage = (event) => {
@@ -25,6 +26,24 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           event.source !== iframeRef.current?.contentWindow) return;
       if (event.data?.type === "planiq-native-rdp-status") {
         setStatus(String(event.data.message || "Forbundet").slice(0, 180));
+      }
+      if (event.data?.type === "planiq-native-rdp-performance") {
+        const data = event.data;
+        const keys = [
+          "pointerEvents", "maxBrowserEventLagMs",
+          "peakOutboundQueueBytes", "maxBrowserTimerSlipMs"
+        ];
+        if (keys.every((key) =>
+          Number.isSafeInteger(data[key]) && data[key] >= 0 &&
+          data[key] <= 10_000_000
+        )) {
+          setPerformance({
+            pointerEvents: data.pointerEvents,
+            eventLag: data.maxBrowserEventLagMs,
+            queueKiB: Math.ceil(data.peakOutboundQueueBytes / 1024),
+            timerSlip: data.maxBrowserTimerSlipMs,
+          });
+        }
       }
       if (event.data?.type === "planiq-native-rdp-error") {
         setStatus(String(event.data.message || "RDP-fejl").slice(0, 180));
@@ -38,6 +57,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
   const start = useCallback(async () => {
     if (!sessionId || !username.trim() || !password || !normalizedFingerprint || working) return;
     setWorking(true);
+    setPerformance(null);
     setStatus("Kontrollerer WASM-browsermiljø …");
     try {
       if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
@@ -116,6 +136,15 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           </Stack>
         )}
         <Typography variant="body2" aria-live="polite">{status}</Typography>
+        {working && performance?.pointerEvents > 0 && (
+          <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
+            Browserens musehændelser: {performance.pointerEvents} ·
+            maksimal lokal eventforsinkelse {performance.eventLag} ms ·
+            maksimal WSS-afsendelseskø {performance.queueKiB} KiB ·
+            største lokal timerforsinkelse {performance.timerSlip} ms.
+            Målingerne er ikke RDP-returforsinkelse.
+          </Typography>
+        )}
         {working && <Button variant="outlined" color="inherit" onClick={() => {
           iframeRef.current?.contentWindow?.postMessage(
             { type: "planiq-native-rdp-visible-confirmed" }, window.location.origin
