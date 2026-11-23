@@ -146,7 +146,13 @@ def test_agent_counts_both_socket_boundaries_without_logging_credentials(monkeyp
 
     monkeypatch.setattr(forwarder, "ensure_native_rdp_guard", lambda **_: None)
     monkeypatch.setattr(forwarder.asyncio, "open_connection", open_local)
-    monkeypatch.setattr(forwarder.websockets, "connect", lambda *_a, **_kw: Connected())
+    connect_kwargs = {}
+
+    def connect_without_compression(*_args, **kwargs):
+        connect_kwargs.update(kwargs)
+        return Connected()
+
+    monkeypatch.setattr(forwarder.websockets, "connect", connect_without_compression)
 
     async def exercise():
         task = asyncio.create_task(forwarder.forward_native_rdp(
@@ -161,6 +167,8 @@ def test_agent_counts_both_socket_boundaries_without_logging_credentials(monkeyp
             await asyncio.sleep(0.002)
         assert writer.written == [b"MOCK-BROWSER-HANDSHAKE"]
         assert websocket.sent == [b"MOCK-GNOME-REPLY"]
+        assert connect_kwargs["compression"] is None
+        assert connect_kwargs["max_queue"] == 4
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         assert writer.closed
@@ -172,3 +180,79 @@ def test_agent_counts_both_socket_boundaries_without_logging_credentials(monkeyp
     assert "wss_to_tcp_frames=1" in caplog.text
     for forbidden in ("MOCK-BROWSER-HANDSHAKE", "MOCK-GNOME-REPLY", "IN_MEMORY_DO_NOT_LOG", "bd29ed7a"):
         assert forbidden not in caplog.text
+
+
+def test_relay_reuses_one_receive_across_idle_authorization_checks(monkeypatch):
+    """No idle cancellation/restart, and close stops a still-pending receiver."""
+    monkeypatch.setattr(relay, "CHECK_INTERVAL", 0.005)
+
+    class CountingSocket(SocketStub):
+        def __init__(self):
+            super().__init__()
+            self.receive_calls = 0
+
+        async def receive(self):
+            self.receive_calls += 1
+            return await super().receive()
+
+    async def exercise():
+        browser, agent = CountingSocket(), SocketStub()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        checks = []
+        tunnel.authorized_browser = lambda: checks.append(1) or True
+        tunnel.authorized_agent = lambda: True
+        task = asyncio.create_task(relay._pump(tunnel, browser, browser_side=True))
+        await asyncio.sleep(0.045)
+        assert len(checks) >= 2
+        assert browser.receive_calls == 1, "do not recreate idle receive task on each check"
+
+        payloads = [bytes([i % 251]) for i in range(150)]
+        for packet in payloads:
+            await browser.rx.put({"type": "websocket.receive", "bytes": packet})
+        for _ in range(100):
+            if len(agent.sent) == len(payloads):
+                break
+            await asyncio.sleep(0.005)
+        assert agent.sent == payloads
+        assert tunnel.browser_to_agent.frames == len(payloads)
+        assert tunnel.browser_to_agent.bytes == len(payloads)
+
+        tunnel.closed.set()
+        await asyncio.wait_for(task, timeout=0.4)
+        assert browser.receive_calls <= len(payloads) + 1
+
+    asyncio.run(exercise())
+
+
+def test_relay_send_timeout_closes_stalled_path_without_counting_bytes(monkeypatch):
+    """A slow downstream cannot cause unbounded buffering or fake delivered frames."""
+    monkeypatch.setattr(relay, "SEND_TIMEOUT", 0.02)
+
+    class StalledPeer(SocketStub):
+        async def send_bytes(self, _packet):
+            await asyncio.Future()
+
+    async def exercise():
+        browser, agent = SocketStub(), StalledPeer()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        tunnel.authorized_browser = lambda: True
+        tunnel.authorized_agent = lambda: True
+        await browser.rx.put({"type": "websocket.receive", "bytes": b"PRIVATE-MOCK"})
+        try:
+            await relay._pump(tunnel, browser, browser_side=True)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError("stalled peer must time out")
+        assert tunnel.browser_to_agent.bytes == 0
+        assert tunnel.browser_to_agent.frames == 0
+
+    asyncio.run(exercise())
