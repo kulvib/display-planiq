@@ -1,0 +1,31 @@
+name: FreeRDP browser startup diagnostics (offline)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/diagnose_freerdp_wasm_browser.py
+      - .github/workflows/freerdp-browser-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-wasm:
+    name: Browser-only SDL3 WASM CLI/SDL startup matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Chromium runtime and artifact checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v google-chrome || command -v chromium || command -v chromium-browser
+          python3 -m py_compile scripts/diagnose_freerdp_wasm_browser.py
+      - name: Chromium WASM startup (no real RDP client, network or credentials)
+        run: python3 scripts/diagnose_freerdp_wasm_browser.py
