@@ -11,6 +11,7 @@
   let transportOpened = false;
   let transportTimer = null;
   let probe = null;
+  let viewportFit = null;
   let lastProgressReport = 0;
   let safeFailureClass = "UNKNOWN";
   const tell = (type, message) => {
@@ -22,6 +23,7 @@
     failed = true;
     if (transportTimer !== null) clearTimeout(transportTimer);
     probe?.dispose();
+    viewportFit?.dispose();
     tell("planiq-native-rdp-error", message);
   };
   const update = (message) => {
@@ -71,6 +73,16 @@
     }
     if (!element || element.tagName !== "CANVAS" || document.querySelector("#canvas") !== element) {
       error("SDL3-billedfladen #canvas mangler. RDP kan ikke vise skærmen.");
+      return;
+    }
+    // CSS presentation scale only. SDL3 retains its actual RDP window size
+    // and accounts for CSS-to-window scaling when converting pointer events.
+    try {
+      viewportFit = window.PlanIQNativeRdpViewport.install({
+        canvas: element, viewport: document.getElementById("viewport"),
+      });
+    } catch {
+      error("RDP-skærmen kunne ikke tilpasses visningsrammen.");
       return;
     }
     update("Starter FreeRDP …");
