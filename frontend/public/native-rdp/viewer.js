@@ -4,7 +4,7 @@
  */
 (() => {
   "use strict";
-  const element = document.getElementById("desktop");
+  const element = document.getElementById("canvas");
   const status = document.getElementById("status");
   let started = false;
   let failed = false;
@@ -67,6 +67,10 @@
         typeof data.password !== "string" || !data.password || data.password.length > 512 ||
         typeof data.fingerprint !== "string" || !/^(?:[0-9a-f]{2}:){31}[0-9a-f]{2}$/.test(data.fingerprint)) {
       error("RDP-login eller sessionsbinding er ugyldig.");
+      return;
+    }
+    if (!element || element.tagName !== "CANVAS" || document.querySelector("#canvas") !== element) {
+      error("SDL3-billedfladen #canvas mangler. RDP kan ikke vise skærmen.");
       return;
     }
     update("Starter FreeRDP …");
