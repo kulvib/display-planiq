@@ -354,3 +354,41 @@ correct pointer alignment across scaled canvas, keyboard, 6-minute watchdog,
 and measured latency. RDP-native dynamic resolution and higher sharpness would
 be a later separate change, not assumed or faked by this CSS-only fix.
 Keep all related PRs draft and release 1249 blocked until physical acceptance.
+
+
+## 63D-45 — Slow physical mouse despite visible GNOME desktop
+
+The 63D-44 physical pilot now renders real GNOME desktop pixels, but the
+operator reports **very slow mouse behavior**. This remains a BLOCKER for
+release 1249. The original root cause is not yet established and the image,
+keyboard, pointer responsiveness and end-to-end latency are separate acceptance
+checks.
+
+The browser diagnostic adapter was previously calling its progress callback
+on **every incoming/outgoing WebSocket binary packet** even though the UI
+limited status rendering to once every three seconds. 63D-45 coalesces that
+reporting to at most one callback per second while still counting **every byte
+and frame** exactly. Mouse packets and browser/agent/server protocol payloads
+are never dropped, modified or reordered.
+
+The same-origin disposable iframe passively observes pointermove event
+arrival delay (performance.now minus DOM event.timeStamp), maximum browser
+WebSocket bufferedAmount and maximum one-second timer slip. These four
+integer fields are sent to the parent at the existing bounded status cadence,
+with no coordinates, keys, credential fields, session IDs, RDP payloads or
+packet samples. They are explicitly **NOT input-to-visible-frame latency**.
+No persistent storage, database or additional Render infrastructure is used.
+
+Interpretation for ONE bounded physical check:
+- High browser event delay / timer slip => investigate browser main-thread
+  contention and SDL3 framebuffer updates.
+- High WebSocket bufferedAmount => investigate outbound queue and network
+  backpressure.
+- Small values on both do NOT prove the mouse is fast: latency may still be
+  server/remote-cursor rendering or downstream RDP processing.
+
+Do not introduce speculative `-mouse-motion`, codec changes or parallel
+RDP input channels until actual behavior is measured. FreeRDP/SDL3 upstream
+also reports input lag in graphics-heavy sessions, so changing a network flag
+without evidence is not an accepted fix. Keep PR draft, retain immutable
+release 1248, six-minute GNOME firewall/watchdog and ten-minute agent rollback.
