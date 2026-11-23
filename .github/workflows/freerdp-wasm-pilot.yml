@@ -124,3 +124,77 @@ jobs:
           python3 -m py_compile scripts/prove_freerdp_pinned_wasm_chromium.py
           command -v google-chrome || command -v chromium || command -v chromium-browser
           python3 scripts/prove_freerdp_pinned_wasm_chromium.py
+
+  stage-verified-binary:
+    name: Stage verified WASM as a separate integration commit (never main)
+    needs: [compile-wasm, chromium-wasm-proof]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 411 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'diagnostic/63d-freerdp-actual-chromium-browser'
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout exact reviewed PR branch head (not main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: \${{ github.event.pull_request.head.sha }}
+          persist-credentials: true
+      - name: Download passed browser-proof artifact from this same workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: planiq-freerdp-3.33.1-wasm
+          path: \${{ runner.temp }}/proven-wasm
+      - name: Integrate pinned binary only after successful browser test
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "\${{ github.event.pull_request.head.sha }}"
+          python3 -m py_compile scripts/integrate_verified_freerdp_wasm.py
+          python3 scripts/integrate_verified_freerdp_wasm.py "\${{ runner.temp }}/proven-wasm"
+          git diff --check
+          node --version
+      - name: Strict frontend WASM gate and existing contracts
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.21.0"
+      - name: Verify source-pinned FreeRDP integration and frontend build
+        shell: bash
+        working-directory: frontend
+        env:
+          VITE_NATIVE_RDP_PILOT: "true"
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/checkNativeRdpWasm.mjs
+          node --test tests/checkNativeRdpWasm.test.mjs tests/nativeRdpWasmPilot.test.mjs
+          npm run build
+      - name: Stage only the verified integration in an isolated branch
+        shell: bash
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "\${{ github.event.pull_request.head.sha }}"
+          git diff --check
+          git config user.name "PlanIQ WASM staging"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            frontend/public/native-rdp/sdl-freerdp.js \
+            frontend/public/native-rdp/sdl-freerdp.wasm \
+            frontend/public/native-rdp/provenance.json \
+            frontend/scripts/checkNativeRdpWasm.mjs \
+            SHA256SUMS.txt
+          test "$(git diff --cached --name-only | wc -l)" -eq 5
+          git diff --cached --quiet && { echo "STOP: No binary changes staged"; exit 2; } || true
+          git commit -m "chore(native-rdp): stage Chromium-proven FreeRDP 3.33.1 WASM binary"
+          test "$(git rev-parse HEAD^)" = "\${{ github.event.pull_request.head.sha }}"
+          STAGING_BRANCH="stage/63d-411-wasm-\${{ github.run_id }}"
+          git push origin "HEAD:refs/heads/$STAGING_BRANCH"
+          echo "STAGING_BRANCH=$STAGING_BRANCH"
+          echo "STAGING_COMMIT_SHA=$(git rev-parse HEAD)"
+          echo "PR_HEAD_UNCHANGED=\${{ github.event.pull_request.head.sha }}"
