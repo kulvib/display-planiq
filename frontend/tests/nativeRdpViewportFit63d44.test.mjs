@@ -62,15 +62,16 @@ function harness({ sourceWidth = 520, sourceHeight = 390, width = 1480, height =
   };
 }
 
-test("SDL3 canvas scales from 520x390 to fill the 1480x720 viewport without stretching", () => {
+test("a 520x390 source is never upscaled merely to fill a 1480x720 viewport", () => {
   const h = harness();
   const viewportFit = h.root.PlanIQNativeRdpViewport.install({
     canvas: h.canvas, viewport: h.viewport,
   });
   h.flush();
-  assert.equal(h.width, "960px");
-  assert.equal(h.height, "720px");
-  assert.equal(960 / 720, 520 / 390);
+  assert.equal(h.width, "520px");
+  assert.equal(h.height, "390px");
+  assert.equal(h.canvas.width, 520);
+  assert.equal(h.canvas.height, 390);
   assert.equal(h.mutation.length, 1);
   viewportFit.dispose();
   assert.equal(h.resize[0].disconnected, true);
@@ -109,8 +110,8 @@ test("1x1 SDL initialization and invalid dimensions cannot stretch or mutate fra
   h.canvas.height = 390;
   h.mutation[0].callback();
   h.flush();
-  assert.equal(h.width, "960px");
-  assert.equal(h.height, "720px");
+  assert.equal(h.width, "520px");
+  assert.equal(h.height, "390px");
   assert.equal(h.canvas.width, 520);
   assert.equal(h.canvas.height, 390);
   assert.equal(h.root.PlanIQNativeRdpViewport.calculateFit(0, 390, 1480, 720), null);
@@ -135,4 +136,73 @@ test("the iframe retains the exact SDL3 canvas contract and transport-isolated l
   assert.match(viewer, /canvas: element, viewport: document\.getElementById\("viewport"\)/);
   assert.doesNotMatch(viewer, /canvas\.width\s*=/);
   assert.doesNotMatch(viewer, /canvas\.height\s*=/);
+});
+
+test("native 1:1 pixels, CSS downscale and reports never change GNOME framebuffer", () => {
+  const h = harness({ sourceWidth: 1920, sourceHeight: 1080, width: 1280, height: 720 });
+  const dimensions = [];
+  const fit = h.root.PlanIQNativeRdpViewport.install({
+    canvas: h.canvas, viewport: h.viewport, onResize: (data) => dimensions.push(data),
+  });
+  h.flush();
+  assert.equal(h.width, "1280px");
+  assert.equal(h.height, "720px");
+  assert.equal(dimensions.length, 1);
+  assert.equal(dimensions[0].sourceWidth, 1920);
+  assert.equal(dimensions[0].sourceHeight, 1080);
+  assert.equal(dimensions[0].displayWidth, 1280);
+  assert.equal(dimensions[0].mode, "fit");
+  h.resize[0].callback();
+  h.flush();
+  assert.equal(dimensions.length, 1, "unchanged dimensions must not flood the UI");
+
+  fit.setMode("native");
+  h.flush();
+  assert.equal(h.width, "1920px");
+  assert.equal(h.height, "1080px");
+  assert.equal(dimensions.length, 2);
+  assert.equal(dimensions[1].mode, "native");
+  assert.equal(h.canvas.width, 1920);
+  assert.equal(h.canvas.height, 1080);
+
+  assert.throws(() => fit.setMode("stretch"), /Ugyldig/);
+  fit.setMode("fit");
+  h.flush();
+  assert.equal(h.width, "1280px");
+  assert.equal(h.height, "720px");
+  assert.equal(dimensions.length, 3);
+  fit.dispose();
+  fit.setMode("native");
+  assert.equal(h.pending(), 0);
+});
+
+test("native mode does not crop a large framebuffer via CSS max-size and supports scrolling", () => {
+  assert.match(html, /#viewport[^}]*overflow:auto/);
+  assert.match(html, /#canvas[^}]*margin:auto/);
+  assert.doesNotMatch(html, /#canvas[^}]*max-width:100%/);
+  assert.doesNotMatch(html, /#canvas[^}]*max-height:100%/);
+  const h = harness({ sourceWidth: 3840, sourceHeight: 2160, width: 800, height: 600 });
+  const fit = h.root.PlanIQNativeRdpViewport.install({
+    canvas: h.canvas, viewport: h.viewport, mode: "native",
+  });
+  h.flush();
+  assert.equal(h.width, "3840px");
+  assert.equal(h.height, "2160px");
+  assert.equal(h.canvas.width, 3840);
+  fit.dispose();
+});
+
+test("resolution reporting is same-origin, bounded and cannot request GNOME resolution changes", () => {
+  const ui = fs.readFileSync(
+    new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(viewer, /planiq-native-rdp-resolution/);
+  assert.match(viewer, /planiq-native-rdp-display-mode/);
+  assert.match(viewer, /onResize:.*sourceWidth/s);
+  assert.match(ui, /Tilpas uden opskalering/);
+  assert.match(ui, /Original pixelstørrelse \(1:1\)/);
+  assert.match(ui, /Number\.isSafeInteger\(n\)/);
+  assert.match(ui, /ikke en verificeret måling af Viborg1/);
+  assert.doesNotMatch(viewer, /\/(?:dynamic-resolution|size|smart-sizing)(?:"|:)/);
 });
