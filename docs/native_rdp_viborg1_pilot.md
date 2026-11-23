@@ -296,3 +296,30 @@ mouse, drag, scroll, keyboard or latency tests.
   Docker/PostgreSQL smoke and an observed actual GNOME image with mouse
   click/drag/scroll, keyboard and measured input-to-visible-pixel
   latency. JPEG fallback must work. No release 1249 on green CI alone.
+
+## 63D-43 — RDP bytes reach browser but no image (physical evidence 2026-11-23)
+
+The second physical Viborg1 run PASSed all firewall, six-minute GNOME timer,
+root-only browser grant and temporary-agent integrity gates. The browser
+reported **53,565 bytes / 858 WS frames to GNOME** and **4,325,501 bytes /
+1,220 WS frames from GNOME**, but the desktop remained visually black. This
+proves bidirectional delivery into the browser, **not** successful RDP graphics,
+authentication, decoded pixels, or mouse/keyboard control.
+
+The pinned FreeRDP SDL3 browser build delegates window creation to SDL3's
+Emscripten video driver. Upstream SDL3's Emscripten CreateWindow defaults to
+CSS selector `#canvas` unless an explicit SDL hint/window property overrides
+it. The pinned FreeRDP SDL3 window creation does not specify such an override.
+Our iframe originally used `<canvas id="desktop">` and the viewer bound
+`Module.canvas` to that element; this mismatches the SDL3 selector and can
+prevent drawing while WSS continues flowing. The fix changes the iframe to
+`<canvas id="canvas">`, updates the `Module.canvas` binding and adds a
+fail-closed selector guard and a Node regression test against the verified
+compiled Emscripten JS. The compiled JS/WASM artifacts are left byte-for-byte
+unchanged, as are the TLS pin, short-lived ticket, relay and agent.
+
+This is a source-supported **root-cause hypothesis**, not a physically proven
+fix. Only rerun physical Viborg1 after reviewing and passing CI and redeploying
+the matching frontend source commit; confirm actual GNOME pixels, mouse and
+keyboard before merging or cutting release 1249. Do not repeat the six-minute
+pilot until its preceding cleanup state is verified.
