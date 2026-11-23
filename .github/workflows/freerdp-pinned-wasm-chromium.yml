@@ -1,0 +1,49 @@
+name: FreeRDP pinned WASM real Chromium startup proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/prove_freerdp_pinned_wasm_chromium.py
+      - .github/workflows/freerdp-pinned-wasm-chromium.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  chromium-reuse-artifact:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Python 3.13
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13.16"
+      - name: Download precisely verified WASM build (no rebuild)
+        uses: actions/download-artifact@v4
+        with:
+          name: planiq-freerdp-3.33.1-wasm
+          run-id: 45169446499
+          repository: kulvib/display-planiq
+          github-token: \${{ github.token }}
+          path: \${{ runner.temp }}/pinned-wasm
+      - name: Install isolated browser controller
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install playwright==1.57.0
+          python3 -m py_compile scripts/prove_freerdp_pinned_wasm_chromium.py
+          command -v google-chrome || command -v chromium
+      - name: Test actual asynchronous startup and local WebSocket upgrade
+        shell: bash
+        env:
+          CF_FREERDP_ASSET_ROOT: \${{ runner.temp }}/pinned-wasm
+        run: |
+          set -euo pipefail
+          python3 scripts/prove_freerdp_pinned_wasm_chromium.py
