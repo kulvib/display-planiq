@@ -38,6 +38,7 @@ def simulated(tmp_path, monkeypatch, *, fail_native=False, fail_start=False):
                 "FREERDP_REFERENCE=xfreerdp3\n"
                 "X11_ISOLATION=xvfb-run\nX11_SERVER=Xvfb\n"
                 "XAUTH_PROGRAM=xauth\nRDP_TLS_PIN_TOOL=openssl\n"
+                "X11_SCREEN_SAMPLER=OPTIONAL_NOT_INSTALLED\n"
             )
         if label == "PHYSICAL_PREFLIGHT":
             return "PHYSICAL_PREFLIGHT=PASS\n"
@@ -112,7 +113,7 @@ def test_production_and_physical_safety_contracts():
     assert "UNEXPECTED_AGENT_OVERRIDE" in source
     assert "ROOT_FIREWALL_WATCHDOG_STAGE" in source
     assert "GNOME_MONITOR_MODE_NOT_VERIFIED" in source
-    assert "NATIVE_REFERENCE_DEPENDENCY_MISSING" in source
+    assert "REQUIRED_NATIVE_PROGRAM_MISSING_" in source
     assert "STAGED_GUARD" in source
     assert "clientflow_63d30_local_rdp_pilot.py" in source
     assert "GNOME_RDP_STOP" in source
@@ -129,3 +130,50 @@ def test_production_and_physical_safety_contracts():
     assert '"/cert:ignore"' not in source
     assert "systemctl restart" not in source
     assert "0.0.0.0" not in source
+
+
+def test_optional_xwd_is_not_a_reason_to_start_or_skip_guard(tmp_path, monkeypatch, capsys):
+    m, events = simulated(tmp_path, monkeypatch)
+    assert m.main() == 0
+    output = capsys.readouterr().out
+    assert "X11_SCREEN_SAMPLER=OPTIONAL_NOT_INSTALLED" in output
+    assert "NATIVE_FREERDP_XVFB_XAUTH_CAPABILITY=PASS" in output
+    assert events == ["stage", "start", "native", "stop", "unstage"]
+
+
+@pytest.mark.parametrize("label", [
+    "FREERDP_REFERENCE", "X11_ISOLATION", "X11_SERVER",
+    "XAUTH_PROGRAM", "RDP_TLS_PIN_TOOL",
+])
+def test_missing_real_dependency_is_identified_before_gnome_start(
+    tmp_path, monkeypatch, label, capsys,
+):
+    m, events = simulated(tmp_path, monkeypatch)
+    original_command = m.command
+
+    def command(name, argv, timeout=80):
+        value = original_command(name, argv, timeout=timeout)
+        if name == "NATIVE_CAPABILITY":
+            value = value.replace(label + "=", label + "=NOT_INSTALLED#")
+        return value
+
+    monkeypatch.setattr(m, "command", command)
+    assert m.main() == 2
+    output = capsys.readouterr().out
+    assert "REQUIRED_NATIVE_PROGRAM_MISSING_" + label in output
+    assert events == []  # no RDP stage, start or watchdog changes
+
+
+def test_native_preflight_requires_all_six_expected_fields(tmp_path, monkeypatch):
+    m, events = simulated(tmp_path, monkeypatch)
+    original_command = m.command
+
+    def command(name, argv, timeout=80):
+        value = original_command(name, argv, timeout=timeout)
+        if name == "NATIVE_CAPABILITY":
+            return value.replace("XAUTH_PROGRAM=xauth\\n", "")
+        return value
+
+    monkeypatch.setattr(m, "command", command)
+    assert m.main() == 2
+    assert events == []
