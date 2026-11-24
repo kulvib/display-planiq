@@ -97,5 +97,5 @@ test("missing SDL3 canvas fails closed before FreeRDP or transport starts", () =
   };
   listeners.get("message")({ source: parent, origin: window.location.origin, data });
   assert.equal(transportStarts, 0);
-  assert.match(status.textContent, /SDL3-billedfladen/);
+  assert.equal(status.textContent, "ClientFlow-forbindelsen blev afbrudt. Prøv igen.");
 });

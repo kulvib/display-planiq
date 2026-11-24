@@ -26,9 +26,21 @@
       pointerEventLagMaxMs = Math.max(pointerEventLagMaxMs, Math.round(delay));
     }
   }, { passive: true });
+  let lastUserActivity = -Infinity;
+  for (const name of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"]) {
+    window.addEventListener(name, event => {
+      if (!started || failed || !event.isTrusted) return;
+      const now = Date.now();
+      if (now - lastUserActivity < 1000) return;
+      lastUserActivity = now;
+      window.parent.postMessage({ type: "planiq-native-rdp-user-activity" }, window.location.origin);
+    }, { capture: true, passive: true });
+  }
   let safeFailureClass = "UNKNOWN";
   const tell = (type, message) => {
-    status.textContent = String(message).slice(0, 180);
+    status.textContent = type === "planiq-native-rdp-error"
+      ? "ClientFlow-forbindelsen blev afbrudt. Prøv igen."
+      : message === "Forbundet" ? "Forbundet" : "Forbinder …";
     status.hidden = type !== "planiq-native-rdp-error" && bidirectionalTraffic;
     window.parent.postMessage({ type, message: status.textContent }, window.location.origin);
   };

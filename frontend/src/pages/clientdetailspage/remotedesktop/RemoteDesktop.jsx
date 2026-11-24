@@ -7,6 +7,10 @@ import {
   CircularProgress,
   Container,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Paper,
   Stack,
   TextField,
@@ -237,7 +241,32 @@ export default function RemoteDesktop() {
   const [keyboardMode, setKeyboardMode] = useState(REMOTE_KEYBOARD_MODE_STANDARD);
   const [activeTab, setActiveTab] = useState("desktop");
   const [nativeDesktopWanted, setNativeDesktopWanted] = useState(true);
-  useEffect(() => setNativeDesktopWanted(true), [clientId]);
+  const [idleWarning, setIdleWarning] = useState(null);
+  const [idleSeconds, setIdleSeconds] = useState(60);
+  const [idleStopped, setIdleStopped] = useState(false);
+  const idleStoppedRef = useRef(false);
+  const markIdleStopped = useCallback(() => {
+    idleStoppedRef.current = true;
+    setIdleStopped(true);
+    setIdleWarning(null);
+    setNativeDesktopWanted(false);
+  }, []);
+  useEffect(() => {
+    idleStoppedRef.current = false;
+    setIdleStopped(false);
+    setIdleWarning(null);
+    setNativeDesktopWanted(true);
+  }, [clientId]);
+  useEffect(() => {
+    if (!nativeDesktopWanted) setIdleWarning(null);
+  }, [nativeDesktopWanted]);
+  useEffect(() => {
+    if (!idleWarning) return undefined;
+    const tick = () => setIdleSeconds(Math.max(0, Math.ceil((idleWarning.deadline - Date.now()) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 250);
+    return () => window.clearInterval(timer);
+  }, [idleWarning]);
   const [dragOverUpload, setDragOverUpload] = useState(false);
   const [shoutText, setShoutText] = useState("");
   const [shoutSending, setShoutSending] = useState(false);
@@ -398,7 +427,7 @@ export default function RemoteDesktop() {
   }, [startStream]);
 
   const connect = useCallback(async () => {
-    if (!clientId || (nativeRequested && !window.crossOriginIsolated)) return;
+    if (!clientId || (nativeRequested && (!window.crossOriginIsolated || idleStoppedRef.current))) return;
     const attemptId = ++connectAttemptRef.current;
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -406,7 +435,7 @@ export default function RemoteDesktop() {
     }
 
     const scheduleReconnect = (reason = "") => {
-      if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current) return;
+      if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current || idleStoppedRef.current) return;
       const baseDelay = Math.min(1000 * (2 ** Math.min(reconnectAttemptRef.current, 4)), 10_000);
       const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
       reconnectAttemptRef.current += 1;
@@ -522,6 +551,12 @@ export default function RemoteDesktop() {
       setTransportMode(null);
       setAgentConnected(false);
       setKeyboardEnabled(false);
+      setIdleWarning(null);
+      if (nativeRequested && event.code === 4408) {
+        markIdleStopped();
+        setStatus("ClientFlow-forbindelsen blev afsluttet på grund af inaktivitet.");
+        return;
+      }
       if (nativeRequested && [4401, 4403, 1008].includes(event.code)) {
         setStatus("Forbindelsen er ikke længere godkendt.");
         return;
@@ -544,6 +579,19 @@ export default function RemoteDesktop() {
         return;
       }
 
+      if (msg.type === "native_rdp_idle") {
+        if (msg.phase === "warning" && Number.isInteger(msg.seconds) && msg.seconds >= 1 && msg.seconds <= 60 &&
+            typeof msg.request_id === "string") {
+          setIdleSeconds(msg.seconds);
+          setIdleWarning({ requestId: msg.request_id, deadline: Date.now() + msg.seconds * 1000 });
+        } else if (msg.phase === "reset") {
+          setIdleWarning(previous => previous?.requestId === msg.request_id ? null : previous);
+        } else if (msg.phase === "expired") {
+          markIdleStopped();
+        }
+        return;
+      }
+
       if (msg.type === "native_rdp_autologin_envelope" ||
           msg.type === "native_rdp_autologin_denied") {
         setNativeRdpAutologinMessage(msg);
@@ -559,6 +607,7 @@ export default function RemoteDesktop() {
       }
 
       if (msg.type === "hello") {
+        setIdleWarning(null);
         setNativeRdpAutologinMessage(null);
         setSessionId(msg.session_id);
         setAgentConnected(!!msg.agent_connected);
@@ -1434,7 +1483,7 @@ export default function RemoteDesktop() {
 
   const requestFullscreen = useCallback(() => {
     const el = nativeRdpModeRef.current
-      ? document.querySelector('iframe[title="PlanIQ indbygget GNOME Remote Desktop"]')
+      ? document.querySelector('iframe[title="ClientFlow Remote Desktop"]')
       : containerRef.current;
     if (el?.requestFullscreen) el.requestFullscreen();
   }, []);
@@ -1467,6 +1516,7 @@ export default function RemoteDesktop() {
       autologinMessage={nativeRdpAutologinMessage}
       desired={nativeDesktopWanted}
       onDesiredChange={setNativeDesktopWanted}
+      idleStopped={idleStopped}
     />
   ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>
@@ -1686,7 +1736,12 @@ export default function RemoteDesktop() {
               </Stack>
               <Stack direction="row" spacing={0.75} alignItems="center">
                 <Chip size="small" label={canControl ? "Klient tilgængelig" : "Venter på klient"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />
-                {!canControl && <Button size="small" variant="outlined" onClick={connect} disabled={!window.crossOriginIsolated}>Genforbind</Button>}
+                {(!canControl || idleStopped) && <Button size="small" variant="outlined" onClick={() => {
+                  idleStoppedRef.current = false;
+                  setIdleStopped(false);
+                  setNativeDesktopWanted(true);
+                  void connect();
+                }} disabled={!window.crossOriginIsolated}>{idleStopped ? "Forbind" : "Genforbind"}</Button>}
               </Stack>
             </Stack>
           </Paper>
@@ -1798,6 +1853,29 @@ export default function RemoteDesktop() {
           </Button>
         </Paper>
 
+        {nativeRequested && idleStopped && (
+          <Typography variant="body2" role="status">ClientFlow-forbindelsen er afsluttet på grund af inaktivitet.</Typography>
+        )}
+        {nativeRequested && <Dialog open={Boolean(idleWarning)} disableEscapeKeyDown
+          container={() => document.fullscreenElement || document.body}
+          PaperProps={{ sx: { bgcolor: "#0f172a", color: "#f8fafc" } }}>
+          <DialogTitle>ClientFlow-forbindelsen udløber snart</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">Forbindelsen afsluttes automatisk på grund af inaktivitet.</Typography>
+            <Typography variant="h4" textAlign="center" sx={{ mt: 2, fontVariantNumeric: "tabular-nums" }}>
+              {String(Math.floor(idleSeconds / 60)).padStart(2, "0")}:{String(idleSeconds % 60).padStart(2, "0")}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button color="inherit" onClick={() => {
+              markIdleStopped();
+              try { wsRef.current?.close(); } catch {}
+            }}>Afbryd</Button>
+            <Button variant="contained" onClick={() => {
+              if (idleWarning) send({ type: "native_rdp_user_activity", request_id: idleWarning.requestId });
+            }}>Fortsæt session</Button>
+          </DialogActions>
+        </Dialog>}
         <AppSnackbar
           open={Boolean(actionMessage)}
           message={actionMessage}

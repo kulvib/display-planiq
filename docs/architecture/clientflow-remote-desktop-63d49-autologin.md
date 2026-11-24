@@ -299,3 +299,18 @@ expiry on the live authorized managed tunnel, with a conditional DB update
 that cannot revive terminal/expired rows. Login lifetime and revocation
 checks remain unchanged. The pilot installer still rolls back after 20 min.
 Long duration, hidden Files tab and backend lease renewal require validation.
+
+
+## 63D-59D — idle policy and ClientFlow terminology
+
+Managed native sessions use a 600-second monotonic server deadline, warning
+60 seconds before expiry. A current-generation authenticated user activity
+message resets it; no media, keepalive, physical renewal or browser-supplied
+timestamp can reset it. Parent and iframe trusted input observations are
+throttled; this is a cooperative browser activity signal, not proof against
+an intentionally modified authenticated browser. Expiry stops the entire
+control session and existing tunnel/physical teardown; close code 4408
+suppresses automatic reconnection. File/shout input on the same page counts.
+The warning is visible on either tab, including fullscreen. Visible sandbox
+status uses ClientFlow terminology; internal protocol names remain intact.
+No new WASM binary or client runtime changes. HTTPS fallback is separate.

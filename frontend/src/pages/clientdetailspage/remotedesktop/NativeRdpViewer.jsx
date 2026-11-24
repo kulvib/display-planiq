@@ -15,7 +15,7 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
  * Removing the iframe destroys its WASM heap, sockets and threads.
  * RDP credentials never go through a PlanIQ HTTP endpoint or storage.
  */
-export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange }) {
+export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange, idleStopped = false }) {
   const iframeRef = useRef(null);
   const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
@@ -27,6 +27,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const [recovering, setRecovering] = useState(false);
   const [retryAllowed, setRetryAllowed] = useState(false);
   const launchInProgressRef = useRef(false);
+  const lastActivitySentRef = useRef(-Infinity);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
   const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
   const [boot, setBoot] = useState(null);
@@ -44,6 +45,25 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     managedRequestRef.current = null;
     if (requestId) requestAutologin?.({ type: "native_rdp_autologin_cancel", request_id: requestId });
   }, [requestAutologin]);
+
+  const reportActivity = useCallback(() => {
+    const requestId = managedRequestRef.current;
+    if (!requestId || !desired || idleStopped || !working) return;
+    const now = performance.now();
+    if (now - lastActivitySentRef.current < 1000) return;
+    if (requestAutologin?.({ type: "native_rdp_user_activity", request_id: requestId })) {
+      lastActivitySentRef.current = now;
+    }
+  }, [requestAutologin, desired, idleStopped, working]);
+
+  useEffect(() => {
+    const handle = event => { if (event.isTrusted) reportActivity(); };
+    const names = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"];
+    for (const name of names) document.addEventListener(name, handle, { capture: true, passive: true });
+    return () => {
+      for (const name of names) document.removeEventListener(name, handle, true);
+    };
+  }, [reportActivity]);
 
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === panelRef.current);
@@ -70,6 +90,10 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     const onMessage = (event) => {
       if (event.origin !== window.location.origin ||
           event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type === "planiq-native-rdp-user-activity") {
+        reportActivity();
+        return;
+      }
       if (event.data?.type === "planiq-native-rdp-status") {
         const ready = event.data.message === "Forbundet";
         if (ready) {
@@ -104,7 +128,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [cancelManaged, desired]);
+  }, [cancelManaged, desired, reportActivity]);
 
   const verifyWasm = useCallback(async () => {
     if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
@@ -152,6 +176,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const startAutomatic = useCallback(async () => {
     if (!automatic || !sessionId || working || launchInProgressRef.current || !requestAutologin) return;
     launchInProgressRef.current = true;
+    lastActivitySentRef.current = -Infinity;
     setRetryAllowed(false);
     onDesiredChange?.(true);
     autoAttemptedRef.current = true;
@@ -318,6 +343,21 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   };
 
   useEffect(() => {
+    if (!idleStopped) return;
+    operationRef.current += 1;
+    cancelManaged();
+    autoAttemptedRef.current = true;
+    launchInProgressRef.current = false;
+    transportReadyRef.current = false;
+    setRecovering(false);
+    setBoot(null);
+    setWorking(false);
+    autoLoginRef.current = null;
+    setAutoPendingRequestId(null);
+    setResolution(null);
+  }, [idleStopped, cancelManaged]);
+
+  useEffect(() => {
     if (!working && fullscreen && document.fullscreenElement === panelRef.current) {
       document.exitFullscreen().catch(() => {});
     }
@@ -393,7 +433,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
             <iframe
               key={sessionId + ":" + attempt}
               ref={iframeRef}
-              title="PlanIQ indbygget GNOME Remote Desktop"
+              title="ClientFlow Remote Desktop"
               src="/native-rdp/viewer.html"
               onLoad={onLoad}
               allowFullScreen
