@@ -28,3 +28,20 @@ A hard-limit warning cannot extend the grant. Close the PTY and browser
 session at expiry; require an explicit new connection. Existing step-up is
 still enforced. Terminal/Remote Desktop countdowns share the same visual
 language. Physical testing is required, including active support scripts.
+
+## 63D-61A — isolated executable binary peer
+
+The experimental core has no HTTP routes and cannot be selected by any client.
+It uses length-prefixed raw binary frames (4-byte big-endian length), bounded
+batch size/count, sequential upload acknowledgements and download sequences,
+no replay, strict one-poll concurrency, fail-closed queue limits, shared
+32 MiB framed-payload budget and independent 45-second contact supervision.
+Empty polls do not advance a sequence. Ambiguous deliveries close a generation.
+The queue budget does not include Python object overhead or concurrent HTTP
+bodies; the HTTP integration must independently bound those, enforce one writer
+before streaming body consumption, and close on abandoned response delivery.
+Tests exercise byte ordering, replay/gap rejection, simultaneous polls,
+capacity, cancellation, independent cleanup and the existing native pump.
+No change to WSS, WASM, client binaries or production authorization. Still
+required: authenticated HTTP endpoints, strict body/read limits, browser and
+agent adapters, explicit IT policy and controlled proxy + physical proofs.
