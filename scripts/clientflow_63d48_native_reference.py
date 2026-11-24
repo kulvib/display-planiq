@@ -37,7 +37,10 @@ GNOME_RUNNER = Path(
 LOGIN = Path("/run/clientflow-rdp-63d30/credentials")
 DISPLAY_MODE = "2560x1080"
 MAX_NATIVE_SECONDS = 25
-ENV_KEYS = ("PATH", "HOME", "XDG_RUNTIME_DIR", "LANG")
+# Executable source is public Python code, never a secret. The root operator
+# downloads it into a private directory; this separate read-only copy allows
+# the unprivileged Xvfb child to execute the SAME exact verified bytes.
+WORKER_PATH = Path("/run/clientflow-63d48-native-worker.py")
 
 
 class PreflightError(RuntimeError):
@@ -153,6 +156,59 @@ def xwd_sample() -> str | None:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
+def stage_unprivileged_worker() -> str:
+    """Publish only this pinned public source for an unprivileged Xvfb child.
+
+    Parent runner and its root-only directory are deliberately inaccessible
+    to clientflow-kiosk. Without this stage, /usr/bin/python3 inside Xvfb
+    fails with permission denied and a successful RDP test is impossible.
+    """
+    source = Path(__file__).resolve()
+    source_stat = source.lstat()
+    if not stat.S_ISREG(source_stat.st_mode) or source.is_symlink() or source_stat.st_uid != 0:
+        raise PreflightError("UNSAFE_PINNED_NATIVE_SOURCE")
+    blob = source.read_bytes()
+    if not (1024 <= len(blob) <= 65536):
+        raise PreflightError("INVALID_NATIVE_SOURCE_SIZE")
+    digest = hashlib.sha256(blob).hexdigest()
+    if WORKER_PATH.exists() or WORKER_PATH.is_symlink():
+        raise PreflightError("EXISTING_NATIVE_WORKER_REQUIRES_AUDIT")
+    try:
+        fd = os.open(
+            str(WORKER_PATH),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o644,
+        )
+        with os.fdopen(fd, "wb") as stream:
+            os.fchmod(stream.fileno(), 0o644)
+            stream.write(blob)
+            stream.flush()
+            os.fsync(stream.fileno())
+        info = WORKER_PATH.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) != 0o644
+                or hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest() != digest):
+            raise PreflightError("WORKER_INTEGRITY_FAILED")
+    except Exception:
+        # Never remove unknown replacements/symlinks. A tamper event leaves
+        # the exact path for root inspection rather than deleting foreign data.
+        if WORKER_PATH.is_file() and not WORKER_PATH.is_symlink():
+            info = WORKER_PATH.stat()
+            if info.st_uid == 0 and hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest() == digest:
+                WORKER_PATH.unlink()
+        raise
+    return digest
+
+
+def remove_unprivileged_worker(digest: str) -> None:
+    info = WORKER_PATH.lstat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+            or stat.S_IMODE(info.st_mode) != 0o644
+            or hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest() != digest):
+        raise PreflightError("WORKER_CLEANUP_UNCERTAIN")
+    WORKER_PATH.unlink()
+
+
 def isolated_worker(seconds: int) -> int:
     """Runs only inside xvfb-run as the unprivileged kiosk user."""
     if os.geteuid() != pwd.getpwnam("clientflow-kiosk").pw_uid:
@@ -236,8 +292,9 @@ def preflight() -> int:
             result = require_executable(names)
             announce(label, Path(result).name)
         except PreflightError:
-            announce(label, "NOT_INSTALLED")
+            announce(label, "OPTIONAL_NOT_INSTALLED" if label == "X11_SCREEN_SAMPLER" else "NOT_INSTALLED")
     announce("GNOME_REAL_PRIMARY", "2560x1080@60Hz_READONLY_MEASURED")
+    announce("X11_SCREEN_SAMPLER_REQUIRED", "FALSE")
     announce("EXTERNAL_RDP_PORTS", "UNCHANGED")
     return 0
 
@@ -272,12 +329,27 @@ def native(seconds: int) -> int:
     if validate_guard() < seconds + 15:
         raise PreflightError("GNOME_SAFETY_WINDOW_TOO_SHORT")
 
+    # Stage a root-owned, publicly readable copy of Python SOURCE ONLY.
+    # RDP credentials remain inside a pipe; neither copy nor hash embeds them.
+    worker_digest = stage_unprivileged_worker()
+    announce("X11_UNPRIVILEGED_WORKER_SOURCE", "SHA256_VERIFIED")
+    try:
+        return run_native_xvfb(user, xvfb, username, password, fingerprint, seconds)
+    finally:
+        remove_unprivileged_worker(worker_digest)
+        announce("X11_UNPRIVILEGED_WORKER_CLEANUP", "PASS")
+
+
+def run_native_xvfb(
+    user: pwd.struct_passwd, xvfb: str, username: str,
+    password: str, fingerprint: str, seconds: int,
+) -> int:
     # Wrapper runs as an unprivileged kiosk user. No password in argv, env,
     # disks or stdout; Xvfb has no TCP listener and a per-run Xauthority file.
     argv = [
         xvfb, "-a", "-s", "-screen 0 2560x1080x24 -nolisten tcp",
         "/usr/bin/python3", "-I", "-B",
-        str(Path(__file__).resolve()), "isolated-worker", str(seconds),
+        str(WORKER_PATH), "isolated-worker", str(seconds),
     ]
     env = {
         "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
