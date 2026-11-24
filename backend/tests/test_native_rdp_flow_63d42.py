@@ -334,3 +334,43 @@ def test_63d52_replaced_control_channel_stops_binary_forwarding(monkeypatch):
         await relay._pump(tunnel, browser, browser_side=True)
         assert agent.sent == []
     asyncio.run(exercise())
+
+
+def test_63d56_renewal_is_bound_to_current_authorized_managed_tunnel(monkeypatch):
+    from types import SimpleNamespace
+
+    async def exercise():
+        channel = object()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=SocketStub(), control_channel=channel,
+            managed_request_id="challenge", renewable=True,
+        )
+        tunnel.ready.set()
+        browser = SimpleNamespace(native_rdp_managed_request_id="challenge",
+                                  native_rdp_managed_renewable=True,
+                                  native_rdp_managed_ready=True,
+                                  native_rdp_managed_channel=channel)
+        monkeypatch.setitem(relay.BROWSERS, tunnel.session_id, browser)
+        monkeypatch.setitem(relay.CONTROL_AGENTS, 3, channel)
+        tunnel.authorized_browser = lambda: True
+        tunnel.authorized_agent = lambda: True
+        sent = []
+
+        async def send(control, packet):
+            assert control is channel
+            sent.append(packet)
+
+        monkeypatch.setattr(relay, "_send_agent", send)
+        assert await relay.renew_managed_tunnel(tunnel)
+        assert sent == [{"type": "native_rdp_renew", "session_id": tunnel.session_id,
+                         "request_id": "challenge", "tunnel_id": tunnel.tunnel_id}]
+        browser.native_rdp_managed_request_id = "new"
+        assert not await relay.renew_managed_tunnel(tunnel)
+        browser.native_rdp_managed_request_id = "challenge"
+        tunnel.authorized_browser = lambda: False
+        assert not await relay.renew_managed_tunnel(tunnel)
+        assert len(sent) == 1
+
+    asyncio.run(exercise())

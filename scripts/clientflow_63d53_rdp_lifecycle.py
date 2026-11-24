@@ -15,6 +15,7 @@ import re
 import socket
 import stat
 import subprocess
+import tempfile
 import time
 
 from . import clientflow_63d53_rdp_proof as proof
@@ -22,6 +23,8 @@ from . import clientflow_63d53_rdp_proof as proof
 SOURCE = Path("/usr/local/libexec/clientflow/native-rdp-pilot/scripts")
 STAGE = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30")
 LOCK = Path("/run/clientflow/rdp-lifecycle-v1.lock")
+WATCHDOG_LOCK = Path("/run/clientflow-63d30-pilot.lock")
+RENEW_SECONDS = 90
 IDENTITY = Path("/etc/clientflow/identity.json")
 RUNNER = "clientflow_63d30_local_rdp_pilot.py"
 GUARD = "clientflow_63d29_persistent_rdp_guard.py"
@@ -79,7 +82,7 @@ class PhysicalOperations:
             raise LifecycleDenied("PREEXISTING_RDP_STATE")
 
     def run(self, name: str, action: str, *, staged: bool = False) -> str:
-        allowed = {RUNNER: {"stage", "start", "stop", "unstage"},
+        allowed = {RUNNER: {"stage", "start", "stop", "unstage", "status"},
                    BROWSER: {"arm", "disarm"}}
         if action not in allowed.get(name, set()) or (staged and name != RUNNER):
             raise LifecycleDenied("UNSUPPORTED_LIFECYCLE_ACTION")
@@ -147,6 +150,54 @@ class PhysicalOperations:
             os.fsync(stream.fileno())
         proof.authorize(session_id)
 
+    def renew(self, session_id: str) -> None:
+        """Refresh only the currently owned live lease under the watchdog lock."""
+        proof.canonical_session(session_id)
+        # Reuse the physically tested, pinned GNOME/guard status operation.
+        lines = self.run(RUNNER, "status", staged=True).splitlines()
+        if not {"PILOT_STATE_EXISTS= True", "GUARD_KERNEL_VERIFIED= True",
+                "ROOT_WATCHDOG_VERIFIED= True", "GNOME_RDP_SETTING= true",
+                "RDP_LISTENERS_3389_3398= [3389]", "PILOT_EXPIRED= False"}.issubset(lines):
+            raise LifecycleDenied("PHYSICAL_RENEWAL_NOT_ATTESTED")
+        safe_directory(WATCHDOG_LOCK.parent)
+        fd = os.open(WATCHDOG_LOCK, os.O_RDWR | os.O_NOFOLLOW)
+        with os.fdopen(fd, "r+b") as lock:
+            meta = os.fstat(lock.fileno())
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0
+                    or stat.S_IMODE(meta.st_mode) != 0o600):
+                raise LifecycleDenied("UNTRUSTED_WATCHDOG_LOCK")
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # The existing watchdog is checking the state. The caller
+                # may retry on a later authorized renewal; never race cleanup.
+                raise LifecycleDenied("WATCHDOG_BUSY") from None
+            owner = proof.root_json(proof.PROOF, 0o600)
+            state = proof.root_json(proof.STATE, 0o600)
+            grant = proof.root_json(proof.APPROVAL, 0o644)
+            boot = proof.BOOT.read_text().strip()
+            if (owner.get("session_id") != session_id
+                    or owner.get("pid") != os.getpid()
+                    or owner.get("process_start") != proof.process_start(os.getpid())
+                    or owner.get("boot_id") != boot
+                    or state.get("phase") != "63D-30" or state.get("boot_id") != boot
+                    or grant.get("boot_id") != boot or grant.get("hostname") != proof.HOST
+                    or grant.get("client_id") != 3 or grant.get("schema") != 1):
+                raise LifecycleDenied("RENEWAL_BINDING_INVALID")
+            for record, wall, mono in ((state, "deadline_wall", "deadline_mono"),
+                                       (grant, "expires_wall", "expires_mono")):
+                left = proof.remaining(record.get(wall), record.get(mono))
+                if not 0 < left <= 360:
+                    raise LifecycleDenied("RENEWAL_EXPIRED")
+            wall = time.time() + RENEW_SECONDS
+            mono = time.monotonic() + RENEW_SECONDS
+            state.update(deadline_wall=wall, deadline_mono=mono)
+            grant.update(expires_wall=wall, expires_mono=mono)
+            # The watchdog sees the state atomically. If the process dies
+            # between replacements the earlier expiry still fails closed.
+            replace_root_json(proof.STATE, state, 0o600)
+            replace_root_json(proof.APPROVAL, grant, 0o644)
+
     def revoke(self) -> None:
         # This path was absent at preflight and reserved by our exclusive lock.
         if present(proof.PROOF):
@@ -171,11 +222,27 @@ class PhysicalOperations:
             raise LifecycleDenied("LOCAL_RDP_CLEANUP_INCOMPLETE")
 
 
+def replace_root_json(path: Path, data: dict, mode: int) -> None:
+    safe_directory(path.parent)
+    fd, name = tempfile.mkstemp(prefix=".rdp-renew-", dir=path.parent)
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            os.fchmod(stream.fileno(), mode)
+            json.dump(data, stream, separators=(",", ":"), ensure_ascii=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
 def run_owned_session(session_id: str, hold, *, operations=None) -> None:
     """Hold the exclusive physical lease only while the authorized owner lives.
 
-    The caller must tie hold() to the authenticated agent socket and never
-    extend the independent six-minute physical watchdog. Failure in cleanup
+    The caller ties hold() to the authenticated agent socket. Only explicit
+    authorized renewals refresh the independent watchdog deadline. Failure in cleanup
     propagates; never remove the independent firewall or watchdog ourselves.
     """
     proof.canonical_session(session_id)

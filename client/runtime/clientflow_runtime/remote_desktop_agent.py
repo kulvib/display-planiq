@@ -97,6 +97,7 @@ class RemoteDesktopAgent:
         self.native_rdp_tasks: dict[str, asyncio.Task[None]] = {}
         # session -> request id, task, envelope sent, tunnel attached
         self.managed_rdp_logins: dict[str, tuple[str, asyncio.Task, asyncio.Event, asyncio.Event]] = {}
+        self.managed_rdp_renewals: dict[str, dict] = {}
         self.stream_options: dict[str, dict[str, Any]] = {}
         self.last_frame_digest: dict[str, str] = {}
         self.last_frame_sent_at: dict[str, float] = {}
@@ -402,6 +403,7 @@ class RemoteDesktopAgent:
         if entry is None or (request_id is not None and request_id != entry[0]):
             return
         self.managed_rdp_logins.pop(session_id, None)
+        self.managed_rdp_renewals.pop(session_id, None)
         if entry[1] is not asyncio.current_task():
             entry[1].cancel()
             await asyncio.gather(entry[1], return_exceptions=True)
@@ -423,15 +425,21 @@ class RemoteDesktopAgent:
                 async with open_managed_native_rdp_login(
                     client_id=self.credential.client_id, session_id=session_id,
                     request_id=request_id, public_key=public_key,
-                ) as (envelope, reader):
+                ) as (envelope, reader, writer):
                     if self.control_ws is not channel or session_id not in self.control_sessions:
                         return
+                    self.managed_rdp_renewals[session_id] = {
+                        "writer": writer, "request_id": request_id, "tunnel_id": None,
+                        "sequence": 0, "channel": channel,
+                    }
+                    ready.set()
                     await self._send_control({"type": "native_rdp_autologin_envelope",
                                               "session_id": session_id, "request_id": request_id,
-                                              "envelope": envelope})
-                    ready.set()
+                                              "envelope": envelope, "renewable": True})
                     await asyncio.wait_for(attached.wait(), timeout=30)
-                    await asyncio.wait_for(reader.read(1), timeout=360)
+                    # EOF is the local privileged owner's revocation signal.
+                    # Only authenticated backend renewals keep the watchdog alive.
+                    await reader.read(1)
             except (AutologinUnavailable, NativeRdpNotApproved, OSError,
                     asyncio.TimeoutError, WebSocketException):
                 if self.control_ws is channel and session_id in self.control_sessions:
@@ -444,6 +452,7 @@ class RemoteDesktopAgent:
                 entry = self.managed_rdp_logins.get(session_id)
                 if entry and entry[1] is asyncio.current_task():
                     self.managed_rdp_logins.pop(session_id, None)
+                    self.managed_rdp_renewals.pop(session_id, None)
                     task = self.native_rdp_tasks.get(session_id)
                     if task is not None:
                         task.cancel()
@@ -462,6 +471,10 @@ class RemoteDesktopAgent:
         ensure_native_rdp_guard(client_id=self.credential.client_id)
         await self._stop_native_rdp(session_id)
         if entry is not None:
+            renewal = self.managed_rdp_renewals.get(session_id)
+            if renewal is None or renewal["request_id"] != managed_request_id:
+                raise NativeRdpNotApproved("RDP_RENEWAL_NOT_READY")
+            renewal["tunnel_id"] = tunnel_id
             entry[3].set()
 
         async def run_tunnel() -> None:
@@ -518,6 +531,22 @@ class RemoteDesktopAgent:
         elif message_type == "native_rdp_open":
             await self._start_native_rdp(session_id, str(message.get("tunnel_id") or ""),
                                          message.get("managed_request_id"))
+        elif message_type == "native_rdp_renew":
+            renewal = self.managed_rdp_renewals.get(session_id)
+            if (renewal is None or renewal["channel"] is not self.control_ws
+                    or renewal["request_id"] != message.get("request_id")
+                    or renewal["tunnel_id"] != message.get("tunnel_id")
+                    or session_id not in self.native_rdp_tasks):
+                return
+            renewal["sequence"] += 1
+            packet = {"type": "renew", "session_id": session_id,
+                      "request_id": renewal["request_id"], "sequence": renewal["sequence"]}
+            try:
+                renewal["writer"].write(json.dumps(packet, separators=(",", ":")).encode("ascii") + b"\n")
+                await asyncio.wait_for(renewal["writer"].drain(), timeout=2)
+            except (OSError, RuntimeError, asyncio.TimeoutError):
+                await self._stop_native_rdp(session_id)
+                await self._stop_managed_rdp(session_id)
         elif message_type == "native_rdp_autologin_cancel":
             entry = self.managed_rdp_logins.get(session_id)
             if entry is not None and entry[0] == message.get("request_id"):

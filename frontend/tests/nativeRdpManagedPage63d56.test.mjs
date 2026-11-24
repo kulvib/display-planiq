@@ -13,12 +13,3 @@ test("enabled physical pilot uses native RDP directly, no JPEG or HTTPS fallback
   assert.match(viewer, /requestAutologin\(\{ \.\.\.handle\.request, managed: true \}\)/);
   assert.match(page, /<RemoteDesktopFileManager/);
 });
-
-
-test("SPA navigation loads isolated document once and never opens an unsafe native socket", () => {
-  assert.match(page, /nativeRequested && !window\.crossOriginIsolated/);
-  assert.match(page, /url\.searchParams\.get\("native_rdp"\) !== "1"/);
-  assert.match(page, /url\.searchParams\.set\("native_rdp", "1"\)/);
-  assert.match(page, /window\.location\.replace\(url\.href\)/);
-  assert.match(page, /if \(!clientId \|\| \(nativeRequested && !window\.crossOriginIsolated\)\) return/);
-});

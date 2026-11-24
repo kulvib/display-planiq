@@ -79,6 +79,8 @@ class NativeRdpTunnel:
     control_channel: object | None = None
     agent_credential_id: str | None = None
     agent_token_version: int | None = None
+    managed_request_id: str | None = None
+    renewable: bool = False
     browser_to_agent: BinaryFlow = field(default_factory=BinaryFlow)
     agent_to_browser: BinaryFlow = field(default_factory=BinaryFlow)
 
@@ -137,6 +139,34 @@ async def _watch_traffic(tunnel: NativeRdpTunnel) -> None:
             await asyncio.wait_for(tunnel.closed.wait(), timeout=10.0)
         except asyncio.TimeoutError:
             _traffic_summary(tunnel, "active")
+            if tunnel.renewable:
+                if not await renew_managed_tunnel(tunnel):
+                    await _cleanup(tunnel)
+                    return
+
+
+async def renew_managed_tunnel(tunnel: NativeRdpTunnel) -> bool:
+    # A renewal is authorized on the same server-side control generation.
+    # No renewal is sent through the binary data stream or by the browser.
+    active = BROWSERS.get(tunnel.session_id)
+    control = CONTROL_AGENTS.get(tunnel.client_id)
+    if (tunnel.closed.is_set() or not tunnel.ready.is_set() or not tunnel.renewable
+            or not tunnel.managed_request_id or active is None
+            or getattr(active, "native_rdp_managed_request_id", None) != tunnel.managed_request_id
+            or not getattr(active, "native_rdp_managed_renewable", False)
+            or not getattr(active, "native_rdp_managed_ready", False)
+            or getattr(active, "native_rdp_managed_channel", None) is not control
+            or control is not tunnel.control_channel
+            or not tunnel.authorized_browser() or not tunnel.authorized_agent()):
+        return False
+    try:
+        await asyncio.wait_for(_send_agent(control, {
+            "type": "native_rdp_renew", "session_id": tunnel.session_id,
+            "request_id": tunnel.managed_request_id, "tunnel_id": tunnel.tunnel_id,
+        }), timeout=2)
+        return not tunnel.closed.is_set()
+    except (OSError, RuntimeError, asyncio.TimeoutError, WebSocketDisconnect):
+        return False
 
 
 async def _reject(ws: WebSocket, reason: str, code: int = 4403) -> None:
@@ -162,7 +192,7 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
     closed_task = asyncio.create_task(tunnel.closed.wait())
     try:
         while not tunnel.closed.is_set():
-            if time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
+            if not tunnel.renewable and time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
                 return
             if receive_task is None:
                 receive_task = asyncio.create_task(incoming.receive())
@@ -173,7 +203,7 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
             )
             if closed_task in done or tunnel.closed.is_set():
                 return
-            if time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
+            if not tunnel.renewable and time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
                 return
             if receive_task not in done:
                 if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
@@ -300,7 +330,8 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
         tunnel = NativeRdpTunnel(
             client_id=client_id, session_id=session_id,
             tunnel_id=str(uuid.uuid4()), user_id=int(user.id), browser=ws,
-            control_channel=control,
+            control_channel=control, managed_request_id=managed_request_id,
+            renewable=bool(managed_request_id and getattr(active, "native_rdp_managed_renewable", False)),
         )
         async with _LOCK:
             denied = (

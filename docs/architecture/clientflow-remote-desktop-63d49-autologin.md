@@ -214,3 +214,25 @@ Their replacement requires a separately verified renewable lease tied to the
 live authenticated control and local ownership, including independent fail-
 closed cleanup on process/network loss and PlanIQ authorization expiry.
 No deployment or release promotion from source-only CI.
+
+
+## 63D-56B — renewable physical lease, source candidate
+
+The managed lifecycle protocol v2 negotiates renewable support from the local
+socket through the authenticated agent response. Only the matching live native
+tunnel can request renewals: Render rechecks superadmin session and agent
+credential/generation every 10 seconds before sending a bounded control-plane
+renewal. The agent binds it to the current request, control channel and tunnel,
+then sends a strictly sequenced local frame over its existing authenticated
+Unix socket. No browser keepalive can renew the physical lease directly.
+The privileged owner validates pinned GNOME/firewall/watchdog status and the
+same boot, process and session under the original watchdog lock before replacing
+both deadline records atomically per file with a 90-second horizon. An expired
+lease cannot be resurrected. Loss of renewals leaves the independent watchdog
+in place. The renewable tunnel has no independent one-hour lifetime; legacy
+tunnels retain it. Setup, credential-envelope, I/O and authorization bounds
+remain. The root lifecycle unit no longer has a fixed runtime maximum.
+This does not extend PlanIQ login expiry. The bounded 20-minute physical
+installer rollback is still present until permanent packaging is approved.
+The old installed v1 agent/local protocol must be rolled back before installing
+the new v2 pair. No source-only test proves physical renewal.

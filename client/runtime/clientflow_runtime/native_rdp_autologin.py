@@ -140,10 +140,14 @@ async def open_managed_native_rdp_login(*, client_id, session_id, request_id, pu
         frame = await asyncio.wait_for(reader.readline(), timeout=165)
         if not frame or len(frame) > MAX_REPLY or not frame.endswith(b"\n"):
             raise AutologinUnavailable("RDP_LIFECYCLE_DENIED")
-        envelope = json.loads(frame.decode("ascii"))
+        reply = json.loads(frame.decode("ascii"))
+        if (type(reply) is not dict or set(reply) != {"envelope", "lease_protocol"}
+                or type(reply["lease_protocol"]) is not int or reply["lease_protocol"] != 2):
+            raise AutologinUnavailable("RDP_LIFECYCLE_PROTOCOL_MISMATCH")
+        envelope = reply["envelope"]
         _validate_envelope(envelope, session_id=session_id, request_id=request_id)
         ensure_native_rdp_guard(client_id=client_id)
-        yield envelope, reader
+        yield envelope, reader, writer
     except (OSError, UnicodeError, ValueError, asyncio.TimeoutError) as exc:
         raise AutologinUnavailable("RDP_LIFECYCLE_UNAVAILABLE") from exc
     finally:

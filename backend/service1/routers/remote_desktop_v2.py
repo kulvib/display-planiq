@@ -116,6 +116,7 @@ class BrowserSession:
     native_rdp_managed_request_id: Optional[str] = None
     native_rdp_managed_channel: Any = None
     native_rdp_managed_ready: bool = False
+    native_rdp_managed_renewable: bool = False
     # One most-recent waiting video frame, not an unbounded outgoing JPEG FIFO.
     # Control and file events retain FIFO semantics and the same authentication.
     pending_frame: Optional[dict[str, Any]] = None
@@ -818,6 +819,7 @@ async def _handle_control_agent_message(
                 browser.native_rdp_managed_request_id = None
                 browser.native_rdp_managed_channel = None
                 browser.native_rdp_managed_ready = False
+                browser.native_rdp_managed_renewable = False
             await _send_browser(session_id, client_id, {
                 "type": "native_rdp_autologin_denied", "request_id": request_id
             })
@@ -847,6 +849,7 @@ async def _handle_control_agent_message(
             return
         if managed_channel is not None:
             browser.native_rdp_managed_ready = True
+            browser.native_rdp_managed_renewable = message.get("renewable") is True
         # One-time, scoped opaque envelope. NO JSON logging, database,
         # status payload, audit.details or HTTPS response with credentials.
         await _send_browser(session_id, client_id, {
@@ -1415,6 +1418,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         browser.native_rdp_managed_request_id = None
         browser.native_rdp_managed_channel = None
         browser.native_rdp_managed_ready = False
+        browser.native_rdp_managed_renewable = False
         from .native_rdp_tunnel import close_native_rdp_session
         await close_native_rdp_session(client_id, session_id)
         if control is bound:
@@ -1463,6 +1467,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             browser.native_rdp_managed_request_id = request_id
             browser.native_rdp_managed_channel = control
             browser.native_rdp_managed_ready = False
+            browser.native_rdp_managed_renewable = False
         try:
             await _send_agent(control, {
                 "type": "native_rdp_autologin_request",
@@ -1476,6 +1481,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
                 browser.native_rdp_managed_request_id = None
                 browser.native_rdp_managed_channel = None
                 browser.native_rdp_managed_ready = False
+                browser.native_rdp_managed_renewable = False
             raise
         return
     if message_type in {"start_stream", "stop_stream", "request_frame"}:

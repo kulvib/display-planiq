@@ -102,6 +102,17 @@ def request_seal(request):
         return result
 
 
+def validate_renewal(message, request, previous):
+    if (set(message) != {"type", "session_id", "request_id", "sequence"}
+            or message["type"] != "renew"
+            or message["session_id"] != request["session_id"]
+            or message["request_id"] != request["request_id"]
+            or type(message["sequence"]) is not int
+            or message["sequence"] != previous + 1):
+        raise IpcDenied("INVALID_RENEWAL")
+    return message["sequence"]
+
+
 def serve_lifecycle(conn):
     if peer_uid(conn) != pwd.getpwnam(broker.AGENT_USER).pw_uid:
         raise IpcDenied("UNAUTHORIZED_AGENT")
@@ -126,11 +137,14 @@ def serve_lifecycle(conn):
             require_open(conn)
             super().publish(session_id, fingerprint)
 
+    ops = PeerBoundOperations()
+
     def hold():
         require_open(conn)
         packet = request_seal(request)
         require_open(conn)
-        send_frame(conn, packet, MAX_REPLY)
+        send_frame(conn, {"envelope": packet, "lease_protocol": 2}, MAX_REPLY)
+        sequence = 0
         while True:
             grant = proof.root_json(proof.APPROVAL, 0o644)
             left = proof.remaining(grant.get("expires_wall"), grant.get("expires_mono"))
@@ -138,14 +152,21 @@ def serve_lifecycle(conn):
                 return
             conn.settimeout(min(1, left))
             try:
-                data = conn.recv(1)
+                data = conn.recv(1, socket.MSG_PEEK)
             except TimeoutError:
                 continue
-            if data:
-                raise IpcDenied("UNEXPECTED_AGENT_DATA")
-            return
+            if not data:
+                return
+            renewal = read_frame(conn, MAX_REQUEST, timeout=3)
+            sequence = validate_renewal(renewal, request, sequence)
+            # A failed or busy physical validation never extends the lease.
+            try:
+                ops.renew(session)
+            except lifecycle.LifecycleDenied as exc:
+                if str(exc) != "WATCHDOG_BUSY":
+                    raise
 
-    lifecycle.run_owned_session(session, hold, operations=PeerBoundOperations())
+    lifecycle.run_owned_session(session, hold, operations=ops)
 
 
 def serve_sealer(conn):
