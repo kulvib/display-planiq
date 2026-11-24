@@ -7,16 +7,20 @@ Fail closed on socket owner, mode, physical guard, expiry and message bounds.
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 import re
+import socket
 import stat
+import struct
 import time
 import uuid
 
 from .native_rdp_forwarder import ensure_native_rdp_guard
 
 SOCKET = Path("/run/clientflow/rdp-autologin-v1.sock")
+MANAGED_SOCKET = Path("/run/clientflow/rdp-lifecycle-v1.sock")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 B64_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 MAX_REPLY = 2048
@@ -36,10 +40,11 @@ def _validate_binding(value: str) -> None:
         raise AutologinUnavailable("INVALID_SESSION_BINDING") from exc
 
 
-def _verify_local_socket() -> None:
+def _verify_local_socket(path=None) -> None:
+    path = SOCKET if path is None else path
     try:
-        parent = SOCKET.parent.lstat()
-        stat_info = SOCKET.lstat()
+        parent = path.parent.lstat()
+        stat_info = path.lstat()
     except OSError as exc:
         raise AutologinUnavailable("RDP_LOGIN_BROKER_OFFLINE") from exc
     if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or
@@ -108,3 +113,43 @@ async def request_sealed_native_rdp_login(
             await asyncio.wait_for(writer.wait_closed(), timeout=2)
         except (OSError, asyncio.TimeoutError):
             pass
+
+
+@asynccontextmanager
+async def open_managed_native_rdp_login(*, client_id, session_id, request_id, public_key):
+    """Keep the guarded physical lease only while this local socket lives."""
+    if client_id != 3:
+        raise AutologinUnavailable("UNSUPPORTED_RDP_CLIENT")
+    _validate_binding(session_id)
+    _validate_binding(request_id)
+    if not isinstance(public_key, str) or not 80 <= len(public_key) <= 92 or not B64_RE.fullmatch(public_key):
+        raise AutologinUnavailable("INVALID_BROWSER_PUBLIC_KEY")
+    _verify_local_socket(MANAGED_SOCKET)
+    writer = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_unix_connection(str(MANAGED_SOCKET), limit=MAX_REPLY + 1), timeout=3)
+        peer = writer.get_extra_info("socket")
+        if peer is None or struct.unpack("3i", peer.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != 0:
+            raise AutologinUnavailable("RDP_LIFECYCLE_UNTRUSTED")
+        request = {"schema": 1, "session_id": session_id,
+                   "request_id": request_id, "public_key": public_key}
+        writer.write(json.dumps(request, separators=(",", ":")).encode("ascii") + b"\n")
+        await asyncio.wait_for(writer.drain(), timeout=3)
+        frame = await asyncio.wait_for(reader.readline(), timeout=165)
+        if not frame or len(frame) > MAX_REPLY or not frame.endswith(b"\n"):
+            raise AutologinUnavailable("RDP_LIFECYCLE_DENIED")
+        envelope = json.loads(frame.decode("ascii"))
+        _validate_envelope(envelope, session_id=session_id, request_id=request_id)
+        ensure_native_rdp_guard(client_id=client_id)
+        yield envelope, reader
+    except (OSError, UnicodeError, ValueError, asyncio.TimeoutError) as exc:
+        raise AutologinUnavailable("RDP_LIFECYCLE_UNAVAILABLE") from exc
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), timeout=2)
+            except (OSError, asyncio.TimeoutError):
+                pass

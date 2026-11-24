@@ -115,3 +115,12 @@ test("63D-52 invalidates asynchronous launch on disconnect, error and session re
   assert.match(ui, /await createNativeRdpAutologin[^\n]+\n\s*if \(operationRef\.current !== operation\) return/);
   assert.match(parent, /key=\{\x60\$\{clientId\}:\$\{sessionId \|\| "pending"\}\x60\}/);
 });
+
+
+test("managed pilot requests and cancels the exact one-time login", async () => {
+  const fs = await import("node:fs");
+  const ui = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
+  assert.match(ui, /requestAutologin\(\{ \.\.\.handle\.request, managed: true \}\)/);
+  assert.match(ui, /type: "native_rdp_autologin_cancel", request_id: requestId/);
+  assert.match(ui, /const disconnect = \(\) => \{\s*operationRef\.current \+= 1;\s*cancelManaged\(\)/);
+});

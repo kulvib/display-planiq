@@ -282,6 +282,9 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
             and _platform_client_accessible(client_id, user)
             and control is not None
         )
+        managed_request_id = getattr(active, "native_rdp_managed_request_id", None)
+        if managed_request_id is not None:
+            valid = valid and active.native_rdp_managed_ready and active.native_rdp_managed_channel is control
         if valid:
             current, state = _remote_desktop_browser_auth_state(active)
             valid = current is not None and current.is_superadmin and state == "ok"
@@ -323,6 +326,7 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
                 "type": "native_rdp_open",
                 "session_id": session_id,
                 "tunnel_id": tunnel.tunnel_id,
+                **({"managed_request_id": managed_request_id} if managed_request_id else {}),
             })
             await asyncio.wait_for(tunnel.ready.wait(), timeout=OPEN_TIMEOUT)
             if tunnel.agent is None or tunnel.closed.is_set():

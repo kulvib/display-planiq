@@ -19,7 +19,7 @@ import time
 
 from . import clientflow_63d53_rdp_proof as proof
 
-SOURCE = Path("/usr/local/libexec/clientflow/native-rdp-pilot")
+SOURCE = Path("/usr/local/libexec/clientflow/native-rdp-pilot/scripts")
 STAGE = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30")
 LOCK = Path("/run/clientflow/rdp-lifecycle-v1.lock")
 IDENTITY = Path("/etc/clientflow/identity.json")

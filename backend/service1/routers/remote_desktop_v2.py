@@ -75,7 +75,7 @@ _SAFE_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,255}$")
 REMOTE_DESKTOP_HOME_PATH = "/home/clientflow-kiosk"
 
 BROWSER_MESSAGE_TYPES = {
-    "native_rdp_autologin_request",
+    "native_rdp_autologin_request", "native_rdp_autologin_cancel",
     "start_stream", "stop_stream", "mouse", "key", "text", "shout",
     "request_frame", "file_list_request", "file_download_request",
     "file_multi_download_request", "file_delete_request",
@@ -113,6 +113,9 @@ class BrowserSession:
     # TLS certificate or a persisted credential.
     native_rdp_autologin_pending: Optional[str] = None
     native_rdp_autologin_expires_at: float = 0.0
+    native_rdp_managed_request_id: Optional[str] = None
+    native_rdp_managed_channel: Any = None
+    native_rdp_managed_ready: bool = False
     # One most-recent waiting video frame, not an unbounded outgoing JPEG FIFO.
     # Control and file events retain FIFO semantics and the same authentication.
     pending_frame: Optional[dict[str, Any]] = None
@@ -766,7 +769,7 @@ async def _unregister_agent_channel(client_id: int, channel_name: str, websocket
 
 async def _handle_control_agent_message(
     client_id: int, credential_id: str, message: dict[str, Any], *,
-    input_websocket: Any = None,
+    input_websocket: Any = None, control_websocket: Any = None,
 ) -> None:
     session_id = str(message.get("session_id") or "")
     if not session_id:
@@ -796,6 +799,13 @@ async def _handle_control_agent_message(
             or time.monotonic() > browser.native_rdp_autologin_expires_at
         ):
             return
+        managed_channel = getattr(browser, "native_rdp_managed_channel", None)
+        if managed_channel is not None and (
+            CONTROL_AGENTS.get(client_id) is not managed_channel
+            or managed_channel.websocket is not control_websocket
+            or str(managed_channel.credential_id) != str(credential_id)
+        ):
+            return
         current, state = _remote_desktop_browser_auth_state(browser)
         if current is None or state != "ok" or not current.is_superadmin:
             browser.native_rdp_autologin_pending = None
@@ -804,6 +814,10 @@ async def _handle_control_agent_message(
         browser.native_rdp_autologin_pending = None
         browser.native_rdp_autologin_expires_at = 0.0
         if message_type == "native_rdp_autologin_denied":
+            if managed_channel is not None:
+                browser.native_rdp_managed_request_id = None
+                browser.native_rdp_managed_channel = None
+                browser.native_rdp_managed_ready = False
             await _send_browser(session_id, client_id, {
                 "type": "native_rdp_autologin_denied", "request_id": request_id
             })
@@ -831,6 +845,8 @@ async def _handle_control_agent_message(
             )
         ):
             return
+        if managed_channel is not None:
+            browser.native_rdp_managed_ready = True
         # One-time, scoped opaque envelope. NO JSON logging, database,
         # status payload, audit.details or HTTPS response with credentials.
         await _send_browser(session_id, client_id, {
@@ -1174,7 +1190,8 @@ async def remote_desktop_agent_control_ws(websocket: WebSocket, client_id: int):
                     await _close_with_reason(websocket, exc.close_code, exc.message)
                     return
                 continue
-            await _handle_control_agent_message(client_id, credential.id, decoded.payload)
+            await _handle_control_agent_message(client_id, credential.id, decoded.payload,
+                                                control_websocket=websocket)
     except WebSocketDisconnect:
         pass
     finally:
@@ -1385,6 +1402,25 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         await _send_browser(session_id, client_id, {"type": "error", "message": "Remote Desktop-controlkanalen er ikke forbundet"})
         return
     message_type = str(message.get("type") or "")
+    if message_type == "native_rdp_autologin_cancel":
+        browser = await _browser_for_session(session_id, client_id)
+        if browser is None or client_id != 3:
+            return
+        request_id = message.get("request_id")
+        if not request_id or request_id != getattr(browser, "native_rdp_managed_request_id", None):
+            return
+        bound = browser.native_rdp_managed_channel
+        browser.native_rdp_autologin_pending = None
+        browser.native_rdp_autologin_expires_at = 0.0
+        browser.native_rdp_managed_request_id = None
+        browser.native_rdp_managed_channel = None
+        browser.native_rdp_managed_ready = False
+        from .native_rdp_tunnel import close_native_rdp_session
+        await close_native_rdp_session(client_id, session_id)
+        if control is bound:
+            await _send_agent(control, {"type": "native_rdp_autologin_cancel",
+                                        "session_id": session_id, "request_id": request_id})
+        return
     if message_type == "native_rdp_autologin_request":
         if client_id != 3:
             await _send_browser(session_id, client_id, {
@@ -1413,22 +1449,33 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             })
             return
         now = time.monotonic()
-        if browser.native_rdp_autologin_pending is not None and now < browser.native_rdp_autologin_expires_at:
+        managed = message.get("managed") is True
+        if (getattr(browser, "native_rdp_managed_request_id", None) is not None
+                or (browser.native_rdp_autologin_pending is not None
+                    and now < browser.native_rdp_autologin_expires_at)):
             await _send_browser(session_id, client_id, {
                 "type": "native_rdp_autologin_denied"
             })
             return
         browser.native_rdp_autologin_pending = request_id
-        browser.native_rdp_autologin_expires_at = now + 20
+        browser.native_rdp_autologin_expires_at = now + (180 if managed else 20)
+        if managed:
+            browser.native_rdp_managed_request_id = request_id
+            browser.native_rdp_managed_channel = control
+            browser.native_rdp_managed_ready = False
         try:
             await _send_agent(control, {
                 "type": "native_rdp_autologin_request",
                 "session_id": session_id, "request_id": request_id,
-                "public_key": public_key,
+                "public_key": public_key, **({"managed": True} if managed else {}),
             })
         except Exception:
             browser.native_rdp_autologin_pending = None
             browser.native_rdp_autologin_expires_at = 0.0
+            if managed:
+                browser.native_rdp_managed_request_id = None
+                browser.native_rdp_managed_channel = None
+                browser.native_rdp_managed_ready = False
             raise
         return
     if message_type in {"start_stream", "stop_stream", "request_frame"}:

@@ -134,3 +134,30 @@ Root process liveness is not an independent cryptographic device identity;
 physical proof still depends on the trusted lifecycle and existing watchdog.
 The six-minute physical limit remains unchanged. Do not deploy or approve
 release 1249 from these tests.
+
+
+## 63D-53B — managed pilot IPC, agent and browser integration (source only)
+
+The managed request explicitly selects the new lifecycle socket; it does not
+fall back to a manual credential prompt. Its dedicated agent UID owns one
+local socket until the RDP tunnel or control session closes. The privileged
+lifecycle starts the pinned GNOME guard, generates temporary credentials and
+publishes the short-lived attestation, then calls a separate root-only sealer
+socket. The sealer has no kernel/desktop management capabilities. The agent
+relays only the encrypted envelope. Browser cancellation is bound to the
+request UUID and current session; the managed tunnel requires the same
+authorized control-channel generation and successful envelope response.
+The initial setup window is 180 seconds in Render, 165 seconds for local
+startup and 190 seconds in the browser; the credential envelope remains
+short-lived, and an unused local lease times out after 30 seconds. The
+independent six-minute GNOME watchdog is unchanged. Setup cancellation is
+checked between pinned operations; a currently executing subprocess can
+finish before rollback. Root cleanup is not guaranteed instantaneous.
+
+The four systemd units remain experimental files, not canonical release
+units. No activation, installation, Render deployment or release approval is
+authorized. Packaging must attest the entire root-owned module tree, Python
+cryptography runtime, peer identity and unit sandbox compatibility on Viborg1.
+CI must cover the new source. Physical startup, cleanup, automatic reconnect,
+normal long-running leases, step-up policy, dynamic resolution and fleet
+identity enrollment remain outstanding. Legacy manual pilot remains isolated.

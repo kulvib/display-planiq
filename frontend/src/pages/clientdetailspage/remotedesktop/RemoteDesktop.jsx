@@ -502,6 +502,8 @@ export default function RemoteDesktop() {
     ws.onclose = (event) => {
       if (attemptId !== connectAttemptRef.current) return;
       setConnected(false);
+      setSessionId(null);
+      setNativeRdpAutologinMessage(null);
       pointerMoves.clear();
       setTransportMode(null);
       setAgentConnected(false);

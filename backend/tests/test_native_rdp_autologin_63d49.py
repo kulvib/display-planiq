@@ -156,3 +156,30 @@ def test_63d52_rejects_untrusted_sealed_reply(monkeypatch, reason):
         }, input_websocket=object() if reason == "input_channel" else None,
     ))
     assert delivered == []
+
+
+def test_managed_request_binds_reply_and_cancel_to_exact_channel(monkeypatch):
+    item, forwarded, delivered = setup_broker(monkeypatch)
+    channel = SimpleNamespace(websocket=object(), credential_id="agent")
+    monkeypatch.setitem(broker.CONTROL_AGENTS, CLIENT, channel)
+    asyncio.run(broker._browser_control_message(CLIENT, SESSION, {
+        "type": "native_rdp_autologin_request", "request_id": CHALLENGE,
+        "public_key": PUB, "managed": True,
+    }))
+    assert forwarded[-1]["managed"] is True
+    assert item.native_rdp_autologin_expires_at - time.monotonic() > 160
+    reply = {"type": "native_rdp_autologin_envelope", "session_id": SESSION,
+             "request_id": CHALLENGE, "envelope": envelope()}
+    asyncio.run(broker._handle_control_agent_message(
+        CLIENT, "agent", reply, control_websocket=object()))
+    assert not delivered
+    asyncio.run(broker._handle_control_agent_message(
+        CLIENT, "agent", reply, control_websocket=channel.websocket))
+    assert item.native_rdp_managed_ready
+    asyncio.run(broker._browser_control_message(CLIENT, SESSION, {
+        "type": "native_rdp_autologin_cancel", "request_id": "wrong"}))
+    assert item.native_rdp_managed_ready
+    asyncio.run(broker._browser_control_message(CLIENT, SESSION, {
+        "type": "native_rdp_autologin_cancel", "request_id": CHALLENGE}))
+    assert not item.native_rdp_managed_ready
+    assert forwarded[-1]["type"] == "native_rdp_autologin_cancel"

@@ -1,0 +1,28 @@
+# SOURCE ONLY: requires verified root-owned source and Python crypto runtime.
+[Unit]
+Description=ClientFlow native RDP sealer
+
+[Service]
+Type=simple
+User=root
+Group=root
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/python3 -I -B -c "import sys; sys.path.insert(0, '/usr/local/libexec/clientflow/native-rdp-pilot'); from scripts.clientflow_63d53_rdp_ipc import sealer_main; sealer_main()"
+RuntimeMaxSec=15
+TimeoutStopSec=15
+UMask=0077
+Restart=no
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+SystemCallArchitectures=native
