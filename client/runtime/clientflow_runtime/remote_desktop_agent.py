@@ -21,6 +21,7 @@ from .constants import Domain
 from .logging_utils import configure_logging
 from .remote_desktop_net import DomainTransport, TransportError, backoff_seconds
 from .native_rdp_forwarder import NativeRdpNotApproved, ensure_native_rdp_guard, forward_native_rdp
+from .native_rdp_autologin import AutologinUnavailable, request_sealed_native_rdp_login
 from .remote_desktop_files import FileArea
 from .remote_desktop_input_queue import InputLaneQueue
 from .status import report_status
@@ -448,6 +449,30 @@ class RemoteDesktopAgent:
             await self._send_control({"type": "session_closed", "session_id": session_id})
         elif message_type == "native_rdp_open":
             await self._start_native_rdp(session_id, str(message.get("tunnel_id") or ""))
+        elif message_type == "native_rdp_autologin_request":
+            # The root helper always seals GNOME credentials to the browser's
+            # ephemeral ECDH public key. Never forward a plaintext password,
+            # including on errors. The backend owns superadmin authorization.
+            request_id = str(message.get("request_id") or "")
+            try:
+                envelope = await request_sealed_native_rdp_login(
+                    client_id=self.credential.client_id,
+                    session_id=session_id,
+                    request_id=request_id,
+                    public_key=message.get("public_key"),
+                )
+                await self._send_control({
+                    "type": "native_rdp_autologin_envelope",
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "envelope": envelope,
+                })
+            except (AutologinUnavailable, NativeRdpNotApproved, OSError):
+                await self._send_control({
+                    "type": "native_rdp_autologin_denied",
+                    "session_id": session_id,
+                    "request_id": request_id,
+                })
         elif message_type == "start_stream":
             await self._start_stream(session_id, message)
         elif message_type == "stop_stream":
