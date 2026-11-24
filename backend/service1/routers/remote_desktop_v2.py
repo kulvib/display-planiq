@@ -75,7 +75,7 @@ _SAFE_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,255}$")
 REMOTE_DESKTOP_HOME_PATH = "/home/clientflow-kiosk"
 
 BROWSER_MESSAGE_TYPES = {
-    "native_rdp_autologin_request", "native_rdp_autologin_cancel",
+    "native_rdp_autologin_request", "native_rdp_autologin_cancel", "native_rdp_user_activity",
     "start_stream", "stop_stream", "mouse", "key", "text", "shout",
     "request_frame", "file_list_request", "file_download_request",
     "file_multi_download_request", "file_delete_request",
@@ -93,6 +93,31 @@ class AgentChannel:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # Only acknowledged sessions may use a newly registered input socket.
     ready_sessions: set[str] = field(default_factory=set)
+
+
+NATIVE_IDLE_SECONDS = 600
+NATIVE_IDLE_WARNING_SECONDS = 60
+NATIVE_IDLE_CLOSE_CODE = 4408
+
+
+@dataclass
+class NativeIdle:
+    request_id: str
+    deadline: float
+    warned: bool = False
+
+    def expired(self, now: float) -> bool:
+        return now >= self.deadline
+
+    def touch(self, request_id: str, now: float) -> bool:
+        if request_id != self.request_id or self.expired(now):
+            return False
+        self.deadline = now + NATIVE_IDLE_SECONDS
+        self.warned = False
+        return True
+
+    def next_check(self) -> float:
+        return self.deadline if self.warned else self.deadline - NATIVE_IDLE_WARNING_SECONDS
 
 
 @dataclass
@@ -117,6 +142,7 @@ class BrowserSession:
     native_rdp_managed_channel: Any = None
     native_rdp_managed_ready: bool = False
     native_rdp_managed_renewable: bool = False
+    native_idle: NativeIdle | None = None
     # One most-recent waiting video frame, not an unbounded outgoing JPEG FIFO.
     # Control and file events retain FIFO semantics and the same authentication.
     pending_frame: Optional[dict[str, Any]] = None
@@ -296,6 +322,9 @@ def _agent_ready(client_id: int) -> bool:
 
 def _remote_desktop_browser_auth_state(browser: BrowserSession) -> tuple[Optional[User], str]:
     """Revalidate login-session, superadmin role and persisted RD session lifetime."""
+    idle = getattr(browser, "native_idle", None)
+    if idle is not None and idle.expired(time.monotonic()):
+        return None, "idle_timeout"
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     with Session(engine) as session:
         user = validate_browser_auth_session_binding(
@@ -814,6 +843,7 @@ async def _handle_control_agent_message(
         browser.native_rdp_autologin_expires_at = 0.0
         if message_type == "native_rdp_autologin_denied":
             if managed_channel is not None:
+                browser.native_idle = None
                 browser.native_rdp_managed_request_id = None
                 browser.native_rdp_managed_channel = None
                 browser.native_rdp_managed_ready = False
@@ -1413,6 +1443,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         bound = browser.native_rdp_managed_channel
         browser.native_rdp_autologin_pending = None
         browser.native_rdp_autologin_expires_at = 0.0
+        browser.native_idle = None
         browser.native_rdp_managed_request_id = None
         browser.native_rdp_managed_channel = None
         browser.native_rdp_managed_ready = False
@@ -1462,6 +1493,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         browser.native_rdp_autologin_pending = request_id
         browser.native_rdp_autologin_expires_at = now + (180 if managed else 20)
         if managed:
+            browser.native_idle = NativeIdle(request_id, now + NATIVE_IDLE_SECONDS)
             browser.native_rdp_managed_request_id = request_id
             browser.native_rdp_managed_channel = control
             browser.native_rdp_managed_ready = False
@@ -1476,6 +1508,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             browser.native_rdp_autologin_pending = None
             browser.native_rdp_autologin_expires_at = 0.0
             if managed:
+                browser.native_idle = None
                 browser.native_rdp_managed_request_id = None
                 browser.native_rdp_managed_channel = None
                 browser.native_rdp_managed_ready = False
@@ -1684,15 +1717,40 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     try:
         receive_task = asyncio.create_task(websocket.receive_text())
         while True:
-            timeout = max(0.0, next_auth_recheck - time.monotonic())
+            idle = browser.native_idle
+            due = min(next_auth_recheck, idle.next_check()) if idle else next_auth_recheck
+            timeout = max(0.0, due - time.monotonic())
             done, _ = await asyncio.wait(
                 {receive_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
+            idle = browser.native_idle
+            now_mono = time.monotonic()
+            if idle and idle.expired(now_mono):
+                close_reason = "idle_timeout"
+                # Authorization fails before the notice and existing teardown.
+                try:
+                    await asyncio.wait_for(_send_browser_serialized(browser, {
+                        "type": "native_rdp_idle", "phase": "expired",
+                        "request_id": idle.request_id,
+                    }), timeout=1)
+                except (OSError, RuntimeError, asyncio.TimeoutError, WebSocketDisconnect):
+                    pass
+                await _close_with_reason(websocket, NATIVE_IDLE_CLOSE_CODE, "ClientFlow inaktivitet")
+                return
+            if idle and not idle.warned and now_mono >= idle.next_check():
+                idle.warned = True
+                await asyncio.wait_for(_send_browser_serialized(browser, {
+                    "type": "native_rdp_idle", "phase": "warning",
+                    "request_id": idle.request_id,
+                    "seconds": max(1, min(NATIVE_IDLE_WARNING_SECONDS, int(idle.deadline - now_mono + 0.999))),
+                }), timeout=3)
             if receive_task not in done:
+                if time.monotonic() < next_auth_recheck:
+                    continue
                 current_user, state = _remote_desktop_browser_auth_state(browser)
                 if current_user is None:
                     close_reason = state
-                    await _close_with_reason(websocket, 4401 if state == "login_session_invalid" else 4403, "Remote Desktop-sessionen er ikke længere gyldig")
+                    await _close_with_reason(websocket, NATIVE_IDLE_CLOSE_CODE if state == "idle_timeout" else 4401 if state == "login_session_invalid" else 4403, "ClientFlow-sessionen er ikke længere gyldig")
                     return
                 user = current_user
                 next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_BROWSER_AUTH_RECHECK_SECONDS
@@ -1704,7 +1762,7 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 current_user, state = _remote_desktop_browser_auth_state(browser)
                 if current_user is None:
                     close_reason = state
-                    await _close_with_reason(websocket, 4401 if state == "login_session_invalid" else 4403, "Remote Desktop-sessionen er ikke længere gyldig")
+                    await _close_with_reason(websocket, NATIVE_IDLE_CLOSE_CODE if state == "idle_timeout" else 4401 if state == "login_session_invalid" else 4403, "ClientFlow-sessionen er ikke længere gyldig")
                     return
                 user = current_user
                 next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_BROWSER_AUTH_RECHECK_SECONDS
@@ -1722,6 +1780,17 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 continue
             if decoded.type == "ping":
                 await _send_browser_serialized(browser, {"type": "pong", "ts": time.time()})
+                continue
+            if decoded.type == "native_rdp_user_activity":
+                idle = browser.native_idle
+                if (idle and set(decoded.payload) == {"type", "request_id"}
+                        and idle.request_id == browser.native_rdp_managed_request_id):
+                    warned = idle.warned
+                    if idle.touch(decoded.payload.get("request_id"), time.monotonic()) and warned:
+                        await asyncio.wait_for(_send_browser_serialized(browser, {
+                            "type": "native_rdp_idle", "phase": "reset",
+                            "request_id": idle.request_id,
+                        }), timeout=3)
                 continue
             message = dict(decoded.payload)
             message["session_id"] = session_id
