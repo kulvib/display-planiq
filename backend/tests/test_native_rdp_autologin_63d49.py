@@ -76,7 +76,7 @@ def test_only_live_superadmin_can_issue_sealed_request_and_reply_once(monkeypatc
     asyncio.run(broker._handle_control_agent_message(CLIENT, "mock-agent-credential", reply))
     assert len(delivered) == 1
     assert delivered[0]["type"] == "native_rdp_autologin_envelope"
-    assert delivered[0]["envelope"] == envelope()
+    assert delivered[0]["envelope"] == reply["envelope"]
     assert item.native_rdp_autologin_pending is None
     asyncio.run(broker._handle_control_agent_message(CLIENT, "mock-agent-credential", reply))
     assert len(delivered) == 1, "duplicate/replay must be ignored"
