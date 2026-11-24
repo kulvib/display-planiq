@@ -154,7 +154,7 @@ def test_missing_real_dependency_is_identified_before_gnome_start(
     def command(name, argv, timeout=80):
         value = original_command(name, argv, timeout=timeout)
         if name == "NATIVE_CAPABILITY":
-            value = value.replace(label + "=", label + "=NOT_INSTALLED#")
+            value = "\n".join(label + "=NOT_INSTALLED" if line.startswith(label + "=") else line for line in value.splitlines()) + "\n"
         return value
 
     monkeypatch.setattr(m, "command", command)
@@ -171,7 +171,7 @@ def test_native_preflight_requires_all_six_expected_fields(tmp_path, monkeypatch
     def command(name, argv, timeout=80):
         value = original_command(name, argv, timeout=timeout)
         if name == "NATIVE_CAPABILITY":
-            return value.replace("XAUTH_PROGRAM=xauth\\n", "")
+            return "\n".join(line for line in value.splitlines() if not line.startswith("XAUTH_PROGRAM=")) + "\n"
         return value
 
     monkeypatch.setattr(m, "command", command)
