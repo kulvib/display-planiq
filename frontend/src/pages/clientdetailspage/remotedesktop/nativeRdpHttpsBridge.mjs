@@ -48,6 +48,8 @@ export function createNativeHttpsBridge({ clientId, sessionId, ticket }) {
   const { port1, port2 } = new MessageChannel();
   let peer = null;
   let closed = false;
+  let inboundBytes = 0;
+  const inboundSizes = [];
   const emit = (data, transfer = []) => {
     if (!closed) port1.postMessage(data, transfer);
   };
@@ -56,6 +58,8 @@ export function createNativeHttpsBridge({ clientId, sessionId, ticket }) {
     closed = true;
     peer?.close();
     peer = null;
+    inboundSizes.length = 0;
+    inboundBytes = 0;
     port1.close();
   };
   port1.onmessage = event => {
@@ -64,12 +68,28 @@ export function createNativeHttpsBridge({ clientId, sessionId, ticket }) {
       if (data?.type === "open" && !peer && !closed) {
         peer = new NativeHttpsBrowserPeer({ request, clientId, sessionId, ticket, approved: true });
         peer.addEventListener("open", () => emit({ type: "open" }));
-        peer.addEventListener("message", message => emit({ type: "data", data: message.data }, [message.data]));
+        peer.addEventListener("message", message => {
+          if (closed) return;
+          const size = message.data.byteLength;
+          if (!size || inboundBytes + size > 2097152 || inboundSizes.length >= 512) {
+            emit({ type: "error" });
+            emit({ type: "close", code: 1006 });
+            close();
+            return;
+          }
+          inboundSizes.push(size);
+          inboundBytes += size;
+          emit({ type: "data", data: message.data }, [message.data]);
+        });
         peer.addEventListener("drain", message => emit({ type: "drain", bytes: message.bytes }));
         peer.addEventListener("error", () => emit({ type: "error" }));
         peer.addEventListener("close", message => { emit({ type: "close", code: message.code }); close(); });
       } else if (data?.type === "data" && peer && data.data instanceof ArrayBuffer) {
         peer.send(data.data);
+      } else if (data?.type === "received" && peer &&
+                 Number.isInteger(data.bytes) && inboundSizes.length &&
+                 data.bytes === inboundSizes[0]) {
+        inboundBytes -= inboundSizes.shift();
       } else if (data?.type === "close") {
         close();
       } else {

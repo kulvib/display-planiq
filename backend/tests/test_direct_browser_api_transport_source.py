@@ -27,4 +27,5 @@ def test_backend_cors_contract_allows_direct_frontend_and_exposes_observability(
     assert '"https://display.planiq.dk"' in main
     assert "allow_credentials=True" in main
     assert '"Authorization"' in main
-    assert 'expose_headers=[REQUEST_ID_HEADER, "Server-Timing"]' in main
+    assert 'expose_headers=[REQUEST_ID_HEADER, "Server-Timing", "X-ClientFlow-Sequence"]' in main
+    assert '"X-ClientFlow-Ticket"' in main

@@ -28,7 +28,9 @@
             this.emit("open");
           } else if (data?.type === "data" && this.readyState === 1 &&
                      data.data instanceof ArrayBuffer && data.data.byteLength > 0 && data.data.byteLength <= 65536) {
+            const bytes = data.data.byteLength;
             this.emit("message", { data: data.data });
+            if (this.readyState === 1) port.postMessage({ type: "received", bytes });
           } else if (data?.type === "drain" && Number.isInteger(data.bytes) && data.bytes > 0 &&
                      data.bytes <= this.bufferedAmount) {
             this.bufferedAmount -= data.bytes;

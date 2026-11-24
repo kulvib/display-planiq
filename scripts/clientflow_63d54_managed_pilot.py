@@ -2,7 +2,7 @@
 """63D-54: time-bounded physical pilot installer, not a release installer.
 
 Root, Viborg1 ID 3, release 1248 only. Pin the entire candidate source set to
-the immutable renewable 63D-56B source snapshot. No GNOME start at installation time; no
+the immutable integrated 63D-61D source snapshot. No GNOME start at installation time; no
 database, release-store, firewall policy, kiosk display, or Render mutations.
 A runtime timer restores the original agent independently of the browser.
 The original GNOME watchdog remains responsible for firewall-first protection
@@ -24,7 +24,7 @@ import sys
 import time
 import urllib.request
 
-COMMIT = "d3312298fd2ed8263ea07ba360154ab6ad7d25cf"
+COMMIT = "fb2e7ba677d478b4c466a4c916955d7f17175237"
 HOST = "viborg1-NUC14MNK-B2"
 RELEASE = "clientflow-1.3.47-seq-1248"
 ROOT = Path("/run/clientflow-63d54-operator")
@@ -61,16 +61,26 @@ PINS = {
     "scripts/clientflow_63d53_rdp_lifecycle.py": "5ee6afc5d8bf5a3d4401f77d8f36bb8eda47e1fcaea210466af0755bc9a8e2bb",
     "scripts/clientflow_63d53_rdp_proof.py": "daec30c30191f3dd6d9b0b4b12b773023bf5287ff34379150ef1b14f0df2e4f6",
     "client/runtime/clientflow_runtime/remote_desktop_agent.py": "1fbcfb5667b29c55140d082bc7ec1e65ba81f5b2f407bd5186546597dca4311a",
-    "client/runtime/clientflow_runtime/native_rdp_forwarder.py": "52bfba4fc883854e47c67d75f7a19e70757a663b20b7ca1903eec43c947e4ee3",
+    "client/runtime/clientflow_runtime/native_rdp_forwarder.py": "1aa5946c8d34ceb1a07082b512e856e532732ab5f417e99372e7cd23d455dcfc",
     "client/runtime/clientflow_runtime/native_rdp_autologin.py": "087822cd2b0928b7d0406be0aa8b646a4b32690105e9f3094bff074cacb0726f",
+    "client/runtime/clientflow_runtime/native_rdp_https_peer.py": "a0d3c2bb284967b76860217ec3d38c13b1dc744ef1d620df0888d109bfe90fb0",
     "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle.socket": "9664b1e7c2b2c3627644d200a599018e7e64ebd32ce30b723024c9d91aa289a3",
     "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle@.service": "35f49b92ce587c2496676ce92d9fc011511fabaa3c67e11c65634bfda899cbfc",
     "experiments/63d53-managed-rdp/clientflow-rdp-sealer.socket": "061ed3d0f426445e3b824fc4ab87a389ac10a333737a7e1b08217d7f4afca825",
     "experiments/63d53-managed-rdp/clientflow-rdp-sealer@.service": "99811bcc36e34ad2c16f5a86e9fe0a317fdd3c3f5275869d434af0d7290dc824"
 }
-MODULES = ("remote_desktop_agent.py", "native_rdp_forwarder.py", "native_rdp_autologin.py")
+MODULES = ("remote_desktop_agent.py", "native_rdp_forwarder.py", "native_rdp_autologin.py",
+           "native_rdp_https_peer.py")
 DROPIN_BYTES = ("[Service]\nExecStart=\nExecStart=" + PYTHON +
                 " -I -B " + str(SHADOW / "entrypoint.py") + "\n").encode("ascii")
+HTTPS_DROPIN_BYTES = DROPIN_BYTES + (
+    b"Environment=CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED=true\n"
+    b"Environment=CLIENTFLOW_NATIVE_RDP_TRANSPORT=https\n"
+)
+WSS_DROPIN_BYTES = DROPIN_BYTES + (
+    b"Environment=CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED=false\n"
+    b"Environment=CLIENTFLOW_NATIVE_RDP_TRANSPORT=wss\n"
+)
 ENTRY = """import hashlib
 import os
 from pathlib import Path
@@ -89,8 +99,8 @@ for name, expected in PINS.items():
         raise SystemExit('SHADOW_SOURCE_MISMATCH')
 import clientflow_runtime
 clientflow_runtime.__path__ = [str(root), *clientflow_runtime.__path__]
-from clientflow_runtime import native_rdp_autologin, native_rdp_forwarder, remote_desktop_agent
-for module in (native_rdp_autologin, native_rdp_forwarder, remote_desktop_agent):
+from clientflow_runtime import native_rdp_autologin, native_rdp_forwarder, native_rdp_https_peer, remote_desktop_agent
+for module in (native_rdp_autologin, native_rdp_forwarder, native_rdp_https_peer, remote_desktop_agent):
     if Path(module.__file__).resolve().parent != root:
         raise SystemExit('SHADOW_MODULE_MISMATCH')
 if sys.argv[1:] == ['--check']:
@@ -281,7 +291,8 @@ def verify_owned_installation():
         if present(path) and digest(read_regular(path)) != PINS[source]:
             raise Stop("FOREIGN_UNIT_CONTENT")
     if present(DROPIN):
-        owned_bytes(DROPIN, DROPIN_BYTES)
+        if read_regular(DROPIN) not in (WSS_DROPIN_BYTES, HTTPS_DROPIN_BYTES):
+            raise Stop("FOREIGN_FILE_CONTENT")
     if present(SHADOW / "entrypoint.py"):
         owned_bytes(SHADOW / "entrypoint.py", ENTRY_BYTES)
 
@@ -369,7 +380,9 @@ def stage(sources):
         raise Stop("AGENT_IMPORT_NOT_ATTESTED")
 
 
-def install():
+def install(transport="wss"):
+    if transport not in {"wss", "https"}:
+        raise Stop("INVALID_PILOT_TRANSPORT")
     target()
     verify_clean()
     crypto_preflight()
@@ -406,7 +419,7 @@ def install():
                 raise Stop("LOCAL_SOCKET_PERMISSIONS_INVALID")
         if not present(DROPIN.parent):
             mkdir(DROPIN.parent)
-        write_new(DROPIN, DROPIN_BYTES)
+        write_new(DROPIN, HTTPS_DROPIN_BYTES if transport == "https" else WSS_DROPIN_BYTES)
         systemctl("RELOAD_AGENT", "daemon-reload")
         systemctl("START_CANDIDATE_AGENT", "restart", AGENT, timeout=45)
         value = systemctl("CANDIDATE_EXEC", "show", "--property=ExecStart", "--value", AGENT)
@@ -419,6 +432,7 @@ def install():
         print("CLIENTFLOW_RELEASE_UNCHANGED=1248", flush=True)
         print("AGENT_ROLLBACK_TIMER_MINUTES=20", flush=True)
         print("PHYSICAL_SESSION_RENEWABLE=TRUE", flush=True)
+        print("PILOT_TRANSPORT=" + transport, flush=True)
         print("NO_CREDENTIALS_PRINTED=True", flush=True)
     except Exception:
         try:
@@ -441,7 +455,7 @@ def status():
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("install", "rollback", "status"))
+    parser.add_argument("action", choices=("install", "install-https", "rollback", "status"))
     args = parser.parse_args()
     try:
         target()
@@ -451,7 +465,8 @@ def main():
             if not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or stat.S_IMODE(meta.st_mode) != 0o600:
                 raise Stop("UNSAFE_OPERATOR_LOCK")
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            {"install": install, "rollback": rollback, "status": status}[args.action]()
+            {"install": install, "install-https": lambda: install("https"),
+             "rollback": rollback, "status": status}[args.action]()
         return 0
     except Exception as exc:
         # Only our fixed internal codes; raw errors may contain local data.

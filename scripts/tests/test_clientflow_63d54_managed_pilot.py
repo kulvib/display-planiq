@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_pins_match_immutable_renewable_source_tree():
-    assert pilot.COMMIT == "d3312298fd2ed8263ea07ba360154ab6ad7d25cf"
-    assert len(pilot.PINS) == 15
+    assert pilot.COMMIT == "fb2e7ba677d478b4c466a4c916955d7f17175237"
+    assert len(pilot.PINS) == 16
     for path, expected in pilot.PINS.items():
         raw = (ROOT / path).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == expected
@@ -23,10 +23,11 @@ def test_pins_match_immutable_renewable_source_tree():
             pilot.require_pin(path, raw + b"x")
 
 
-def test_shadow_covers_all_three_runtime_modules():
+def test_shadow_covers_all_four_runtime_modules():
     ast.parse(pilot.ENTRY_BYTES)
     assert set(pilot.MODULES) == {
-        "remote_desktop_agent.py", "native_rdp_forwarder.py", "native_rdp_autologin.py"}
+        "remote_desktop_agent.py", "native_rdp_forwarder.py", "native_rdp_autologin.py",
+        "native_rdp_https_peer.py"}
     assert str(pilot.SHADOW).encode() in pilot.DROPIN_BYTES
     assert pilot.DROPIN.parent.parent == Path("/run/systemd/system")
     assert "1248" in pilot.RELEASE
@@ -83,3 +84,12 @@ def test_rollback_waits_for_root_cleanup_before_removing_sources():
     assert body.index("while active_instances()") < body.index('"STOP_SEALER"')
     assert body.index("PHYSICAL_CLEANUP_PENDING_KEEP_WATCHDOG") < body.index("path.unlink()")
     assert "physical_paths()" in body
+
+
+def test_transport_modes_are_explicit():
+    assert b"CLIENTFLOW_NATIVE_RDP_TRANSPORT=wss" in pilot.WSS_DROPIN_BYTES
+    assert b"CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED=false" in pilot.WSS_DROPIN_BYTES
+    assert b"CLIENTFLOW_NATIVE_RDP_TRANSPORT=https" in pilot.HTTPS_DROPIN_BYTES
+    assert b"CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED=true" in pilot.HTTPS_DROPIN_BYTES
+    with pytest.raises(pilot.Stop, match="INVALID_PILOT_TRANSPORT"):
+        pilot.install("auto")

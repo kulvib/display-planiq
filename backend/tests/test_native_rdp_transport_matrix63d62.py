@@ -1,0 +1,164 @@
+"""ASGI/native handler transport matrix; identity and DB boundaries stubbed."""
+import asyncio
+from contextlib import nullcontext
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from fastapi import FastAPI
+
+from service1.native_rdp_https_core import QueueBudget, encode_batch, decode_batch
+from service1.routers import native_rdp_tunnel as native
+from service1.routers import native_rdp_https_http as http
+from service1.routers import remote_desktop_v2 as control
+
+SESSION = "12345678-1234-4234-8234-123456789abc"
+ORIGIN = "https://display.planiq.dk"
+
+
+class Socket:
+    def __init__(self, headers):
+        self.headers = headers
+        self.cookies = {}
+        self.query_params = {}
+        self.client = None
+        self.accepted = asyncio.Event()
+        self.incoming = asyncio.Queue()
+        self.outgoing = asyncio.Queue()
+        self.closed = False
+
+    async def accept(self, **kwargs):
+        self.accepted.set()
+
+    async def receive(self):
+        return await self.incoming.get()
+
+    async def send_bytes(self, body):
+        await self.outgoing.put(body)
+
+    async def close(self, **kwargs):
+        if not self.closed:
+            self.closed = True
+            await self.incoming.put({"type": "websocket.disconnect", "code": 1000})
+
+
+@pytest.mark.parametrize("browser_https,agent_https", [
+    (False, False), (True, False), (False, True), (True, True),
+])
+def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_https):
+    async def exercise():
+        monkeypatch.setenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", "true")
+        user = SimpleNamespace(id=42, token_version=7, is_active=True, is_superadmin=True)
+        credential = SimpleNamespace(id="credential", token_version=5)
+        channel = SimpleNamespace(credential_id="credential", token_version=5)
+        active = SimpleNamespace(client_id=3, user_id=42, user_token_version=7,
+                                 auth_session_binding="login", native_rdp_managed_request_id="managed",
+                                 native_rdp_managed_ready=True, native_rdp_managed_renewable=True,
+                                 native_rdp_managed_channel=channel)
+        opened = asyncio.Queue()
+        valid = [True]
+        browsers, agents = {SESSION: active}, {3: channel}
+        for module in (native, control):
+            monkeypatch.setattr(module, "BROWSERS", browsers)
+            monkeypatch.setattr(module, "CONTROL_AGENTS", agents)
+            monkeypatch.setattr(module, "_platform_client_accessible", lambda *_: True)
+            monkeypatch.setattr(module, "_remote_desktop_browser_auth_state",
+                                lambda _: (user, "ok") if valid[0] else (None, "idle_timeout"))
+            monkeypatch.setattr(module, "_remote_desktop_agent_channel_valid", lambda _: True)
+            monkeypatch.setattr(module, "_ws_origin_allowed", lambda ws: ws.headers.get("origin") == ORIGIN)
+        monkeypatch.setattr(native, "_TUNNELS", {})
+        monkeypatch.setattr(native, "_CLIENT_TUNNELS", {})
+        monkeypatch.setattr(native, "_LOCK", asyncio.Lock())
+        monkeypatch.setattr(http, "_PEERS", {})
+        monkeypatch.setattr(http, "_BUDGET", QueueBudget())
+        monkeypatch.setattr(native, "Session", lambda *_: nullcontext(None))
+        monkeypatch.setattr(http, "Session", lambda *_: nullcontext(None))
+        monkeypatch.setattr(native, "authenticate_browser_websocket_with_context",
+                            lambda *_a, **_k: (user, "planiq-ws-ticket", "login"))
+        monkeypatch.setattr(control, "_get_http_user", lambda request: user)
+        monkeypatch.setattr(control, "_require_superadmin", lambda principal: principal)
+        monkeypatch.setattr(control, "_http_browser_session_binding", lambda *_: "login")
+        monkeypatch.setattr(native, "verify_remote_desktop_agent_token", lambda *_a, **_k: credential)
+        monkeypatch.setattr(http, "verify_remote_desktop_agent_token", lambda *_a, **_k: credential)
+        async def send_agent(_channel, packet):
+            await opened.put(packet)
+        monkeypatch.setattr(native, "_send_agent", send_agent)
+        app = FastAPI()
+        app.include_router(http.router, prefix="/api")
+        bh = {"origin": ORIGIN, "authorization": "Bearer test", "x-clientflow-ticket": "A" * 43}
+        ah = {"authorization": "Bearer test-agent"}
+        tasks = []
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url="https://api.display.planiq.dk") as client:
+            async def open_http(path, headers, role):
+                result = await client.post(path, headers=headers)
+                assert result.status_code == 200, result.text
+                peer_id = result.json()["peer_id"]
+                tasks.append(http._PEERS[peer_id].task)
+                return "/api/remote-desktop/native-https/" + role + "/3/" + peer_id
+
+            if browser_https:
+                browser = await open_http("/api/remote-desktop/browser/3/native-https/" + SESSION + "/open",
+                                          bh, "browser")
+            else:
+                browser = Socket(bh)
+                tasks.append(asyncio.create_task(native.native_rdp_browser_ws(browser, 3, SESSION)))
+                await browser.accepted.wait()
+            packet = await opened.get()
+            tunnel_id = packet["tunnel_id"]
+            assert packet["managed_request_id"] == "managed"
+            if agent_https:
+                agent = await open_http("/api/remote-desktop-agent/clients/3/native-https/" + SESSION
+                                        + "/" + tunnel_id + "/open", ah, "agent")
+            else:
+                agent = Socket(ah)
+                tasks.append(asyncio.create_task(native.native_rdp_agent_ws(agent, 3, SESSION, tunnel_id)))
+                await agent.accepted.wait()
+
+            async def transfer(source, target, sh, th, frames):
+                if isinstance(source, str):
+                    result = await client.post(source + "/send/0", content=encode_batch(frames),
+                                               headers={**sh, "content-type": "application/octet-stream"})
+                    assert result.status_code == 204 and result.headers["x-clientflow-sequence"] == "1"
+                else:
+                    for frame in frames:
+                        await source.incoming.put({"type": "websocket.receive", "bytes": frame})
+                actual = []
+                seq = 0
+                while len(actual) < len(frames):
+                    if isinstance(target, str):
+                        result = await client.get(target + "/poll/" + str(seq), headers=th)
+                        assert result.status_code == 200, result.text
+                        assert result.headers["x-clientflow-sequence"] == str(seq)
+                        if result.content:
+                            actual.extend(decode_batch(result.content))
+                            seq += 1
+                    else:
+                        actual.append(await target.outgoing.get())
+                assert actual == frames
+
+            try:
+                await transfer(browser, agent, bh, ah, [b"\x00\xff", bytes(range(256)) * 256, b"end"])
+                await transfer(agent, browser, ah, bh, [b"\x03\x00", b"reply"])
+                if browser_https:
+                    denied = await client.post(browser + "/send/1", content=encode_batch([b"denied"]),
+                                               headers={**bh, "origin": "https://other.invalid",
+                                                        "content-type": "application/octet-stream"})
+                    assert denied.status_code == 403
+                    assert not native._TUNNELS[tunnel_id].closed.is_set()
+                valid[0] = False
+                if browser_https:
+                    denied = await client.get(browser + "/poll/1", headers=bh)
+                    assert denied.status_code == 403
+                elif agent_https:
+                    denied = await client.get(agent + "/poll/1", headers=ah)
+                    assert denied.status_code == 403
+            finally:
+                await native.close_native_rdp_session(3, SESSION)
+                await asyncio.gather(*tasks)
+            assert native._TUNNELS == {} and native._CLIENT_TUNNELS == {}
+            assert http._PEERS == {} and http._BUDGET.used == 0
+
+    async def bounded():
+        await asyncio.wait_for(exercise(), timeout=10)
+    asyncio.run(bounded())

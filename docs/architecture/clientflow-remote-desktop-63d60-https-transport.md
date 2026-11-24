@@ -104,3 +104,19 @@ The HTTP boundary still performs auth reads per request; measure the cost.
 ASGI send completion is not proof that a remote HTTP client received bytes;
 sequence and independent supervision remain the fail-closed backstop.
 No deployment flags set, no pilot installer updated yet, no physical proof.
+
+## 63D-62A — CI repair, mixed transport test and pilot packaging
+
+Repin the pilot to the integrated 63D-61D commit, staging four runtime
+modules; the 20-minute rollback is unchanged and recognizes either exact
+root-owned service override. install defaults to WSS, install-https selects
+HTTPS for an approved physical pilot. The CORS assertion verifies the exact
+new header contract. Parent-to-iframe delivery has an outstanding FIFO cap
+of 2 MiB/512 frames with ordered acknowledgements after the child callback.
+This does not bound internal decoder/OS buffers. The new matrix exercises
+native handlers and actual HTTP routes via ASGI for four combinations,
+byte integrity, origin rejection and revoked/idle authority. Identity and
+DB checks are stubbed. No real sockets, TLS, firewall, Render or GNOME proof.
+CI, controlled proxy and FreeRDP executable proof, physical idle/Terminal
+checks, load and latency measurements and permanent lifecycle review remain
+required. No deployment or physical state changes.
