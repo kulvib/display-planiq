@@ -1,30 +1,38 @@
 /* 63D-47: Display existing GNOME primary-monitor pixels without inventing
  * resolution. CSS fit may DOWNSCALE but must never upscale a small RDP canvas.
- * Native mode is 1 canvas pixel per CSS pixel; the browser can scroll.
+ * Native mode is 1 canvas pixel per CSS pixel; explicit zoom is 25–200%.
+ * Only CSS dimensions change; the browser can scroll oversized images.
  * Neither mode modifies the SDL3 backing buffer, GNOME monitor, FreeRDP
  * protocol, RDP transport or credentials.
  */
 (function (root) {
   "use strict";
 
-  function calculateFit(sourceWidth, sourceHeight, viewportWidth, viewportHeight, mode = "fit") {
+  function validMode(mode, zoom) {
+    return mode === "fit" || mode === "native" ||
+      (mode === "zoom" && Number.isInteger(zoom) && zoom >= 25 && zoom <= 200);
+  }
+
+  function calculateFit(sourceWidth, sourceHeight, viewportWidth, viewportHeight, mode = "fit", zoom = 100) {
     const sizes = [sourceWidth, sourceHeight, viewportWidth, viewportHeight];
     if (sizes.some((n) => !Number.isFinite(n) || n <= 0 || n > 32768)) return null;
-    if (mode !== "fit" && mode !== "native") return null;
+    if (!validMode(mode, zoom)) return null;
     if (mode === "native") return { width: sourceWidth, height: sourceHeight };
     // Do not enlarge the framebuffer to hide a resolution mismatch. The
     // result is a presentation-only downscale with unchanged aspect ratio.
-    const scale = Math.min(1, viewportWidth / sourceWidth, viewportHeight / sourceHeight);
+    const scale = mode === "zoom"
+      ? Math.min(zoom / 100, 32768 / sourceWidth, 32768 / sourceHeight)
+      : Math.min(1, viewportWidth / sourceWidth, viewportHeight / sourceHeight);
     return {
       width: Math.max(1, Math.floor(sourceWidth * scale)),
       height: Math.max(1, Math.floor(sourceHeight * scale)),
     };
   }
 
-  function install({ canvas, viewport, mode = "fit", onResize = () => {} }) {
+  function install({ canvas, viewport, mode = "fit", zoom = 100, onResize = () => {} }) {
     if (!canvas || canvas.id !== "canvas" || canvas.tagName !== "CANVAS" ||
         !viewport || viewport.id !== "viewport" || !viewport.contains(canvas) ||
-        (mode !== "fit" && mode !== "native") || typeof onResize !== "function") {
+        !validMode(mode, zoom) || typeof onResize !== "function") {
       throw new TypeError("SDL3-viewport er ikke gyldigt");
     }
 
@@ -36,7 +44,7 @@
     function applyFit() {
       if (disposed) return;
       const result = calculateFit(
-        canvas.width, canvas.height, viewport.clientWidth, viewport.clientHeight, mode
+        canvas.width, canvas.height, viewport.clientWidth, viewport.clientHeight, mode, zoom
       );
       // SDL3's temporary 1x1 framebuffer must not be shown as a desktop.
       if (!result || canvas.width < 16 || canvas.height < 16) return;
@@ -82,12 +90,13 @@
     scheduleFit();
 
     return {
-      setMode(nextMode) {
-        if (nextMode !== "fit" && nextMode !== "native") {
+      setMode(nextMode, nextZoom = 100) {
+        if (!validMode(nextMode, nextZoom)) {
           throw new TypeError("Ugyldig RDP-visningstilstand");
         }
-        if (disposed || mode === nextMode) return;
+        if (disposed || (mode === nextMode && zoom === nextZoom)) return;
         mode = nextMode;
+        zoom = nextZoom;
         scheduleFit();
       },
       dispose() {

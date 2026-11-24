@@ -220,3 +220,40 @@ test("initial size experiment is scoped to exact physical client 3", () => {
     assert.equal(re.test("/api/remote-desktop/browser/" + client + "/native-rdp/" + session + "/ws"), false);
   }
 });
+
+
+test("explicit zoom 25–200 percent preserves the framebuffer and aspect ratio", () => {
+  const h = harness({ sourceWidth: 2560, sourceHeight: 1080, width: 1454, height: 720 });
+  const fit = h.root.PlanIQNativeRdpViewport.install({ canvas: h.canvas, viewport: h.viewport });
+  h.flush();
+  assert.equal(h.width, "1454px");
+  for (const [zoom, width, height] of [[25,640,270],[50,1280,540],[100,2560,1080],[150,3840,1620],[200,5120,2160]]) {
+    fit.setMode("zoom", zoom);
+    h.flush();
+    assert.equal(h.width, width + "px");
+    assert.equal(h.height, height + "px");
+    assert.equal(h.canvas.width, 2560);
+    assert.equal(h.canvas.height, 1080);
+  }
+  for (const invalid of [0,24,201,Infinity,NaN,"125",125.5]) {
+    assert.throws(() => fit.setMode("zoom", invalid), /Ugyldig/);
+  }
+  fit.setMode("fit");
+  h.flush();
+  assert.equal(h.width, "1454px");
+  fit.dispose();
+});
+
+test("compact controls keep diagnostic details collapsed and use browser fullscreen", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
+  assert.match(ui, /component="details"/);
+  assert.match(ui, /component="summary"[^>]*>Diagnostik/);
+  assert.doesNotMatch(ui, /component="details"[^>]*\bopen=/);
+  assert.match(ui, /requestFullscreen\(\)/);
+  assert.match(ui, /exitFullscreen\(\)/);
+  assert.match(ui, /fullscreenchange/);
+  assert.match(ui, /aria-label="Zoomniveau"/);
+  assert.match(viewer, /viewportFit\?\.setMode\("zoom", data.zoom\)/);
+  assert.match(viewer, /status.hidden = type !== "planiq-native-rdp-error" && bidirectionalTraffic/);
+  assert.match(html, /#status\[hidden\]/);
+});

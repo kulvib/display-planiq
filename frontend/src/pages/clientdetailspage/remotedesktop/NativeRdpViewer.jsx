@@ -11,6 +11,7 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
  */
 export default function NativeRdpViewer({ clientId, sessionId, onFallback, requestAutologin, autologinMessage }) {
   const iframeRef = useRef(null);
+  const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
   // Explicit pilot flag: legacy login remains rollback until the root broker,
@@ -27,6 +28,30 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
   const [performance, setPerformance] = useState(null);
   const [resolution, setResolution] = useState(null);
   const [displayMode, setDisplayMode] = useState("fit");
+  const [zoom, setZoom] = useState(100);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState("");
+
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === panelRef.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      setFullscreenError("");
+      if (document.fullscreenElement === panelRef.current) {
+        await document.exitFullscreen();
+      } else if (panelRef.current?.requestFullscreen) {
+        await panelRef.current.requestFullscreen();
+      } else {
+        throw new Error("fullscreen-unavailable");
+      }
+    } catch {
+      setFullscreenError("Fuldskærm er ikke tilgængelig i denne browser.");
+    }
+  }, []);
 
   useEffect(() => {
     const onMessage = (event) => {
@@ -57,7 +82,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
         const { sourceWidth, sourceHeight, displayWidth, displayHeight, mode } = event.data;
         const pixels = [sourceWidth, sourceHeight, displayWidth, displayHeight];
         if (pixels.every((n) => Number.isSafeInteger(n) && n >= 1 && n <= 32768) &&
-            (mode === "fit" || mode === "native")) {
+            (mode === "fit" || mode === "native" || mode === "zoom")) {
           setResolution({ sourceWidth, sourceHeight, displayWidth, displayHeight, mode });
         }
       }
@@ -186,31 +211,50 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       username: boot.username,
       password: boot.password,
       fingerprint: boot.fingerprint,
-      displayMode,
+      displayMode, zoom,
     }, window.location.origin);
     setBoot(null);
-  }, [boot, sessionId, displayMode]);
+  }, [boot, sessionId, displayMode, zoom]);
 
-  const chooseDisplayMode = useCallback((mode) => {
-    if (mode !== "fit" && mode !== "native") return;
+  const chooseDisplayMode = useCallback((mode, percent = 100) => {
+    if (mode !== "fit" && mode !== "native" &&
+        !(mode === "zoom" && Number.isInteger(percent) && percent >= 25 && percent <= 200)) return;
     setDisplayMode(mode);
+    setZoom(percent);
     iframeRef.current?.contentWindow?.postMessage(
-      { type: "planiq-native-rdp-display-mode", mode },
+      { type: "planiq-native-rdp-display-mode", mode, zoom: percent },
       window.location.origin
     );
   }, []);
 
+  const actualZoom = resolution
+    ? Math.round(100 * resolution.displayWidth / resolution.sourceWidth)
+    : displayMode === "zoom" ? zoom : 100;
+  const selectedZoom = displayMode === "zoom" ? zoom : actualZoom;
+  const adjustZoom = (delta) => chooseDisplayMode("zoom",
+    Math.min(200, Math.max(25, selectedZoom + delta)));
+
+  const disconnect = () => {
+    setBoot(null);
+    setWorking(false);
+    autoLoginRef.current = null;
+    setAutoPendingRequestId(null);
+    setStatus("Forbindelsen er afsluttet.");
+    setResolution(null);
+    setPerformance(null);
+  };
+
+  useEffect(() => {
+    if (!working && fullscreen && document.fullscreenElement === panelRef.current) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, [working, fullscreen]);
+
   return (
-    <Paper sx={{ p: 2, bgcolor: "rgba(2,6,23,0.9)", color: "white" }}>
-      <Stack spacing={1.2}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-          GNOME RDP · FreeRDP WebAssembly · Viborg1-pilot
-        </Typography>
-        <Typography variant="body2">
-          {automatic
-            ? "Kun superadministrator: Viborg1 opretter midlertidigt RDP-login, der krypteres direkte til din browsersession. Ingen manuel adgangskode eller certifikatindtastning."
-            : "Skærm, mus og tastatur håndteres af FreeRDP. Den nuværende manuelle pilot gemmer ikke GNOME RDP-adgangskoder i PlanIQ-databasen."}
-        </Typography>
+    <Paper ref={panelRef} sx={{ p: 1, bgcolor: "#080c16", color: "white",
+      "&:fullscreen": { p: 1, width: "100%", height: "100%", boxSizing: "border-box" } }}>
+      <Stack spacing={1} sx={fullscreen ? { height: "100%", minHeight: 0 } : undefined}>
+        {!working && <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Remote Desktop</Typography>}
         {!working && automatic && (
           <Button variant="contained" disabled={!sessionId} onClick={startAutomatic}>
             Forbind sikkert med automatisk RDP-login
@@ -240,24 +284,43 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
             </Stack>
           </Stack>
         )}
-        <Typography variant="body2" aria-live="polite">{status}</Typography>
+        {!working && <Typography variant="body2" aria-live="polite">{status}</Typography>}
         {working && (
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            <Button variant={displayMode === "fit" ? "contained" : "outlined"}
-              color="inherit" onClick={() => chooseDisplayMode("fit")}>
-              Tilpas uden opskalering
+          <Stack direction="row" spacing={0} useFlexGap flexWrap="wrap" gap={0.75} alignItems="center">
+            <Button size="small" variant={displayMode === "fit" ? "contained" : "outlined"}
+              color="inherit" title="Tilpas uden opskalering" aria-pressed={displayMode === "fit"}
+              onClick={() => chooseDisplayMode("fit")}>Tilpas</Button>
+            <Button size="small" variant={displayMode === "native" ? "contained" : "outlined"}
+              color="inherit" title="Original pixelstørrelse (1:1)" aria-pressed={displayMode === "native"}
+              onClick={() => chooseDisplayMode("native")}>1:1</Button>
+            <Button size="small" color="inherit" aria-label="Zoom ud" disabled={selectedZoom <= 25}
+              onClick={() => adjustZoom(-25)}>−</Button>
+            <Box component="select" aria-label="Zoomniveau" value={displayMode === "zoom" ? zoom : ""}
+              onChange={(event) => chooseDisplayMode("zoom", Number(event.target.value))}
+              sx={{ bgcolor: "#141d2b", color: "white", border: "1px solid #64748b", borderRadius: 1, p: 0.75 }}>
+              {displayMode !== "zoom" && <option value="">{actualZoom}%</option>}
+              {Array.from(new Set([25, 50, 75, 100, 125, 150, 175, 200,
+                ...(displayMode === "zoom" ? [zoom] : [])])).sort((a, b) => a - b)
+                .map((value) => <option key={value} value={value}>{value}%</option>)}
+            </Box>
+            <Button size="small" color="inherit" aria-label="Zoom ind" disabled={selectedZoom >= 200}
+              onClick={() => adjustZoom(25)}>+</Button>
+            <Button size="small" color="inherit" onClick={toggleFullscreen}>
+              {fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}
             </Button>
-            <Button variant={displayMode === "native" ? "contained" : "outlined"}
-              color="inherit" onClick={() => chooseDisplayMode("native")}>
-              Original pixelstørrelse (1:1)
-            </Button>
+            <Box sx={{ flex: 1 }} />
+            <Button size="small" variant="outlined" color="inherit" onClick={disconnect}>Afbryd</Button>
           </Stack>
         )}
+        {working && fullscreenError && <Typography role="alert" variant="caption">{fullscreenError}</Typography>}
+        <Box component="details" sx={{ color: "#cbd5e1", fontSize: "0.8rem" }}>
+          <Box component="summary" sx={{ cursor: "pointer" }}>Diagnostik</Box>
+          {working && <Typography variant="body2">{status}</Typography>}
         {working && resolution && (
           <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
             FreeRDP-canvas: {resolution.sourceWidth} × {resolution.sourceHeight} px ·
             vist: {resolution.displayWidth} × {resolution.displayHeight} CSS-px
-            ({resolution.mode === "native" ? "1:1" : "tilpasset uden opskalering"}).
+            ({resolution.mode === "native" ? "1:1" : resolution.mode === "zoom" ? "zoom" : "tilpasset uden opskalering"}).
             Dette er browserens billedflade, ikke en verificeret måling af Viborg1’s fysiske skærmopløsning.
           </Typography>
         )}
@@ -274,17 +337,15 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
           iframeRef.current?.contentWindow?.postMessage(
             { type: "planiq-native-rdp-visible-confirmed" }, window.location.origin
           );
-        }}>Jeg kan se GNOME-skrivebordet (bekræft fysisk billede)</Button>}
-        {working && <Button variant="outlined" color="inherit" onClick={() => {
-          setBoot(null);
-          setWorking(false);
-          autoLoginRef.current = null;
-          setAutoPendingRequestId(null);
-          setStatus(automatic ? "RDP-session lukket. Opret en ny sikker forbindelse." : "RDP-session lukket. Indtast login igen for at genforbinde.");
-          setResolution(null);
-        }}>Afbryd RDP</Button>}
+        }}>Bekræft fysisk billede</Button>}
+          <Button size="small" variant="text" color="inherit" onClick={onFallback}>
+            Brug HTTPS/JPEG-visning
+          </Button>
+        </Box>
         {working && (
-          <Box sx={{ width: "100%", minHeight: 520, bgcolor: "#000", borderRadius: 1, overflow: "hidden" }}>
+          <Box sx={{ width: "100%", height: fullscreen ? undefined : "70vh",
+            flex: fullscreen ? "1 1 0" : undefined, minHeight: fullscreen ? 0 : 320,
+            bgcolor: "#000", borderRadius: 1, overflow: "hidden" }}>
             <iframe
               key={sessionId + ":" + attempt}
               ref={iframeRef}
@@ -292,13 +353,10 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
               src="/native-rdp/viewer.html"
               onLoad={onLoad}
               allowFullScreen
-              style={{ border: 0, width: "100%", minHeight: "70vh", display: "block" }}
+              style={{ border: 0, width: "100%", height: "100%", display: "block" }}
             />
           </Box>
         )}
-        <Button variant="outlined" color="inherit" onClick={onFallback}>
-          Brug almindelig HTTPS/JPEG-visning
-        </Button>
       </Stack>
     </Paper>
   );

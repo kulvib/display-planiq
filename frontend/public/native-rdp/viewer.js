@@ -9,6 +9,7 @@
   let started = false;
   let failed = false;
   let transportOpened = false;
+  let bidirectionalTraffic = false;
   let transportTimer = null;
   let probe = null;
   let viewportFit = null;
@@ -28,6 +29,7 @@
   let safeFailureClass = "UNKNOWN";
   const tell = (type, message) => {
     status.textContent = String(message).slice(0, 180);
+    status.hidden = type !== "planiq-native-rdp-error" && bidirectionalTraffic;
     window.parent.postMessage({ type, message: status.textContent }, window.location.origin);
   };
   const error = (message) => {
@@ -71,6 +73,8 @@
     if (data?.type === "planiq-native-rdp-display-mode" && started && !failed) {
       if (data.mode === "native" || data.mode === "fit") {
         viewportFit?.setMode(data.mode);
+      } else if (data.mode === "zoom" && Number.isInteger(data.zoom) && data.zoom >= 25 && data.zoom <= 200) {
+        viewportFit?.setMode("zoom", data.zoom);
       }
       return;
     }
@@ -103,7 +107,10 @@
     try {
       viewportFit = window.PlanIQNativeRdpViewport.install({
         canvas: element, viewport: document.getElementById("viewport"),
-        mode: data.displayMode === "native" ? "native" : "fit",
+        mode: data.displayMode === "native" ? "native" :
+          data.displayMode === "zoom" && Number.isInteger(data.zoom) &&
+          data.zoom >= 25 && data.zoom <= 200 ? "zoom" : "fit",
+        zoom: Number.isInteger(data.zoom) && data.zoom >= 25 && data.zoom <= 200 ? data.zoom : 100,
         onResize: ({ sourceWidth, sourceHeight, displayWidth, displayHeight, mode }) => {
           // Only integer canvas and CSS dimensions. This is not a measurement
           // of physical GNOME monitor resolution or RDP input latency.
@@ -139,6 +146,9 @@
             maxBrowserTimerSlipMs: stats.maxTimerSlipMs || 0,
           }, window.location.origin);
           if (stats.toAgentBytes && stats.fromAgentBytes) {
+            // Traffic is not proof of a rendered desktop. Keep detailed status
+            // in the parent diagnostic panel, without covering the canvas.
+            bidirectionalTraffic = true;
             update("RDP-data begge veje · til GNOME " + stats.toAgentBytes +
               " bytes / " + stats.toAgentFrames + " rammer · fra GNOME " +
               stats.fromAgentBytes + " bytes / " + stats.fromAgentFrames +
