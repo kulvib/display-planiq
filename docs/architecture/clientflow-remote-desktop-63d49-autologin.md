@@ -54,3 +54,37 @@ The socket-activated broker originally rejected the systemd-created socket as al
 **Trust boundary clarification:** the ECDH envelope prevents accidental plaintext disclosure to a forwarding relay, logs and persistence in normal operation with the trusted PlanIQ application and agent. It does not provide an independent authenticated key exchange against an actively compromised Render control plane or a maliciously modified frontend, since the browser public key is relayed by that control plane. Likewise the trusted agent may request a sealed envelope. A single-use envelope is not itself proof that GNOME's password is single-use or immediately rotated on browser disconnect; the existing physical pilot deadline is the currently demonstrated cleanup boundary. An authenticated device trust model, session-scoped revocation and a fresh step-up check must be specified and tested before fleet/production approval.
 
 No new installation or deploy is authorized by these corrections. The physical native-reference comparison remains independent of this autologin experiment.
+
+
+## 63D-52A — session-bound bootstrap hardening, still source-only
+
+The Render frontend layout pilot remains separately pinned to 516373b; the
+backend remains on 73a3d14. This draft is not deployed. Align the envelope
+acceptance window to 60 seconds at browser, agent and relay; reject a boolean
+schema value, agent replies arriving on the input socket, and a reply after
+superadmin demotion even if a generic auth-state check returns ok. The root
+broker rechecks its grant after the firewall probe, and the agent's socket
+response deadline allows the existing bounded 10-second guard probe without
+extending the relay challenge window. Browser operation generations and a
+session-keyed viewer prevent asynchronous ticket/credential completion from
+relaunching a disconnected/replaced viewer. This is not server-side credential
+revocation, and the 60-second envelope TTL is not a GNOME password TTL.
+
+Remaining integration before physical pilot: separate privileged GNOME
+lifecycle verification from the credential-only service with authenticated
+root-owned short-lived authorization state; bind it to the actual current
+session and enrolled device. Install and remove the protected broker through
+the canonical runtime lifecycle (no enabling experimental units). Define
+single active native RDP lease, credential rotation and tunnel closure on
+disconnect, logout, role revocation, watchdog, restart and network failure.
+No static client-ID bypass or universal rollout until client identity binding
+is implemented and tested across all layers. Browser auto-start and controlled
+reconnect need current server authorization and a fresh grant, not cached
+credentials. Dynamic RDP resolution requires proof of FreeRDP/GNOME negotiation
+and physical pointer precision; CSS zoom alone does not prove it. Keep the
+existing strict TLS pin and loopback-only kernel guard. Production step-up
+policy remains an explicit security decision; no extra manual RDP credentials.
+
+Do not enable the automatic login flag, deploy this draft, or approve release
+1249 from the source-level regression tests. The six-minute watchdog remains
+the physical pilot boundary until independently validated lifecycle integration.

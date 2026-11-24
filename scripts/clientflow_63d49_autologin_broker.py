@@ -190,6 +190,8 @@ def _seal(request: dict) -> dict:
 
     expires = _safe_grant()
     _verify_physical_firewall()
+    # The independent firewall check can consume part of the short lease.
+    expires = min(expires, _safe_grant())
     lines = _root_private(CREDENTIALS, max_size=512).decode("ascii").splitlines()
     if (len(lines) != 2 or not re.fullmatch(r"cfpilot[0-9a-f]{8}", lines[0]) or
             not re.fullmatch(r"[A-Za-z0-9_-]{40,80}", lines[1])):
@@ -213,6 +215,8 @@ def _seal(request: dict) -> dict:
         "username": lines[0], "password": lines[1], "fingerprint": fingerprint,
         "expires_unix": expires,
     }, separators=(",", ":")).encode("ascii")
+    if expires <= int(time.time()):
+        raise BrokerDenied("RDP_PILOT_EXPIRED")
     ciphertext = AESGCM(key).encrypt(iv, plaintext, aad)
     public = own_key.public_key().public_bytes(
         encoding=serialization.Encoding.X962,

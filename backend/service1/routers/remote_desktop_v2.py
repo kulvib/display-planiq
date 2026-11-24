@@ -789,7 +789,7 @@ async def _handle_control_agent_message(
         # Neither Render nor Postgres should ever see a GNOME plaintext secret.
         request_id = str(message.get("request_id") or "")
         if (
-            client_id != 3 or not re.fullmatch(
+            input_websocket is not None or client_id != 3 or not re.fullmatch(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
                 request_id,
             ) or browser.native_rdp_autologin_pending != request_id
@@ -797,8 +797,9 @@ async def _handle_control_agent_message(
         ):
             return
         current, state = _remote_desktop_browser_auth_state(browser)
-        if current is None or state != "ok":
+        if current is None or state != "ok" or not current.is_superadmin:
             browser.native_rdp_autologin_pending = None
+            browser.native_rdp_autologin_expires_at = 0.0
             return
         browser.native_rdp_autologin_pending = None
         browser.native_rdp_autologin_expires_at = 0.0
@@ -814,10 +815,11 @@ async def _handle_control_agent_message(
         }
         if (
             not isinstance(envelope, dict) or set(envelope) != keys
-            or envelope.get("schema") != 1 or envelope.get("session_id") != session_id
+            or type(envelope.get("schema")) is not int or envelope["schema"] != 1
+            or envelope.get("session_id") != session_id
             or envelope.get("request_id") != request_id
             or type(envelope.get("expires_unix")) is not int
-            or not 0 < envelope["expires_unix"] - int(time.time()) <= 360
+            or not 0 < envelope["expires_unix"] - int(time.time()) <= 60
             or any(
                 not isinstance(envelope.get(key), str)
                 or not 1 <= len(envelope[key]) <= size

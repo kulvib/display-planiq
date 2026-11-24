@@ -13,6 +13,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
   const iframeRef = useRef(null);
   const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
+  const operationRef = useRef(0);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
   // Explicit pilot flag: legacy login remains rollback until the root broker,
   // client agent and Render are validated together on physical Viborg1.
@@ -87,6 +88,10 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
         }
       }
       if (event.data?.type === "planiq-native-rdp-error") {
+        operationRef.current += 1;
+        autoLoginRef.current = null;
+        setAutoPendingRequestId(null);
+        setBoot(null);
         setStatus(String(event.data.message || "RDP-fejl").slice(0, 180));
         setWorking(false);
       }
@@ -105,14 +110,17 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     }
   }, []);
 
-  const launchWithCredentials = useCallback(async (credentials) => {
+  const launchWithCredentials = useCallback(async (credentials, operation) => {
     try {
+      if (operationRef.current !== operation) return;
       await verifyWasm();
+      if (operationRef.current !== operation) return;
       const verifiedFingerprint = normalizeNativeRdpFingerprint(credentials?.fingerprint);
       if (!credentials?.username || !credentials?.password || !verifiedFingerprint || !sessionId) {
         throw new Error("GNOME RDP-login er ikke gyldigt.");
       }
       const issued = await createBrowserWsTicket(clientId, "remote_desktop");
+      if (operationRef.current !== operation) return;
       const browserUrl = getRemoteDesktopBrowserWsUrl(clientId);
       if (!browserUrl.endsWith("/ws") || !issued?.ticket) {
         throw new Error("RDP-browsergodkendelsen blev ikke oprettet.");
@@ -126,6 +134,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       setPassword("");
       setStatus("Indlæser FreeRDP med midlertidigt automatisk login …");
     } catch (error) {
+      if (operationRef.current !== operation) return;
       setBoot(null);
       setStatus(error?.message || "FreeRDP kunne ikke startes.");
       setWorking(false);
@@ -138,7 +147,8 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     setPerformance(null);
     setResolution(null);
     setStatus("Kontrollerer WASM-browsermiljø …");
-    void launchWithCredentials({ username: username.trim(), password, fingerprint: normalizedFingerprint });
+    const operation = ++operationRef.current;
+    void launchWithCredentials({ username: username.trim(), password, fingerprint: normalizedFingerprint }, operation);
   }, [sessionId, username, password, normalizedFingerprint, working, launchWithCredentials]);
 
   const startAutomatic = useCallback(async () => {
@@ -147,9 +157,12 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     setPerformance(null);
     setResolution(null);
     setStatus("Godkender engangsadgang for superadministrator …");
+    const operation = ++operationRef.current;
     try {
       await verifyWasm();
+      if (operationRef.current !== operation) return;
       const handle = await createNativeRdpAutologin(sessionId);
+      if (operationRef.current !== operation) return;
       autoLoginRef.current = handle;
       setAutoPendingRequestId(handle.request.request_id);
       if (!requestAutologin(handle.request)) {
@@ -157,6 +170,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       }
       setStatus("Henter krypteret, midlertidigt RDP-login fra Viborg1 …");
     } catch (error) {
+      if (operationRef.current !== operation) return;
       autoLoginRef.current = null;
       setAutoPendingRequestId(null);
       setWorking(false);
@@ -176,7 +190,11 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       return;
     }
     if (autologinMessage.type !== "native_rdp_autologin_envelope") return;
-    void handle.open(autologinMessage.envelope).then(launchWithCredentials).catch(() => {
+    const operation = operationRef.current;
+    void handle.open(autologinMessage.envelope).then((credentials) =>
+      launchWithCredentials(credentials, operation)
+    ).catch(() => {
+      if (operationRef.current !== operation) return;
       setWorking(false);
       setStatus("Krypteret RDP-login kunne ikke verificeres.");
     });
@@ -187,6 +205,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     if (!automatic || !working || !autoPendingRequestId) return undefined;
     const id = window.setTimeout(() => {
       if (autoLoginRef.current?.request.request_id === autoPendingRequestId) {
+        operationRef.current += 1;
         autoLoginRef.current = null;
         setAutoPendingRequestId(null);
         setWorking(false);
@@ -197,6 +216,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
   }, [automatic, working, autoPendingRequestId]);
 
   useEffect(() => () => {
+    operationRef.current += 1;
     autoLoginRef.current = null;
   }, []);
 
@@ -235,6 +255,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     Math.min(200, Math.max(25, selectedZoom + delta)));
 
   const disconnect = () => {
+    operationRef.current += 1;
     setBoot(null);
     setWorking(false);
     autoLoginRef.current = null;

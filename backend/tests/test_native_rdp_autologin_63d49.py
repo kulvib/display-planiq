@@ -134,3 +134,25 @@ def test_expired_or_wrong_session_response_is_denied(monkeypatch):
         "request_id": CHALLENGE, "envelope": forged,
     }))
     assert delivered == []
+
+
+@pytest.mark.parametrize("reason", ["role_revoked", "overlong_lease", "input_channel", "boolean_schema"])
+def test_63d52_rejects_untrusted_sealed_reply(monkeypatch, reason):
+    item, _, delivered = setup_broker(monkeypatch)
+    item.native_rdp_autologin_pending = CHALLENGE
+    item.native_rdp_autologin_expires_at = time.monotonic() + 10
+    packet = envelope()
+    if reason == "role_revoked":
+        monkeypatch.setattr(broker, "_remote_desktop_browser_auth_state",
+                            lambda _: (SimpleNamespace(is_superadmin=False), "ok"))
+    if reason == "overlong_lease":
+        packet["expires_unix"] = int(time.time()) + 120
+    if reason == "boolean_schema":
+        packet["schema"] = True
+    asyncio.run(broker._handle_control_agent_message(
+        CLIENT, "agent", {
+            "type": "native_rdp_autologin_envelope",
+            "session_id": SESSION, "request_id": CHALLENGE, "envelope": packet,
+        }, input_websocket=object() if reason == "input_channel" else None,
+    ))
+    assert delivered == []

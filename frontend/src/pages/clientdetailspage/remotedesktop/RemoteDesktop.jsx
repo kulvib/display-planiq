@@ -1408,6 +1408,7 @@ export default function RemoteDesktop() {
 
   const remoteScreenPanel = nativeRdpMode ? (
     <NativeRdpViewer
+      key={`${clientId}:${sessionId || "pending"}`}
       clientId={clientId}
       sessionId={sessionId}
       requestAutologin={send}

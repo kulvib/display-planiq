@@ -83,3 +83,18 @@ def test_agent_never_reads_root_password_file_or_logs_unsealed_values():
     assert "print(" not in source
     assert "logger." not in source
     assert "localStorage" not in source
+
+
+def test_63d52_envelope_lease_is_at_most_one_minute():
+    frame = {
+        "schema": 1, "session_id": SESSION, "request_id": REQUEST,
+        "public_key": "A" * 87, "salt": "A" * 22,
+        "nonce": "A" * 16, "ciphertext": "A" * 200,
+        "expires_unix": int(time.time()) + 120,
+    }
+    with pytest.raises(autologin.AutologinUnavailable, match="EXPIRED"):
+        autologin._validate_envelope(frame, session_id=SESSION, request_id=REQUEST)
+    frame["expires_unix"] = int(time.time()) + 40
+    frame["schema"] = True
+    with pytest.raises(autologin.AutologinUnavailable):
+        autologin._validate_envelope(frame, session_id=SESSION, request_id=REQUEST)

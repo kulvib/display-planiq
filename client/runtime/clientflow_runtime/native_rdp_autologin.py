@@ -53,7 +53,8 @@ def _validate_envelope(envelope: dict, *, session_id: str, request_id: str) -> N
               "salt", "nonce", "ciphertext", "expires_unix"}
     if type(envelope) is not dict or set(envelope) != fields:
         raise AutologinUnavailable("INVALID_SEALED_RDP_ENVELOPE")
-    if (envelope["schema"] != 1 or envelope["session_id"] != session_id or
+    if (type(envelope["schema"]) is not int or envelope["schema"] != 1
+            or envelope["session_id"] != session_id or
             envelope["request_id"] != request_id):
         raise AutologinUnavailable("SEALED_RDP_WRONG_SESSION")
     for key, limit in (("public_key", 100), ("salt", 24),
@@ -62,7 +63,7 @@ def _validate_envelope(envelope: dict, *, session_id: str, request_id: str) -> N
         if not isinstance(value, str) or not 1 <= len(value) <= limit or not B64_RE.fullmatch(value):
             raise AutologinUnavailable("SEALED_RDP_ENVELOPE_INVALID_ENCODING")
     remaining = envelope["expires_unix"] - int(time.time()) if type(envelope["expires_unix"]) is int else -1
-    if not (0 < remaining <= 360):
+    if not (0 < remaining <= 60):
         raise AutologinUnavailable("SEALED_RDP_ENVELOPE_EXPIRED")
 
 
@@ -90,7 +91,9 @@ async def request_sealed_native_rdp_login(
         }
         writer.write(json.dumps(request, separators=(",", ":")).encode("ascii") + b"\n")
         await asyncio.wait_for(writer.drain(), timeout=2)
-        frame = await asyncio.wait_for(reader.readline(), timeout=5)
+        # Root verifies the kernel guard using a subprocess bounded to 10 s.
+        # Keep the response deadline inside Render's 20 s pending challenge.
+        frame = await asyncio.wait_for(reader.readline(), timeout=12)
         if not frame or len(frame) > MAX_REPLY or not frame.endswith(b"\n"):
             raise AutologinUnavailable("RDP_LOGIN_BROKER_DENIED")
         envelope = json.loads(frame.decode("ascii"))

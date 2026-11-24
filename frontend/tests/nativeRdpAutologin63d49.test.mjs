@@ -67,6 +67,7 @@ test("63D-49 fails closed on wrong session, challenge, expiry and tampering", as
     (x) => { x.request_id = "73a81005-99cc-4efa-9f7c-9e82e82f2fa8"; },
     (x) => { x.session_id = "c8e4a40e-a48c-48a1-9a2c-35035cb9e9bd"; },
     (x) => { x.expires_unix = Math.floor(Date.now()/1000) - 1; },
+    (x) => { x.expires_unix = Math.floor(Date.now()/1000) + 120; },
     (x) => { x.ciphertext = x.ciphertext.slice(0, -3) + "AAA"; },
     (x) => { x.extra_plaintext_password = "x"; },
   ]) {
@@ -102,4 +103,15 @@ test("63D-49 has no storage, plaintext WSS, cookies or certificate-ignore fallba
   assert.match(ui, /VITE_NATIVE_RDP_AUTOLOGIN/);
   assert.match(ui, /Forbind sikkert med automatisk RDP-login/);
   assert.match(ui, /!working && !automatic/);
+});
+
+
+test("63D-52 invalidates asynchronous launch on disconnect, error and session replacement", async () => {
+  const fs = await import("node:fs");
+  const ui = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
+  const parent = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/RemoteDesktop.jsx", import.meta.url), "utf8");
+  assert.match(ui, /const disconnect = \(\) => \{\s*operationRef\.current \+= 1/);
+  assert.match(ui, /await createBrowserWsTicket[^\n]+\n\s*if \(operationRef\.current !== operation\) return/);
+  assert.match(ui, /await createNativeRdpAutologin[^\n]+\n\s*if \(operationRef\.current !== operation\) return/);
+  assert.match(parent, /key=\{\x60\$\{clientId\}:\$\{sessionId \|\| "pending"\}\x60\}/);
 });

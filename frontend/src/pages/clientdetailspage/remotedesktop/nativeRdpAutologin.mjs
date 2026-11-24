@@ -36,7 +36,7 @@ function validateEnvelope(envelope, sessionId, requestId) {
     throw new Error("RDP-autologin tilhører ikke denne session.");
   }
   const secondsLeft = envelope.expires_unix - Math.floor(Date.now() / 1000);
-  if (!(secondsLeft > 0 && secondsLeft <= 360)) throw new Error("RDP-autologin er udløbet.");
+  if (!(secondsLeft > 0 && secondsLeft <= 60)) throw new Error("RDP-autologin er udløbet.");
 }
 export async function createNativeRdpAutologin(sessionId, subtle = globalThis.crypto?.subtle,
   randomUUID = () => globalThis.crypto.randomUUID()) {
@@ -96,6 +96,8 @@ export async function createNativeRdpAutologin(sessionId, subtle = globalThis.cr
           typeof body.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(body.fingerprint)) {
         throw new Error("RDP-loginpakke er ugyldig.");
       }
+      // Crypto completion is asynchronous: do not release an expired grant.
+      validateEnvelope(envelope, sessionId, requestId);
       const fingerprint = body.fingerprint.match(/../g).join(":");
       return { username: body.username, password: body.password, fingerprint };
     },
