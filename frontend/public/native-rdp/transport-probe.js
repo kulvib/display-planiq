@@ -21,7 +21,8 @@
         typeof options.onFailure !== "function") {
       throw new TypeError("Ugyldig RDP-transportkonfiguration");
     }
-    const BaseWebSocket = root.WebSocket;
+    const OriginalWebSocket = root.WebSocket;
+    const BaseWebSocket = options.socketClass || OriginalWebSocket;
     if (typeof BaseWebSocket !== "function") throw new TypeError("WebSocket mangler");
     const now = options.now || (() => Date.now());
     const setTimer = options.setTimer || root.setInterval.bind(root);
@@ -146,7 +147,7 @@
       dispose() {
         stopped = true;
         if (timer !== null) clearTimer(timer);
-        if (root.WebSocket === RdpSocket) root.WebSocket = BaseWebSocket;
+        if (root.WebSocket === RdpSocket) root.WebSocket = OriginalWebSocket;
       },
     };
   }

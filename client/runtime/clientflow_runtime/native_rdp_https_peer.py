@@ -12,6 +12,9 @@ import json
 import re
 import struct
 import uuid
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import Request as UrlRequest, HTTPRedirectHandler, HTTPSHandler, build_opener
 from typing import Awaitable, Callable, Protocol
 
 MAX_FRAME = 65536
@@ -73,6 +76,49 @@ def decode(body: bytes) -> list[bytes]:
     return frames
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def make_agent_https_request(transport, ssl_context) -> Request:
+    """One bounded HTTPS request per operation; no retry or redirect."""
+    origin = transport.credential.backend_url.rstrip("/")
+    parsed = urlsplit(origin)
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username
+            or parsed.password or parsed.path or parsed.query or parsed.fragment
+            or not ssl_context.check_hostname):
+        raise PeerError("invalid HTTPS origin")
+
+    def perform(method, path, body, cap, seconds):
+        if (not path.startswith("/api/remote-desktop") or "?" in path or "#" in path
+                or ".." in path or not 0 <= cap <= MAX_BATCH):
+            raise PeerError("invalid HTTPS request")
+        headers = {"Authorization": "Bearer " + transport.access_token(),
+                   "Accept": "application/octet-stream, application/json",
+                   "Cache-Control": "no-store"}
+        if body is not None:
+            headers["Content-Type"] = "application/octet-stream"
+        request = UrlRequest(origin + path, data=body, method=method, headers=headers)
+        opener = build_opener(HTTPSHandler(context=ssl_context), _NoRedirect())
+        try:
+            with opener.open(request, timeout=seconds) as response:
+                data = response.read(cap + 1)
+                if len(data) > cap:
+                    raise PeerError("HTTPS response too large")
+                from types import SimpleNamespace
+                return SimpleNamespace(status_code=int(response.status), body=data,
+                                       headers={key.lower(): value for key, value in response.headers.items()})
+        except HTTPError as exc:
+            exc.close()
+            raise PeerError("HTTPS request rejected") from None
+
+    async def request(method, path, body, cap, seconds):
+        return await asyncio.to_thread(perform, method, path, body, cap, seconds)
+
+    return request
+
+
 class NativeHttpsAgentPeer:
     def __init__(self, request: Request, *, client_id: int, session_id: str,
                  tunnel_id: str, approved: bool = False):
@@ -111,7 +157,8 @@ class NativeHttpsAgentPeer:
                 raise PeerError("ClientFlow open rejected")
             data = json.loads(reply.body)
             if (not isinstance(data, dict)
-                    or not re.fullmatch(r"[0-9a-f]{32}", str(data.get("peer_id", "")))
+                    or not isinstance(data.get("peer_id"), str)
+                    or not re.fullmatch(r"[0-9a-f]{32}", data["peer_id"])
                     or type(data.get("upload_sequence")) is not int or data["upload_sequence"] != 0
                     or type(data.get("download_sequence")) is not int or data["download_sequence"] != 0):
                 raise PeerError("invalid ClientFlow peer")

@@ -506,7 +506,23 @@ export default function RemoteDesktop() {
 
     let ws;
     try {
-      ws = nativeRequested ? new WebSocket(
+      if (nativeRequested && import.meta.env.VITE_NATIVE_RDP_TRANSPORT === "https") {
+        if (import.meta.env.VITE_NATIVE_BINARY_HTTPS_ENABLED !== "true") throw new Error("ClientFlow HTTPS er ikke godkendt");
+        const opened = await openRemoteDesktopBrowserHttpRelay(clientId);
+        const relayId = String(opened?.relay_id || "");
+        if (!relayId) throw new Error("ClientFlow-forbindelsen kunne ikke oprettes");
+        if (attemptId !== connectAttemptRef.current || idleStoppedRef.current) {
+          void closeRemoteDesktopBrowserHttpRelay(clientId, relayId).catch(() => {});
+          return;
+        }
+        ws = createHttpRelaySocket({
+          relayId,
+          sendPayload: payload => sendRemoteDesktopBrowserHttpRelay(clientId, relayId, payload),
+          pollMessages: () => pollRemoteDesktopBrowserHttpRelay(clientId, relayId, 25),
+          closeRelay: () => closeRemoteDesktopBrowserHttpRelay(clientId, relayId),
+        });
+        ws.transport = "https_long_poll";
+      } else ws = nativeRequested ? new WebSocket(
         getRemoteDesktopBrowserWsUrl(clientId), getBrowserWsProtocols(ticket)
       ) : createWebSocketWithHttpsFallback({
         openWebSocket: () => new WebSocket(
@@ -528,7 +544,7 @@ export default function RemoteDesktop() {
     } catch (err) {
       setError(err?.message || "Kunne ikke åbne WebSocket-forbindelsen.");
       setStatus("WebSocket-fejl");
-      if (nativeRequested) scheduleReconnect("Forbindelsen kunne ikke oprettes");
+      if (nativeRequested && import.meta.env.VITE_NATIVE_RDP_TRANSPORT !== "https") scheduleReconnect("Forbindelsen kunne ikke oprettes");
       return;
     }
     wsRef.current = ws;

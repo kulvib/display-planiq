@@ -134,6 +134,9 @@
     try {
       probe = window.PlanIQNativeRdpProbe.install({
         url: data.tunnelUrl,
+        ...(data.transport === "https" ? {
+          socketClass: window.PlanIQNativeHttpsPort.create(event.ports?.[0], data.tunnelUrl),
+        } : {}),
         onFailure: error,
         onProgress: (stats) => {
           if (failed || stats.openedAt === null) return;

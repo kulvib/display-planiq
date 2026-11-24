@@ -176,6 +176,7 @@ export class NativeHttpsBrowserPeer extends EventTarget {
         }
         this._up++;
         this.bufferedAmount -= size;
+        this._emit("drain", { bytes: size });
       }
     } catch {
       this._fail();

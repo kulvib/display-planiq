@@ -106,20 +106,33 @@ async def forward_native_rdp(
             f"/api/remote-desktop-agent/clients/{client_id}/native-rdp/"
             f"{session_id}/{tunnel_id}/ws"
         )
-        async with websockets.connect(
-            transport.websocket_url(path),
-            extra_headers=transport.websocket_headers(),
-            ssl=ssl_context,
-            max_size=MAX_WSS_MESSAGE,
-            open_timeout=12,
-            close_timeout=3,
-            ping_interval=15,
-            ping_timeout=15,
-            # GNOME RDP is TLS-encrypted already: deflating opaque ciphertext
-            # wastes CPU and can delay interactive packets on the outbound hop.
-            compression=None,
-            max_queue=4,
-        ) as websocket:
+        mode = os.environ.get("CLIENTFLOW_NATIVE_RDP_TRANSPORT", "wss")
+        if mode == "https":
+            if os.environ.get("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED") != "true":
+                raise NativeRdpNotApproved("CLIENTFLOW_HTTPS_NOT_APPROVED")
+            from .native_rdp_https_peer import NativeHttpsAgentPeer, make_agent_https_request
+
+            connection = NativeHttpsAgentPeer(
+                make_agent_https_request(transport, ssl_context),
+                client_id=client_id, session_id=session_id, tunnel_id=tunnel_id, approved=True,
+            )
+        elif mode == "wss":
+            connection = websockets.connect(
+                transport.websocket_url(path),
+                extra_headers=transport.websocket_headers(),
+                ssl=ssl_context,
+                max_size=MAX_WSS_MESSAGE,
+                open_timeout=12,
+                close_timeout=3,
+                ping_interval=15,
+                ping_timeout=15,
+                # GNOME RDP is TLS-encrypted already: do not deflate ciphertext.
+                compression=None,
+                max_queue=4,
+            )
+        else:
+            raise NativeRdpNotApproved("CLIENTFLOW_TRANSPORT_INVALID")
+        async with connection as websocket:
 
             async def send_local_bytes() -> None:
                 async for packet in websocket:

@@ -1,6 +1,6 @@
 """Experimental authenticated HTTP boundary for the native binary tunnel.
 
-Intentionally NOT mounted in main.py. The gate additionally defaults off.
+Mounted only with explicit deployment opt-in; the request gate defaults off.
 Existing native tunnel handlers remain the only tunnel allocation authority.
 No alternate RDP host/port, persisted media, or credentials in URLs.
 """
@@ -103,8 +103,15 @@ class Entry:
 def _browser_owner(request: Request, client_id: int) -> Owner:
     # Require an explicit allowed origin, including in development. Cookies
     # alone cannot authorize a cross-origin binary write.
-    if not request.headers.get("origin") or not control._ws_origin_allowed(request):
+    origin = request.headers.get("origin")
+    if origin:
+        if not control._ws_origin_allowed(request):
+            raise HTTPException(403, "Ugyldig Origin")
+    elif not (request.method == "GET" and request.headers.get("sec-fetch-site") == "same-origin"):
         raise HTTPException(403, "Ugyldig Origin")
+    # Data transport uses bearer auth only, including same-origin GET.
+    if not request.headers.get("authorization", "").lower().startswith("bearer "):
+        raise HTTPException(401, "ClientFlow-adgangstoken mangler")
     user = control._require_superadmin(control._get_http_user(request))
     binding = control._http_browser_session_binding(request, user)
     if not binding or not control._platform_client_accessible(client_id, user):

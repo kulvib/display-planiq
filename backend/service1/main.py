@@ -372,11 +372,12 @@ app.add_middleware(
         "If-Modified-Since",
         "Range",
         "X-CSRF-Token",
+        "X-ClientFlow-Ticket",
         REQUEST_ID_HEADER,
     ],
     # Direct browser→API transport gør disse data cross-origin. Eksponér kun
     # dataminimeret request-id og Server-Timing; aldrig SQL/host/credentials.
-    expose_headers=[REQUEST_ID_HEADER, "Server-Timing"],
+    expose_headers=[REQUEST_ID_HEADER, "Server-Timing", "X-ClientFlow-Sequence"],
 )
 
 
@@ -694,6 +695,10 @@ app.include_router(terminal_auth_router,    prefix="/api")
 app.include_router(remote_desktop_auth_router, prefix="/api")
 app.include_router(remote_desktop_v2_router, prefix="/api")
 app.include_router(native_rdp_tunnel_router, prefix="/api")
+if os.environ.get("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED") == "true":
+    from .routers.native_rdp_https_http import router as native_rdp_https_router
+
+    app.include_router(native_rdp_https_router, prefix="/api")
 app.include_router(terminal_router,        prefix="/api")
 app.include_router(terminal_agent_router,  prefix="/api")
 

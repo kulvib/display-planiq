@@ -1646,6 +1646,14 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     if not user:
         await _close_with_reason(websocket, 4401, "Ikke logget ind")
         return
+    relay_scope = getattr(websocket, "scope", {})
+    if relay_scope.get("kind") == "rd_browser" and (
+        relay_scope.get("user_id") != user.id
+        or relay_scope.get("user_token_version") != int(user.token_version or 0)
+        or relay_scope.get("auth_session_binding") != auth_session_binding
+    ):
+        await _close_with_reason(websocket, 4403, "ClientFlow-ticket matcher ikke relay-ejeren")
+        return
     if not getattr(user, "is_superadmin", False):
         await _close_with_reason(websocket, 4403, "Kun superadmin må åbne fjernskrivebord")
         return

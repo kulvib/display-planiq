@@ -79,3 +79,28 @@ CORS and same-origin poll behavior, bounded no-redirect TLS HTTP client,
 actual mixed transport tests, explicit allowed-network policy and physical
 validation. No automatic transport selection is implemented yet. Do not
 activate the experimental HTTP router before these gates. WSS is unchanged.
+
+## 63D-61D — explicitly approved end-to-end transport wiring
+
+The router is registered only when CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED=true
+on the backend. Frontend VITE_NATIVE_RDP_TRANSPORT=https additionally requires
+VITE_NATIVE_BINARY_HTTPS_ENABLED=true; otherwise WSS remains the default.
+On the physical agent CLIENTFLOW_NATIVE_RDP_TRANSPORT=https additionally
+requires CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED=true in the root-controlled
+service environment. Each binary hop may select independently. These are
+pilot deployment controls, not end-user switches or production defaults.
+No automatic downgrade on ambiguous WSS errors, TLS errors or auth denials.
+Selection from explicit approved configuration happens before data transfer,
+with a fresh generation. A network-specific automatic selection mechanism
+would require an independently trusted policy signal, not browser error text.
+The frontend parent uses bearer-only bounded no-retry binary requests and an
+exact single-generation MessagePort to the WASM iframe. The agent uses TLS
+with hostname verification and a bounded no-redirect HTTP request adapter;
+its blocking requests run in threads and require timeout/load validation.
+The original WSS path remains direct. JSON control uses the existing HTTPS
+relay for the approved browser mode; the existing agent control fallback is
+unchanged. Added binding of the HTTP control relay ticket to its owner.
+The HTTP boundary still performs auth reads per request; measure the cost.
+ASGI send completion is not proof that a remote HTTP client received bytes;
+sequence and independent supervision remain the fail-closed backstop.
+No deployment flags set, no pilot installer updated yet, no physical proof.

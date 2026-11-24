@@ -9,6 +9,7 @@ import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
 import { createBrowserWsTicket, getRemoteDesktopBrowserWsUrl } from "../../../api";
 import { normalizeNativeRdpFingerprint } from "./nativeRdpFingerprint";
 import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
+import { createNativeHttpsBridge } from "./nativeRdpHttpsBridge.mjs";
 
 /**
  * Disposable, same-origin sandbox for the official FreeRDP SDL3/Emscripten client.
@@ -17,6 +18,7 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
  */
 export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange, idleStopped = false, idleWarningOpen = false }) {
   const iframeRef = useRef(null);
+  const httpsBridgeRef = useRef(null);
   const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
   const operationRef = useRef(0);
@@ -41,6 +43,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const [fullscreenError, setFullscreenError] = useState("");
 
   const cancelManaged = useCallback(() => {
+    httpsBridgeRef.current?.close();
+    httpsBridgeRef.current = null;
     const requestId = managedRequestRef.current;
     managedRequestRef.current = null;
     if (requestId) requestAutologin?.({ type: "native_rdp_autologin_cancel", request_id: requestId });
@@ -292,8 +296,24 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
 
   const onLoad = useCallback(() => {
     if (!boot || !iframeRef.current?.contentWindow) return;
+    const https = import.meta.env.VITE_NATIVE_RDP_TRANSPORT === "https";
+    const transfers = [];
+    if (https) {
+      if (import.meta.env.VITE_NATIVE_BINARY_HTTPS_ENABLED !== "true") {
+        cancelManaged();
+        setWorking(false);
+        setRetryAllowed(true);
+        setBoot(null);
+        return;
+      }
+      httpsBridgeRef.current?.close();
+      const bridge = createNativeHttpsBridge({ clientId: Number(clientId), sessionId, ticket: boot.ticket });
+      httpsBridgeRef.current = bridge;
+      transfers.push(bridge.port);
+    }
     iframeRef.current.contentWindow.postMessage({
       type: "planiq-native-rdp-start",
+      transport: https ? "https" : "wss",
       sessionId,
       tunnelUrl: boot.tunnelUrl,
       ticket: boot.ticket,
@@ -302,9 +322,9 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       password: boot.password,
       fingerprint: boot.fingerprint,
       displayMode, zoom,
-    }, window.location.origin);
+    }, window.location.origin, transfers);
     setBoot(null);
-  }, [boot, sessionId, displayMode, zoom]);
+  }, [boot, sessionId, displayMode, zoom, clientId, cancelManaged]);
 
   const chooseDisplayMode = useCallback((mode, percent = 100) => {
     if (mode !== "fit" && mode !== "native" &&
