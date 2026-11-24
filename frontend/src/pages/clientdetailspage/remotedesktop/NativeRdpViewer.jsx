@@ -12,6 +12,7 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
 export default function NativeRdpViewer({ clientId, sessionId, onFallback, requestAutologin, autologinMessage }) {
   const iframeRef = useRef(null);
   const autoLoginRef = useRef(null);
+  const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
   // Explicit pilot flag: legacy login remains rollback until the root broker,
   // client agent and Render are validated together on physical Viborg1.
   const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
@@ -125,12 +126,14 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       await verifyWasm();
       const handle = await createNativeRdpAutologin(sessionId);
       autoLoginRef.current = handle;
+      setAutoPendingRequestId(handle.request.request_id);
       if (!requestAutologin(handle.request)) {
         throw new Error("Superadministratorens Remote Desktop-session er ikke forbundet.");
       }
       setStatus("Henter krypteret, midlertidigt RDP-login fra Viborg1 …");
     } catch (error) {
       autoLoginRef.current = null;
+      setAutoPendingRequestId(null);
       setWorking(false);
       setStatus(error?.message || "Automatisk RDP-login kunne ikke startes.");
     }
@@ -141,6 +144,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     const handle = autoLoginRef.current;
     if (autologinMessage.request_id !== handle.request.request_id) return;
     autoLoginRef.current = null;
+    setAutoPendingRequestId(null);
     if (autologinMessage.type === "native_rdp_autologin_denied") {
       setWorking(false);
       setStatus("Viborg1's beskyttede RDP-autologin er ikke tilgængeligt.");
@@ -155,16 +159,17 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
 
   useEffect(() => {
     // Do not retain an ECDH key or leave the UI indefinitely on a lost broker.
-    if (!automatic || !working || !autoLoginRef.current) return undefined;
+    if (!automatic || !working || !autoPendingRequestId) return undefined;
     const id = window.setTimeout(() => {
-      if (autoLoginRef.current) {
+      if (autoLoginRef.current?.request.request_id === autoPendingRequestId) {
         autoLoginRef.current = null;
+        setAutoPendingRequestId(null);
         setWorking(false);
         setStatus("RDP-autologin udløb; prøv igen med en ny session.");
       }
     }, 25000);
     return () => window.clearTimeout(id);
-  }, [automatic, working, autologinMessage]);
+  }, [automatic, working, autoPendingRequestId]);
 
   useEffect(() => () => {
     autoLoginRef.current = null;
@@ -274,6 +279,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
           setBoot(null);
           setWorking(false);
           autoLoginRef.current = null;
+          setAutoPendingRequestId(null);
           setStatus(automatic ? "RDP-session lukket. Opret en ny sikker forbindelse." : "RDP-session lukket. Indtast login igen for at genforbinde.");
           setResolution(null);
         }}>Afbryd RDP</Button>}
