@@ -10,7 +10,6 @@ import asyncio
 import json
 from pathlib import Path
 import re
-import socket
 import stat
 import time
 import uuid
