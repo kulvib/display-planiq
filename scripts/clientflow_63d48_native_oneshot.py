@@ -27,7 +27,7 @@ os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
 
 HOST = "viborg1-NUC14MNK-B2"
 RELEASE = "clientflow-1.3.47-seq-1248"
-OP = Path("/run/clientflow-63d48-reference")
+OP = Path("/run/clientflow-63d48-reference-r2")
 LOCK = Path("/run/clientflow-63d48-reference.lock")
 STAGED = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30/clientflow_63d30_local_rdp_pilot.py")
 STAGED_GUARD = STAGED.parent / "clientflow_63d29_persistent_rdp_guard.py"
