@@ -184,7 +184,7 @@ def isolated_worker(seconds: int) -> int:
     proc = subprocess.Popen(
         [client, "/args-from:stdin"],
         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True,
+        stderr=subprocess.DEVNULL, close_fds=True, start_new_session=False,
     )
     ever_changed = False
     elapsed = 0.0
@@ -213,11 +213,11 @@ def isolated_worker(seconds: int) -> int:
         return 0
     finally:
         if proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGTERM)
+            proc.terminate()
             try:
                 proc.wait(timeout=4)
             except subprocess.TimeoutExpired:
-                os.killpg(proc.pid, signal.SIGKILL)
+                proc.kill()
                 proc.wait(timeout=4)
 
 
