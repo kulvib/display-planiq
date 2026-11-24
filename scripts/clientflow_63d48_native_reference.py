@@ -252,6 +252,22 @@ def native(seconds: int) -> int:
     require_executable(("openssl",))
     username, password, fingerprint = private_login(user)
 
+    # First prove RDP authentication with the independently pinned 63D-30
+    # +auth-only probe. A process that merely stays alive may be a login prompt,
+    # so that cannot be counted as successful authentication.
+    auth = subprocess.run(
+        ["/usr/bin/python3", str(GNOME_RUNNER), "auth-probe"],
+        capture_output=True, text=True, timeout=35, check=False,
+        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+    )
+    if auth.returncode or "FREERDP_LOCAL_AUTH_ONLY= PASS" not in auth.stdout:
+        raise PreflightError("LOCAL_NATIVE_AUTH_NOT_VERIFIED")
+    announce("NATIVE_RDP_AUTHENTICATION", "PASS")
+
+    # The prior authentication must not have consumed the safety window.
+    if validate_guard() < seconds + 15:
+        raise PreflightError("GNOME_SAFETY_WINDOW_TOO_SHORT")
+
     # Wrapper runs as an unprivileged kiosk user. No password in argv, env,
     # disks or stdout; Xvfb has no TCP listener and a per-run Xauthority file.
     argv = [
