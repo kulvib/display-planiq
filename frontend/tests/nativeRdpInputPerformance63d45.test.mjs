@@ -81,6 +81,7 @@ test("iframe passively measures browser mouse event delay and reports only bound
   });
   const perf = out.find((m) => m.type === "planiq-native-rdp-performance");
   assert.ok(perf);
+  assert.equal(status.hidden, true, "normal traffic must not cover the desktop");
   assert.equal(perf.pointerEvents, 1);
   assert.equal(perf.maxBrowserEventLagMs, 3);
   assert.equal(perf.peakOutboundQueueBytes, 9216);
