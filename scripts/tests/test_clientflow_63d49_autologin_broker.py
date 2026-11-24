@@ -167,3 +167,68 @@ def test_socket_activated_root_service_is_offline_and_independently_bounded():
     assert "socket.fromfd(3, socket.AF_UNIX, socket.SOCK_STREAM)" in broker
     assert "UNTRUSTED_SYSTEMD_SOCKET_OWNER" in broker
     assert "_verify_physical_firewall()" in broker
+
+
+def test_systemd_activated_socket_is_not_rejected_as_existing(monkeypatch):
+    m = module()
+    path = "/run/clientflow/rdp-autologin-v1.sock"
+    folder = SimpleNamespace(lstat=lambda: SimpleNamespace(
+        st_mode=m.stat.S_IFDIR | 0o755, st_uid=0,
+    ))
+
+    class ActivatedPath:
+        parent = folder
+
+        def __str__(self):
+            return path
+
+        def lstat(self):
+            return SimpleNamespace(st_mode=m.stat.S_IFSOCK | 0o660,
+                                   st_uid=0, st_gid=456)
+
+        def exists(self):
+            pytest.fail("socket activation must validate the existing socket")
+
+        def unlink(self):
+            pytest.fail("systemd owns its activated socket")
+
+    closed = []
+    listener = SimpleNamespace(
+        getsockname=lambda: path,
+        settimeout=lambda _seconds: None,
+        close=lambda: closed.append(True),
+    )
+    monkeypatch.setattr(m, "SOCKET_PATH", ActivatedPath())
+    monkeypatch.setattr(m.pwd, "getpwnam", lambda _: SimpleNamespace(pw_gid=456))
+    monkeypatch.setattr(m.socket, "fromfd", lambda *args: listener)
+    monkeypatch.setenv("LISTEN_PID", str(m.os.getpid()))
+    monkeypatch.setenv("LISTEN_FDS", "1")
+    checks = iter([int(time.time()) + 30])
+
+    def grant():
+        try:
+            return next(checks)
+        except StopIteration:
+            raise m.BrokerDenied("RDP_PILOT_EXPIRED") from None
+
+    monkeypatch.setattr(m, "_safe_grant", grant)
+    m.serve()
+    assert closed == [True]
+
+
+def test_standalone_broker_preserves_existing_socket(monkeypatch):
+    m = module()
+    path = SimpleNamespace(
+        parent=SimpleNamespace(lstat=lambda: SimpleNamespace(
+            st_mode=m.stat.S_IFDIR | 0o755, st_uid=0,
+        )),
+        exists=lambda: True,
+        unlink=lambda: pytest.fail("must not remove existing socket"),
+    )
+    monkeypatch.setattr(m, "SOCKET_PATH", path)
+    monkeypatch.setattr(m, "_safe_grant", lambda: int(time.time()) + 30)
+    monkeypatch.setattr(m.pwd, "getpwnam", lambda _: SimpleNamespace(pw_gid=456))
+    monkeypatch.delenv("LISTEN_PID", raising=False)
+    monkeypatch.delenv("LISTEN_FDS", raising=False)
+    with pytest.raises(m.BrokerDenied, match="EXISTING_BROKER_SOCKET"):
+        m.serve()
