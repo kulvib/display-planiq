@@ -138,3 +138,32 @@ def test_root_broker_must_be_unprivileged_peer_only_and_never_print_secrets():
     assert "print(username)" not in source
     assert "print(password)" not in source
     assert "ENCRYPTION_FALLBACK" not in source
+
+
+def test_socket_activated_root_service_is_offline_and_independently_bounded():
+    root = ROOT / "experiments" / "63d49-autologin"
+    sock = (root / "clientflow-rdp-autologin.socket").read_text()
+    service = (root / "clientflow-rdp-autologin.service").read_text()
+    assert "ListenStream=/run/clientflow/rdp-autologin-v1.sock" in sock
+    assert "SocketGroup=clientflow-remote-desktop-agent" in sock
+    assert "SocketMode=0660" in sock
+    assert "RemoveOnStop=yes" in sock
+    assert "Accept=no" in sock
+    assert "Backlog=4" in sock
+    assert "RuntimeMaxSec=360" in service
+    assert "User=root" in service
+    assert "NoNewPrivileges=yes" in service
+    assert "ProtectSystem=strict" in service
+    assert "ProtectHome=yes" in service
+    assert "RestrictAddressFamilies=AF_UNIX" in service
+    assert "ConditionPathExists=/var/lib/clientflow/rdp-pilot-63d30/state.json" in service
+    assert "CapabilityBoundingSet=" in service
+    assert not any(
+        marker in sock + service
+        for marker in ("0.0.0.0", "ListenDatagram=", "ListenStream=3389", "ListenStream=4822")
+    )
+    broker = BROKER.read_text()
+    assert "LISTEN_FDS" in broker and "LISTEN_PID" in broker
+    assert "socket.fromfd(3, socket.AF_UNIX, socket.SOCK_STREAM)" in broker
+    assert "UNTRUSTED_SYSTEMD_SOCKET_OWNER" in broker
+    assert "_verify_physical_firewall()" in broker
