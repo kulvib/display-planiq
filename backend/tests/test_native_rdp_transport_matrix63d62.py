@@ -3,9 +3,11 @@ import asyncio
 from contextlib import nullcontext
 from types import SimpleNamespace
 
-import httpx
+import json
+from urllib.parse import urlsplit
 import pytest
 from fastapi import FastAPI
+from starlette.datastructures import Headers
 
 from service1.native_rdp_https_core import QueueBudget, encode_batch, decode_batch
 from service1.routers import native_rdp_tunnel as native
@@ -14,6 +16,60 @@ from service1.routers import remote_desktop_v2 as control
 
 SESSION = "12345678-1234-4234-8234-123456789abc"
 ORIGIN = "https://display.planiq.dk"
+
+
+class ASGIClient:
+    """In-process HTTP driver; no extra dependency or mocked routes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        pass
+
+    async def request(self, method, path, headers, content=b""):
+        parsed = urlsplit(path)
+        raw = [(key.lower().encode("ascii"), value.encode("ascii"))
+               for key, value in headers.items()]
+        raw += [(b"host", b"api.display.planiq.dk"),
+                (b"content-length", str(len(content)).encode("ascii"))]
+        scope = {
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1", "method": method, "scheme": "https",
+            "path": parsed.path, "raw_path": parsed.path.encode("ascii"),
+            "root_path": "", "query_string": parsed.query.encode("ascii"),
+            "headers": raw, "client": ("127.0.0.1", 12345),
+            "server": ("api.display.planiq.dk", 443),
+        }
+        messages = []
+        received = False
+
+        async def receive():
+            nonlocal received
+            if received:
+                await asyncio.Future()
+            received = True
+            return {"type": "http.request", "body": content, "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        await self.app(scope, receive, send)
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        body = b"".join(message.get("body", b"") for message in messages
+                        if message["type"] == "http.response.body")
+        return SimpleNamespace(status_code=start["status"], headers=Headers(raw=start["headers"]),
+                               content=body, text=body.decode("utf-8", errors="replace"),
+                               json=lambda: json.loads(body))
+
+    async def post(self, path, *, headers, content=b""):
+        return await self.request("POST", path, headers, content)
+
+    async def get(self, path, *, headers):
+        return await self.request("GET", path, headers)
 
 
 class Socket:
@@ -88,8 +144,7 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
         bh = {"origin": ORIGIN, "authorization": "Bearer test", "x-clientflow-ticket": "A" * 43}
         ah = {"authorization": "Bearer test-agent"}
         tasks = []
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
-                                     base_url="https://api.display.planiq.dk") as client:
+        async with ASGIClient(app) as client:
             async def open_http(path, headers, role):
                 result = await client.post(path, headers=headers)
                 assert result.status_code == 200, result.text

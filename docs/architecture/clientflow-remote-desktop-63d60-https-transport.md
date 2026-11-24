@@ -120,3 +120,12 @@ DB checks are stubbed. No real sockets, TLS, firewall, Render or GNOME proof.
 CI, controlled proxy and FreeRDP executable proof, physical idle/Terminal
 checks, load and latency measurements and permanent lifecycle review remain
 required. No deployment or physical state changes.
+
+## 63D-62B — dependency-free matrix and loopback TLS regression
+
+The matrix now drives the actual ASGI app without httpx or skipped cases.
+The separate real loopback TLS server test checks the actual agent HTTP
+request adapter: raw binary GET/POST, bounded response reads, redirect
+refusal and certificate hostname mismatch. Local automated proof only;
+no real municipal proxy, Render throughput or physical FreeRDP/GNOME proof.
+Deployment remains disabled pending CI.
