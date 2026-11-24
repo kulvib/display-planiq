@@ -14,6 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import MonitorIcon from "@mui/icons-material/Monitor";
 import KeyboardIcon from "@mui/icons-material/Keyboard";
 import MouseIcon from "@mui/icons-material/Mouse";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
@@ -233,6 +234,8 @@ export default function RemoteDesktop() {
   const [keyboardEnabled, setKeyboardEnabled] = useState(false);
   const [keyboardMode, setKeyboardMode] = useState(REMOTE_KEYBOARD_MODE_STANDARD);
   const [activeTab, setActiveTab] = useState("desktop");
+  const [nativeDesktopWanted, setNativeDesktopWanted] = useState(true);
+  useEffect(() => setNativeDesktopWanted(true), [clientId]);
   const [dragOverUpload, setDragOverUpload] = useState(false);
   const [shoutText, setShoutText] = useState("");
   const [shoutSending, setShoutSending] = useState(false);
@@ -393,8 +396,12 @@ export default function RemoteDesktop() {
   }, [startStream]);
 
   const connect = useCallback(async () => {
-    if (!clientId) return;
+    if (!clientId || (nativeRequested && !window.crossOriginIsolated)) return;
     const attemptId = ++connectAttemptRef.current;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     const scheduleReconnect = (reason = "") => {
       if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current) return;
@@ -812,6 +819,16 @@ export default function RemoteDesktop() {
   }, [connect]);
 
   useEffect(() => {
+    if (nativeRequested && !window.crossOriginIsolated) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("native_rdp") !== "1") {
+        url.searchParams.set("native_rdp", "1");
+        window.location.replace(url.href);
+        return undefined;
+      }
+      setError("Remote Desktop kunne ikke indlæses sikkert. Genindlæs siden.");
+      return undefined;
+    }
     connectRef.current = connect;
     void connect();
     return () => {
@@ -833,7 +850,7 @@ export default function RemoteDesktop() {
         wsRef.current?.close();
       } catch {}
     };
-  }, [connect]);
+  }, [connect, nativeRequested]);
 
   useEffect(() => {
     if (!connected || !agentConnected) return undefined;
@@ -1425,6 +1442,8 @@ export default function RemoteDesktop() {
       sessionId={connected && agentConnected ? sessionId : null}
       requestAutologin={send}
       autologinMessage={nativeRdpAutologinMessage}
+      desired={nativeDesktopWanted}
+      onDesiredChange={setNativeDesktopWanted}
     />
   ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>
@@ -1625,8 +1644,30 @@ export default function RemoteDesktop() {
   const clientLocation = client?.locality || client?.location || client?.address || "Ikke angivet";
 
   return (
-    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 }, color: "#f8fafc" }}>
-      <Stack spacing={2}>
+    <Container maxWidth={nativeRequested ? false : "xl"} sx={{ py: { xs: 1.25, md: 2 }, color: "#f8fafc", ...(nativeRequested ? { bgcolor: "#020617", minHeight: "100vh" } : {}) }}>
+      <Stack spacing={1.5}>
+        {nativeRequested ? (
+          <Paper elevation={0} sx={{ px: { xs: 1.5, md: 2.5 }, py: { xs: 1.25, md: 1.6 }, bgcolor: "rgba(15,23,42,0.88)", border: "1px solid rgba(148,163,184,0.16)", borderRadius: 2 }}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} alignItems={{ xs: "stretch", md: "center" }}>
+              <Stack direction="row" spacing={1.2} sx={{ alignItems: "center", flex: 1, minWidth: 0 }}>
+                <Box sx={{ width: 42, height: 42, borderRadius: 1.5, bgcolor: "rgba(37,99,235,0.20)", border: "1px solid rgba(96,165,250,0.30)", display: "grid", placeItems: "center", flex: "0 0 auto" }}><MonitorIcon /></Box>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 950, lineHeight: 1.12 }}>Remote Desktop</Typography>
+                  <Typography variant="body2" sx={{ color: "rgba(226,232,240,0.72)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={String(clientName)}>{clientName}</Typography>
+                  <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap", mt: 0.8 }}>
+                    <Chip size="small" label={`Organisation: ${organizationName}`} variant="outlined" sx={compactDarkChipSx("neutral")} />
+                    <Chip size="small" label={`Klient ID: ${clientId || "Ukendt"}`} variant="outlined" sx={compactDarkChipSx("neutral")} />
+                    <Chip size="small" label={`Lokalitet: ${clientLocation}`} variant="outlined" sx={compactDarkChipSx("neutral")} />
+                  </Stack>
+                </Box>
+              </Stack>
+              <Stack direction="row" spacing={0.75} alignItems="center">
+                <Chip size="small" label={canControl ? "Klient tilgængelig" : "Venter på klient"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />
+                {!canControl && <Button size="small" variant="outlined" onClick={connect} disabled={!window.crossOriginIsolated}>Genforbind</Button>}
+              </Stack>
+            </Stack>
+          </Paper>
+        ) : <>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.2} sx={{
           alignItems: { xs: "stretch", md: "center" }
         }}>
@@ -1698,6 +1739,7 @@ export default function RemoteDesktop() {
             </Stack>
           </Stack>
         </Paper>
+        </>}
 
         <Paper
           elevation={0}

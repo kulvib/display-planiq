@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { Box, Button, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/material";
+import FullscreenIcon from "@mui/icons-material/Fullscreen";
+import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
 import { createBrowserWsTicket, getRemoteDesktopBrowserWsUrl } from "../../../api";
 import { normalizeNativeRdpFingerprint } from "./nativeRdpFingerprint";
 import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
@@ -9,12 +11,16 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
  * Removing the iframe destroys its WASM heap, sockets and threads.
  * RDP credentials never go through a PlanIQ HTTP endpoint or storage.
  */
-export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage }) {
+export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange }) {
   const iframeRef = useRef(null);
   const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
   const operationRef = useRef(0);
   const managedRequestRef = useRef(null);
+  const autoAttemptedRef = useRef(false);
+  const transportReadyRef = useRef(false);
+  const retryCountRef = useRef(0);
+  const [recovering, setRecovering] = useState(false);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
   const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
   const [boot, setBoot] = useState(null);
@@ -59,7 +65,9 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       if (event.origin !== window.location.origin ||
           event.source !== iframeRef.current?.contentWindow) return;
       if (event.data?.type === "planiq-native-rdp-status") {
-        setStatus(String(event.data.message || "Forbundet").slice(0, 180));
+        const ready = event.data.message === "Forbundet";
+        if (ready) transportReadyRef.current = true;
+        setStatus(ready ? "Forbundet" : "Forbinder …");
       }
       if (event.data?.type === "planiq-native-rdp-resolution") {
         const { sourceWidth, sourceHeight, displayWidth, displayHeight, mode } = event.data;
@@ -75,13 +83,17 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
         autoLoginRef.current = null;
         setAutoPendingRequestId(null);
         setBoot(null);
-        setStatus("Forbindelsen blev afbrudt. Prøv igen.");
+        setResolution(null);
+        const shouldRecover = transportReadyRef.current && desired;
+        transportReadyRef.current = false;
+        setRecovering(shouldRecover);
+        setStatus(shouldRecover ? "Genopretter forbindelse …" : "Forbindelsen blev afbrudt. Prøv igen.");
         setWorking(false);
       }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [cancelManaged]);
+  }, [cancelManaged, desired]);
 
   const verifyWasm = useCallback(async () => {
     if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
@@ -126,6 +138,10 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
 
   const startAutomatic = useCallback(async () => {
     if (!automatic || !sessionId || working || !requestAutologin) return;
+    onDesiredChange?.(true);
+    autoAttemptedRef.current = true;
+    transportReadyRef.current = false;
+    setRecovering(false);
     setWorking(true);
     setResolution(null);
     setStatus("Forbinder …");
@@ -150,7 +166,30 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       setWorking(false);
       setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
     }
-  }, [automatic, sessionId, working, requestAutologin, verifyWasm, cancelManaged]);
+  }, [automatic, sessionId, working, requestAutologin, verifyWasm, cancelManaged, onDesiredChange]);
+
+  useEffect(() => {
+    if (!automatic || !desired || !sessionId || working || autoAttemptedRef.current) return;
+    void startAutomatic();
+  }, [automatic, desired, sessionId, working, startAutomatic]);
+
+  // Retry an unexpectedly lost, previously active transport. A denied setup
+  // requires explicit user action; no credentials or tickets are replayed.
+  useEffect(() => {
+    if (!recovering || !desired || !sessionId || working) return undefined;
+    const delays = [3000, 6000, 12000];
+    const delay = delays[retryCountRef.current];
+    if (delay === undefined) {
+      setRecovering(false);
+      setStatus("Forbindelsen blev afbrudt. Prøv igen.");
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      retryCountRef.current += 1;
+      void startAutomatic();
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [recovering, desired, sessionId, working, startAutomatic]);
 
   useEffect(() => {
     if (!automatic || !working || !autologinMessage || !autoLoginRef.current) return;
@@ -235,6 +274,10 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const disconnect = () => {
     operationRef.current += 1;
     cancelManaged();
+    onDesiredChange?.(false);
+    retryCountRef.current = 0;
+    transportReadyRef.current = false;
+    setRecovering(false);
     setBoot(null);
     setWorking(false);
     autoLoginRef.current = null;
@@ -250,16 +293,17 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   }, [working, fullscreen]);
 
   return (
-    <Paper ref={panelRef} sx={{ p: 1, bgcolor: "#080c16", color: "white",
+    <Paper ref={panelRef} elevation={0} sx={{ p: { xs: 1, md: 1.25 }, bgcolor: "#0b0f14", color: "#f8fafc", border: "1px solid rgba(148,163,184,0.16)", borderRadius: 2,
       "&:fullscreen": { p: 1, width: "100%", height: "100%", boxSizing: "border-box" } }}>
       <Stack spacing={1} sx={fullscreen ? { height: "100%", minHeight: 0 } : undefined}>
         {!working && (
           <Stack alignItems="center" spacing={1} sx={{ py: 4 }}>
             <Button variant="contained" disabled={!automatic || !sessionId} onClick={startAutomatic}>
-              Forbind
+              {recovering ? "Forbind nu" : "Forbind"}
             </Button>
+            {recovering && <Button size="small" onClick={disconnect}>Afbryd</Button>}
             <Typography variant="body2" aria-live="polite">
-              {automatic ? status : "Remote Desktop er ikke aktiveret for denne klient."}
+              {!automatic ? "Remote Desktop er ikke aktiveret for denne klient." : !sessionId && desired ? "Venter på klient …" : status}
             </Typography>
           </Stack>
         )}
@@ -283,9 +327,11 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
             </Box>
             <Button size="small" color="inherit" aria-label="Zoom ind" disabled={selectedZoom >= 200}
               onClick={() => adjustZoom(25)}>+</Button>
-            <Button size="small" color="inherit" onClick={toggleFullscreen}>
-              {fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}
-            </Button>
+            <Tooltip title={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}>
+              <IconButton size="small" color="inherit" onClick={toggleFullscreen} aria-label={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"} sx={{ border: "1px solid rgba(148,163,184,0.20)" }}>
+                {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+              </IconButton>
+            </Tooltip>
             <Box sx={{ flex: 1 }} />
             <Button size="small" variant="outlined" color="inherit" onClick={disconnect}>Afbryd</Button>
           </Stack>
@@ -295,7 +341,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
           <Typography variant="body2" aria-live="polite">Forbinder …</Typography>
         )}
         {working && (
-          <Box sx={{ width: "100%", height: fullscreen ? undefined : "70vh",
+          <Box sx={{ width: "100%", height: fullscreen ? undefined : { xs: "65dvh", md: "max(480px, calc(100dvh - 230px))" },
             flex: fullscreen ? "1 1 0" : undefined, minHeight: fullscreen ? 0 : 320,
             bgcolor: "#000", borderRadius: 1, overflow: "hidden" }}>
             <iframe
