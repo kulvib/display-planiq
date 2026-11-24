@@ -188,13 +188,48 @@ def gnome(action: str, staged: bool) -> str:
 
 def native_reference() -> str:
     script = get("scripts/clientflow_63d48_native_reference.py")
-    result = command("NATIVE_REFERENCE", ["/usr/bin/python3", str(script), "native", "14"], timeout=105)
+    process = subprocess.run(
+        ["/usr/bin/python3", str(script), "native", "14"],
+        capture_output=True, text=True, timeout=105, check=False,
+    )
+    result = process.stdout
+    # Preserve a fixed set of safe measurement and error tokens even on STOP.
+    # No raw stdout/stderr, RDP arguments, credential or certificate values.
+    allowed = {
+        "NATIVE_RDP_AUTHENTICATION": {"PASS"},
+        "NATIVE_RDP_SESSION": {"ALIVE_THROUGH_WINDOW", "EARLY_EXIT"},
+        "LOCAL_X11_FRAME_CHANGE": {"YES", "UNKNOWN"},
+        "RDP_DESKTOP_REQUEST": {"2560x1080"},
+        "NATIVE_INPUT_TO_PIXEL_LATENCY": {"NOT_MEASURED"},
+        "NO_SCREEN_PIXELS_SAVED": {"TRUE"},
+        "X11_UNPRIVILEGED_WORKER_SOURCE": {"SHA256_VERIFIED"},
+        "X11_UNPRIVILEGED_WORKER_CLEANUP": {"PASS"},
+        "63D48_STOP": {
+            "GNOME_STATUS_FAILED", "GNOME_GUARD_OR_SESSION_NOT_READY",
+            "NO_PINNED_GNOME_RUNNER", "NO_GNOME_STATE", "UNSAFE_GNOME_STATE",
+            "WRONG_BOOT", "GNOME_RDP_EXPIRING_OR_EXPIRED", "NOT_ENOUGH_GUARDED_TIME",
+            "NO_GNOME_TEST_CREDENTIALS", "UNSAFE_GNOME_TEST_CREDENTIALS",
+            "INVALID_GNOME_TEST_CREDENTIALS", "NO_GNOME_TEST_CERT",
+            "CANNOT_PIN_RDP_CERT", "LOCAL_NATIVE_AUTH_NOT_VERIFIED",
+            "GNOME_SAFETY_WINDOW_TOO_SHORT", "UNSAFE_PINNED_NATIVE_SOURCE",
+            "INVALID_NATIVE_SOURCE_SIZE", "EXISTING_NATIVE_WORKER_REQUIRES_AUDIT",
+            "WORKER_INTEGRITY_FAILED", "WORKER_CLEANUP_UNCERTAIN",
+            "NATIVE_REFERENCE_PROCESS_FAILED", "NATIVE_REFERENCE_TIMED_OUT",
+            "UNPRIVILEGED_WORKER_REQUIRED", "X11_REFERENCE_DISPLAY_REQUIRED",
+            "BAD_DURATION", "WORKER_ARGUMENT_FORMAT", "WORKER_USER_INVALID",
+            "WORKER_SECRET_FORMAT", "OSError", "PermissionError",
+            "FileNotFoundError", "TimeoutExpired", "ValueError", "KeyError",
+        },
+    }
     for line in result.splitlines():
-        if line.startswith(("NATIVE_RDP_AUTHENTICATION=", "NATIVE_RDP_SESSION=",
-                            "NATIVE_REFERENCE_SECONDS=", "LOCAL_X11_FRAME_CHANGE=",
-                            "RDP_DESKTOP_REQUEST=", "NATIVE_INPUT_TO_PIXEL_LATENCY=",
-                            "NATIVE_REFERENCE_TOTAL_SECONDS=", "NO_SCREEN_PIXELS_SAVED=")):
-            print(line, flush=True)
+        key, _, value = line.partition("=")
+        if value in allowed.get(key, set()):
+            emit(key, value)
+        elif key in {"NATIVE_REFERENCE_SECONDS", "NATIVE_REFERENCE_TOTAL_SECONDS"}:
+            if value.isascii() and value.isdecimal() and len(value) <= 3:
+                emit(key, value)
+    if process.returncode:
+        raise RuntimeError("NATIVE_REFERENCE_EXIT_" + str(process.returncode))
     if ("NATIVE_RDP_AUTHENTICATION=PASS" not in result or
             "NATIVE_RDP_SESSION=ALIVE_THROUGH_WINDOW" not in result):
         raise RuntimeError("NATIVE_REFERENCE_INCOMPLETE")
@@ -283,24 +318,44 @@ def main() -> int:
     finally:
         # Safe path is RDP STOP before root watchdog unstage. A failure must
         # keep the existing firewall or watchdog in place, never remove both.
+        stop_attempted = False
         if started and (STATE.exists() or STATE.is_symlink()):
+            stop_attempted = True
             try:
-                gnome("stop", staged=True)
+                result = gnome("stop", staged=True)
+                # The pinned 63D-30 stop() already invokes unstage(uid).
+                # Never invoke a second unstage after a stop attempt.
+                if ("RDP_STOPPED_AND_VERIFIED=True" not in result.splitlines()
+                        or "ROOT_WATCHDOG_AND_STAGED_CODE_REMOVED=True" not in result.splitlines()):
+                    raise RuntimeError("STOP_CLEANUP_NOT_ATTESTED")
                 emit("GNOME_RDP_STOP", "PASS")
+                emit("GNOME_ROOT_WATCHDOG_UNSTAGED", "PASS")
             except Exception as exc:
                 cleanup_errors.append("RDP_STOP_" + type(exc).__name__)
-        if new_stage and not (STATE.exists() or STATE.is_symlink()):
+        if new_stage and not stop_attempted and not (STATE.exists() or STATE.is_symlink()):
             try:
-                gnome("unstage", staged=True)
-                emit("GNOME_ROOT_WATCHDOG_UNSTAGED", "PASS")
+                # A stage-only failure may leave the watchdog, but an already
+                # completed watchdog cleanup must not be repeated.
+                if staged_runner_trusted():
+                    result = gnome("unstage", staged=True)
+                    if "ROOT_WATCHDOG_AND_STAGED_CODE_REMOVED=True" not in result.splitlines():
+                        raise RuntimeError("UNSTAGE_NOT_ATTESTED")
+                    emit("GNOME_ROOT_WATCHDOG_UNSTAGED", "PASS")
+                elif STAGED.parent.exists() or STAGED.parent.is_symlink():
+                    raise RuntimeError("PARTIAL_STAGE_REQUIRES_AUDIT")
+                else:
+                    emit("GNOME_ROOT_WATCHDOG_UNSTAGED", "NOT_STAGED_OR_ALREADY_REMOVED")
             except Exception as exc:
                 cleanup_errors.append("UNSTAGE_" + type(exc).__name__)
         if cleanup_errors:
             for code in cleanup_errors:
                 emit("CLEANUP_STOP", code)
             returncode = 2
-        elif started:
+        elif started and stop_attempted:
             emit("GNOME_PILOT_CLEANUP", "PASS")
+        elif started:
+            emit("GNOME_PILOT_CLEANUP", "REQUIRES_POSTFLIGHT")
+            returncode = 2
         emit("CLIENTFLOW_RELEASE_CHANGED", "FALSE")
         emit("RENDER_CHANGED", "FALSE")
     emit("63D48_NATIVE_ONE_SHOT", "PASS" if returncode == 0 else "STOP")
