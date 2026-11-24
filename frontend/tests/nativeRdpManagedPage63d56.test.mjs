@@ -48,3 +48,14 @@ test("initial auto-start and recovery never display a manual connect button", ()
   assert.match(viewer, /setRetryAllowed\(!shouldRecover\)/);
   assert.match(viewer, /onDesiredChange\?\.\(false\);\s*autoAttemptedRef.current = true/);
 });
+
+
+test("Files tab keeps the RDP iframe mounted but disables hidden input", () => {
+  assert.match(page, /\(nativeRequested \|\| activeTab === "desktop"\) && \(/);
+  assert.match(page, /inert=\{activeTab !== "desktop" \? true : undefined\}/);
+  assert.match(page, /visibility: "hidden", pointerEvents: "none"/);
+  assert.match(page, /activeTab === "files" && \(\s*<RemoteDesktopFileManager/);
+  assert.match(viewer, /<ButtonGroup[^>]*aria-label="Visning"/);
+  assert.match(viewer, /role="group" aria-label="Zoom"/);
+  assert.match(viewer, /color="error" startIcon=\{<LinkOffIcon \/>\}/);
+});

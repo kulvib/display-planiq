@@ -10,16 +10,19 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 import logging
 import time
 import uuid
 
 from fastapi import APIRouter, WebSocket
 from fastapi.websockets import WebSocketDisconnect
+from sqlalchemy import update
 from sqlmodel import Session
 
 from ..db import engine
-from ..remote_desktop_v2 import verify_remote_desktop_agent_token
+from ..remote_desktop_v2 import SESSION_SECONDS, verify_remote_desktop_agent_token
+from ..remote_desktop_session_models import RemoteDesktopSession
 from ..websocket_auth import authenticate_browser_websocket_with_context
 from .remote_desktop_v2 import (
     BROWSERS,
@@ -145,6 +148,41 @@ async def _watch_traffic(tunnel: NativeRdpTunnel) -> None:
                     return
 
 
+def renew_persisted_session(browser) -> bool:
+    """Extend an existing, already-authorized managed session before expiry.
+
+    No resurrection, no changes to login lifetime, no per-frame DB writes.
+    Only the current managed tunnel calls this after both auth checks.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if browser.expires_at <= now:
+        return False
+    # Renew near expiry only, including short configured session windows.
+    window = min(120, max(20, SESSION_SECONDS // 3))
+    if browser.expires_at > now + timedelta(seconds=window):
+        return True
+    expiry = now + timedelta(seconds=SESSION_SECONDS)
+    with Session(engine) as db:
+        result = db.execute(
+            update(RemoteDesktopSession)
+            .where(
+                RemoteDesktopSession.id == browser.session_id,
+                RemoteDesktopSession.client_id == browser.client_id,
+                RemoteDesktopSession.requested_by_user_id == browser.user_id,
+                RemoteDesktopSession.status.in_(("requested", "authorized", "connected")),
+                RemoteDesktopSession.expires_at > now,
+                RemoteDesktopSession.expires_at <= now + timedelta(seconds=window),
+            )
+            .values(expires_at=expiry)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            return False
+        db.commit()
+    browser.expires_at = expiry
+    return True
+
+
 async def renew_managed_tunnel(tunnel: NativeRdpTunnel) -> bool:
     # A renewal is authorized on the same server-side control generation.
     # No renewal is sent through the binary data stream or by the browser.
@@ -164,7 +202,12 @@ async def renew_managed_tunnel(tunnel: NativeRdpTunnel) -> bool:
             "type": "native_rdp_renew", "session_id": tunnel.session_id,
             "request_id": tunnel.managed_request_id, "tunnel_id": tunnel.tunnel_id,
         }), timeout=2)
-        return not tunnel.closed.is_set()
+        if (tunnel.closed.is_set() or BROWSERS.get(tunnel.session_id) is not active
+                or CONTROL_AGENTS.get(tunnel.client_id) is not control
+                or getattr(active, "native_rdp_managed_request_id", None) != tunnel.managed_request_id
+                or not getattr(active, "native_rdp_managed_ready", False)):
+            return False
+        return renew_persisted_session(active)
     except (OSError, RuntimeError, asyncio.TimeoutError, WebSocketDisconnect):
         return False
 

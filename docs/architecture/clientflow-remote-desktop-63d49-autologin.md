@@ -285,3 +285,17 @@ monitor mode merely because the administrator resizes the browser. Actual
 RDP monitor renegotiation is not implemented and is not a release claim.
 Retain the physically tested initial 2560x1080 request for Viborg1. No
 new WASM build inputs or compiled assets changed.
+
+
+## 63D-59C — physical acceptance follow-up
+
+The first combined physical trial passed 20 of 21 checks; long-duration idle
+was not tested. Switching to Files previously destroyed the viewer; native
+RDP now remains mounted with unchanged viewport geometry and hidden/inert
+controls. The toolbar groups view and zoom controls and separates disconnect.
+The persisted session lease formerly imposed an additional default one-hour
+ceiling, even when the physical lease was renewable. Renew it only near
+expiry on the live authorized managed tunnel, with a conditional DB update
+that cannot revive terminal/expired rows. Login lifetime and revocation
+checks remain unchanged. The pilot installer still rolls back after 20 min.
+Long duration, hidden Files tab and backend lease renewal require validation.

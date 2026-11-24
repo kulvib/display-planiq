@@ -363,6 +363,7 @@ def test_63d56_renewal_is_bound_to_current_authorized_managed_tunnel(monkeypatch
             sent.append(packet)
 
         monkeypatch.setattr(relay, "_send_agent", send)
+        monkeypatch.setattr(relay, "renew_persisted_session", lambda active: active is browser)
         assert await relay.renew_managed_tunnel(tunnel)
         assert sent == [{"type": "native_rdp_renew", "session_id": tunnel.session_id,
                          "request_id": "challenge", "tunnel_id": tunnel.tunnel_id}]
@@ -374,3 +375,50 @@ def test_63d56_renewal_is_bound_to_current_authorized_managed_tunnel(monkeypatch
         assert len(sent) == 1
 
     asyncio.run(exercise())
+
+
+def test_persisted_renewal_does_not_write_far_from_expiry_or_revive_expired(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    import pytest
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    monkeypatch.setattr(relay, "SESSION_SECONDS", 3600)
+    monkeypatch.setattr(relay, "Session", lambda *_: pytest.fail("no DB write expected"))
+    assert relay.renew_persisted_session(SimpleNamespace(expires_at=now + timedelta(minutes=30)))
+    assert not relay.renew_persisted_session(SimpleNamespace(expires_at=now - timedelta(seconds=1)))
+
+
+def test_persisted_renewal_updates_only_live_bound_row(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    monkeypatch.setattr(relay, "SESSION_SECONDS", 3600)
+    browser = SimpleNamespace(session_id="session", client_id=3, user_id=42,
+                              expires_at=now + timedelta(seconds=60))
+
+    class DB:
+        affected = 1
+        committed = False
+        rolled_back = False
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def execute(self, query):
+            sql = str(query)
+            for field in ("id", "client_id", "requested_by_user_id", "status", "expires_at"):
+                assert "remote_desktop_session." + field in sql
+            return SimpleNamespace(rowcount=self.affected)
+        def commit(self): self.committed = True
+        def rollback(self): self.rolled_back = True
+
+    db = DB()
+    monkeypatch.setattr(relay, "Session", lambda *_: db)
+    assert relay.renew_persisted_session(browser)
+    assert db.committed and browser.expires_at > now + timedelta(minutes=59)
+    browser.expires_at = now + timedelta(seconds=60)
+    db.affected = 0
+    db.committed = False
+    assert not relay.renew_persisted_session(browser)
+    assert db.rolled_back and not db.committed
+    assert browser.expires_at == now + timedelta(seconds=60)

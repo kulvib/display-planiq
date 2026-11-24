@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, ButtonGroup, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/material";
+import RemoveIcon from "@mui/icons-material/Remove";
+import AddIcon from "@mui/icons-material/Add";
+import FitScreenIcon from "@mui/icons-material/FitScreen";
+import LinkOffIcon from "@mui/icons-material/LinkOff";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
 import { createBrowserWsTicket, getRemoteDesktopBrowserWsUrl } from "../../../api";
@@ -338,32 +342,44 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
           </Stack>
         )}
         {working && (
-          <Stack direction="row" spacing={0} useFlexGap flexWrap="wrap" gap={0.75} alignItems="center">
-            <Button size="small" variant={displayMode === "fit" ? "contained" : "outlined"}
-              color="inherit" title="Tilpas uden opskalering" aria-pressed={displayMode === "fit"}
-              onClick={() => chooseDisplayMode("fit")}>Tilpas</Button>
-            <Button size="small" variant={displayMode === "native" ? "contained" : "outlined"}
-              color="inherit" title="Original pixelstørrelse (1:1)" aria-pressed={displayMode === "native"}
-              onClick={() => chooseDisplayMode("native")}>1:1</Button>
-            <Button size="small" color="inherit" aria-label="Zoom ud" disabled={selectedZoom <= 25}
-              onClick={() => adjustZoom(-25)}>−</Button>
-            <Box component="select" aria-label="Zoomniveau" value={displayMode === "zoom" ? zoom : ""}
-              onChange={(event) => chooseDisplayMode("zoom", Number(event.target.value))}
-              sx={{ bgcolor: "#141d2b", color: "white", border: "1px solid #64748b", borderRadius: 1, p: 0.75 }}>
-              {displayMode !== "zoom" && <option value="">{actualZoom}%</option>}
-              {Array.from(new Set([25, 50, 75, 100, 125, 150, 175, 200,
-                ...(displayMode === "zoom" ? [zoom] : [])])).sort((a, b) => a - b)
-                .map((value) => <option key={value} value={value}>{value}%</option>)}
-            </Box>
-            <Button size="small" color="inherit" aria-label="Zoom ind" disabled={selectedZoom >= 200}
-              onClick={() => adjustZoom(25)}>+</Button>
+          <Stack direction="row" useFlexGap flexWrap="wrap" gap={1} alignItems="center"
+            sx={{ p: 0.75, bgcolor: "rgba(15,23,42,0.65)", borderRadius: 1.5,
+              border: "1px solid rgba(148,163,184,0.14)",
+              "& .MuiButton-root": { height: 36, textTransform: "none", fontWeight: 650 },
+              "& .MuiIconButton-root": { width: 36, height: 36 } }}>
+            <ButtonGroup size="small" variant="outlined" aria-label="Visning" sx={{ "& .MuiButton-root": { borderColor: "rgba(148,163,184,0.26)" } }}>
+              <Button variant={displayMode === "fit" ? "contained" : "outlined"}
+                color={displayMode === "fit" ? "primary" : "inherit"} startIcon={<FitScreenIcon />}
+                title="Tilpas uden opskalering" aria-pressed={displayMode === "fit"}
+                onClick={() => chooseDisplayMode("fit")}>Tilpas</Button>
+              <Button variant={displayMode === "native" ? "contained" : "outlined"}
+                color={displayMode === "native" ? "primary" : "inherit"}
+                title="Original pixelstørrelse (1:1)" aria-pressed={displayMode === "native"}
+                onClick={() => chooseDisplayMode("native")}>1:1</Button>
+            </ButtonGroup>
+            <Stack direction="row" alignItems="center" role="group" aria-label="Zoom"
+              sx={{ border: "1px solid rgba(148,163,184,0.26)", borderRadius: 1, height: 36, overflow: "hidden" }}>
+              <IconButton size="small" color="inherit" aria-label="Zoom ud" disabled={selectedZoom <= 25}
+                onClick={() => adjustZoom(-25)}><RemoveIcon fontSize="small" /></IconButton>
+              <Box component="select" aria-label="Zoomniveau" value={displayMode === "zoom" ? zoom : ""}
+                onChange={(event) => chooseDisplayMode("zoom", Number(event.target.value))}
+                sx={{ bgcolor: "#141d2b", color: "white", height: "100%", minWidth: 76, px: 0.75,
+                  border: 0, borderInline: "1px solid rgba(148,163,184,0.22)", font: "inherit", fontSize: 13 }}>
+                {displayMode !== "zoom" && <option value="">{actualZoom}%</option>}
+                {Array.from(new Set([25, 50, 75, 100, 125, 150, 175, 200,
+                  ...(displayMode === "zoom" ? [zoom] : [])])).sort((a, b) => a - b)
+                  .map((value) => <option key={value} value={value}>{value}%</option>)}
+              </Box>
+              <IconButton size="small" color="inherit" aria-label="Zoom ind" disabled={selectedZoom >= 200}
+                onClick={() => adjustZoom(25)}><AddIcon fontSize="small" /></IconButton>
+            </Stack>
+            <Box sx={{ flex: 1 }} />
             <Tooltip title={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}>
-              <IconButton size="small" color="inherit" onClick={toggleFullscreen} aria-label={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"} sx={{ border: "1px solid rgba(148,163,184,0.20)" }}>
+              <IconButton size="small" color="inherit" onClick={toggleFullscreen} aria-label={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"} sx={{ border: "1px solid rgba(148,163,184,0.26)", borderRadius: 1 }}>
                 {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
               </IconButton>
             </Tooltip>
-            <Box sx={{ flex: 1 }} />
-            <Button size="small" variant="outlined" color="inherit" onClick={disconnect}>Afbryd</Button>
+            <Button size="small" variant="outlined" color="error" startIcon={<LinkOffIcon />} onClick={disconnect}>Afbryd</Button>
           </Stack>
         )}
         {working && fullscreenError && <Typography role="alert" variant="caption">{fullscreenError}</Typography>}

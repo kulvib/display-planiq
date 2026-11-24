@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import MonitorIcon from "@mui/icons-material/Monitor";
+import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import KeyboardIcon from "@mui/icons-material/Keyboard";
 import MouseIcon from "@mui/icons-material/Mouse";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
@@ -1779,6 +1780,9 @@ export default function RemoteDesktop() {
             variant={activeTab === "desktop" ? "contained" : "text"}
             color={activeTab === "desktop" ? "primary" : "inherit"}
             onClick={() => setActiveTab("desktop")}
+            startIcon={<MonitorIcon />}
+            aria-pressed={activeTab === "desktop"}
+            sx={{ minHeight: 36, textTransform: "none", fontWeight: 700, px: 2 }}
           >
             Remote Desktop
           </Button>
@@ -1786,6 +1790,9 @@ export default function RemoteDesktop() {
             variant={activeTab === "files" ? "contained" : "text"}
             color={activeTab === "files" ? "primary" : "inherit"}
             onClick={() => setActiveTab("files")}
+            startIcon={<FolderOutlinedIcon />}
+            aria-pressed={activeTab === "files"}
+            sx={{ minHeight: 36, textTransform: "none", fontWeight: 700, px: 2 }}
           >
             Filer
           </Button>
@@ -1804,12 +1811,24 @@ export default function RemoteDesktop() {
           onClose={() => setError("")}
         />
 
-        {activeTab === "desktop" ? (
-          <Stack spacing={2}>
-            {remoteScreenPanel}
-            {shoutPanel}
-          </Stack>
-        ) : (
+        <Box sx={{ position: "relative", minWidth: 0 }}>
+          {/* Preserve the native iframe and its session across local tab switches.
+              Keep its layout dimensions: display:none would collapse SDL's viewport.
+              Hidden controls must not receive focus or pointer input. */}
+          {(nativeRequested || activeTab === "desktop") && (
+            <Stack spacing={2}
+              aria-hidden={activeTab !== "desktop" ? true : undefined}
+              inert={activeTab !== "desktop" ? true : undefined}
+              sx={activeTab !== "desktop" ? {
+                position: "absolute", top: 0, left: 0, width: "100%",
+                visibility: "hidden", pointerEvents: "none",
+              } : { minWidth: 0 }}
+            >
+              {remoteScreenPanel}
+              {shoutPanel}
+            </Stack>
+          )}
+          {activeTab === "files" && (
           <RemoteDesktopFileManager
             canControl={canControl}
             fileInputRef={fileInputRef}
@@ -1859,7 +1878,8 @@ export default function RemoteDesktop() {
             onUploadDragOver={handleUploadDragOver}
             onUploadDragLeave={handleUploadDragLeave}
           />
-        )}
+          )}
+        </Box>
 
       </Stack>
     </Container>
