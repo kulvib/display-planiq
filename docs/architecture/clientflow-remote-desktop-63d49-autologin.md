@@ -254,3 +254,19 @@ watchdog; the renewed 90-second deadline is measured from the last successful
 renewal, not from the exact moment the tab was closed. Initial preparation
 retains the original short physical safety window. Physical verification
 must include closure during setup, active desktop, tab switch and reopening.
+
+
+## 63D-58A — canonical release integration candidate
+
+The canonical builder ships seven pinned root helper sources with a release-owned
+entrypoint and canonical local socket units. The agent already ships in the
+runtime wheel. No temporary agent override or 20-minute installer timer is
+required by this path. The existing physical Viborg1/client 3 restriction is
+retained; local socket activation is not fleet authorization. No public RDP
+port is opened simply by starting the target. Before a release swap, close
+native admission then agent; wait for socket instances and physical state to
+disappear before generic definition replacement. Uncertain cleanup must preserve
+the independent firewall/watchdog. Old pilot overrides must be rolled back.
+The physical system Python crypto/GNOME prerequisites, renewal, crash recovery,
+and dynamic resolution still require validation. Source CI does not authorize
+an actual release or prove physical behavior.
