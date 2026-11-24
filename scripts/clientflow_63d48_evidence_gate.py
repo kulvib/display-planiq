@@ -13,7 +13,6 @@ import json
 import math
 from pathlib import Path
 import statistics
-import sys
 
 ENGINES = ("native-freerdp", "browser-freerdp-wasm", "browser-guacamole")
 INTERACTIONS = ("pointer", "click", "drag", "scroll", "keyboard")
