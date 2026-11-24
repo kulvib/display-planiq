@@ -41,3 +41,16 @@ The installed 63D-30 protected GNOME pilot still generates a unique random usern
 **Operations:** wire broker startup/shutdown to the supervised on-demand GNOME session in the native ClientFlow release, not a manual shell or permanent service. No new Render/Neon resources; no paid MFA. Guacamole alternative has a different RDP TLS termination boundary, so do not assume this browser-specific encrypted delivery can be transplanted to guacd without a new review.
 
 **Rollback:** until all gates pass, keep legacy manual pilot and feature flag off. Do not deploy to Render and do not publish release 1249 based on this source-only implementation.
+
+
+## 63D-49B — integration review and activation hold
+
+The first CI run stopped at Ruff F821 because a test imported neither pathlib.Path nor an equivalent. Restore the required import. The previous frontend, PostgreSQL smoke and browser startup checks passed; that does not establish a full successful test suite for subsequent commits.
+
+The socket-activated broker originally rejected the systemd-created socket as already existing before checking LISTEN_FDS. It now distinguishes the inherited descriptor from standalone creation, verifies socket owner/path/mode, and only removes a socket it bound itself. Non-object IPC frames are denied. The physical guard subprocess now verifies both root-owned staged sources and adds only their verified 0700 directory to Python isolated-mode imports.
+
+**Do not activate the experimental systemd units.** Their restrictive capability/address-family/read-only settings are not compatible with the existing GNOME status runner (nftables netlink, switching to the kiosk UID for D-Bus settings, and opening its root lock for status). This requires an independently reviewed separation between the existing privileged watchdog/guard and the credential-only sealer; do not simply grant the sealer broad capabilities to make a test pass. The installed broker lifecycle, root dependency availability and watchdog-driven socket removal remain unproven.
+
+**Trust boundary clarification:** the ECDH envelope prevents accidental plaintext disclosure to a forwarding relay, logs and persistence in normal operation with the trusted PlanIQ application and agent. It does not provide an independent authenticated key exchange against an actively compromised Render control plane or a maliciously modified frontend, since the browser public key is relayed by that control plane. Likewise the trusted agent may request a sealed envelope. A single-use envelope is not itself proof that GNOME's password is single-use or immediately rotated on browser disconnect; the existing physical pilot deadline is the currently demonstrated cleanup boundary. An authenticated device trust model, session-scoped revocation and a fresh step-up check must be specified and tested before fleet/production approval.
+
+No new installation or deploy is authorized by these corrections. The physical native-reference comparison remains independent of this autologin experiment.
