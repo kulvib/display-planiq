@@ -2,14 +2,19 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
 import { createBrowserWsTicket, getRemoteDesktopBrowserWsUrl } from "../../../api";
 import { normalizeNativeRdpFingerprint } from "./nativeRdpFingerprint";
+import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
 
 /**
  * Disposable, same-origin sandbox for the official FreeRDP SDL3/Emscripten client.
  * Removing the iframe destroys its WASM heap, sockets and threads.
  * RDP credentials never go through a PlanIQ HTTP endpoint or storage.
  */
-export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
+export default function NativeRdpViewer({ clientId, sessionId, onFallback, requestAutologin, autologinMessage }) {
   const iframeRef = useRef(null);
+  const autoLoginRef = useRef(null);
+  // Explicit pilot flag: legacy login remains rollback until the root broker,
+  // client agent and Render are validated together on physical Viborg1.
+  const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [fingerprint, setFingerprint] = useState("");
@@ -64,19 +69,22 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  const start = useCallback(async () => {
-    if (!sessionId || !username.trim() || !password || !normalizedFingerprint || working) return;
-    setWorking(true);
-    setPerformance(null);
-    setResolution(null);
-    setStatus("Kontrollerer WASM-browsermiljø …");
+  const verifyWasm = useCallback(async () => {
+    if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
+      throw new Error("FreeRDP kræver COOP/COEP browserisolering på Remote Desktop-siden.");
+    }
+    const asset = await fetch("/native-rdp/sdl-freerdp.js", { method: "HEAD", cache: "no-store" });
+    if (!asset.ok || !String(asset.headers.get("content-type") || "").includes("javascript")) {
+      throw new Error("Det verificerede FreeRDP WebAssembly-build er endnu ikke installeret.");
+    }
+  }, []);
+
+  const launchWithCredentials = useCallback(async (credentials) => {
     try {
-      if (!window.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
-        throw new Error("FreeRDP kræver COOP/COEP browserisolering på Remote Desktop-siden.");
-      }
-      const asset = await fetch("/native-rdp/sdl-freerdp.js", { method: "HEAD", cache: "no-store" });
-      if (!asset.ok || !String(asset.headers.get("content-type") || "").includes("javascript")) {
-        throw new Error("Det verificerede FreeRDP WebAssembly-build er endnu ikke installeret.");
+      await verifyWasm();
+      const verifiedFingerprint = normalizeNativeRdpFingerprint(credentials?.fingerprint);
+      if (!credentials?.username || !credentials?.password || !verifiedFingerprint || !sessionId) {
+        throw new Error("GNOME RDP-login er ikke gyldigt.");
       }
       const issued = await createBrowserWsTicket(clientId, "remote_desktop");
       const browserUrl = getRemoteDesktopBrowserWsUrl(clientId);
@@ -86,16 +94,81 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
       const tunnelUrl = browserUrl.replace(/\/ws$/, "/native-rdp/" + encodeURIComponent(sessionId) + "/ws");
       setBoot({
         tunnelUrl, ticket: issued.ticket, subprotocol: issued.subprotocol,
-        username: username.trim(), password, fingerprint: normalizedFingerprint,
+        username: credentials.username, password: credentials.password, fingerprint: verifiedFingerprint,
       });
       setAttempt((value) => value + 1);
       setPassword("");
-      setStatus("Indlæser FreeRDP i PlanIQ Display …");
+      setStatus("Indlæser FreeRDP med midlertidigt automatisk login …");
     } catch (error) {
+      setBoot(null);
       setStatus(error?.message || "FreeRDP kunne ikke startes.");
       setWorking(false);
     }
-  }, [clientId, sessionId, username, password, normalizedFingerprint, working]);
+  }, [clientId, sessionId, verifyWasm]);
+
+  const start = useCallback(() => {
+    if (!sessionId || !username.trim() || !password || !normalizedFingerprint || working) return;
+    setWorking(true);
+    setPerformance(null);
+    setResolution(null);
+    setStatus("Kontrollerer WASM-browsermiljø …");
+    void launchWithCredentials({ username: username.trim(), password, fingerprint: normalizedFingerprint });
+  }, [sessionId, username, password, normalizedFingerprint, working, launchWithCredentials]);
+
+  const startAutomatic = useCallback(async () => {
+    if (!automatic || !sessionId || working || !requestAutologin) return;
+    setWorking(true);
+    setPerformance(null);
+    setResolution(null);
+    setStatus("Godkender engangsadgang for superadministrator …");
+    try {
+      await verifyWasm();
+      const handle = await createNativeRdpAutologin(sessionId);
+      autoLoginRef.current = handle;
+      if (!requestAutologin(handle.request)) {
+        throw new Error("Superadministratorens Remote Desktop-session er ikke forbundet.");
+      }
+      setStatus("Henter krypteret, midlertidigt RDP-login fra Viborg1 …");
+    } catch (error) {
+      autoLoginRef.current = null;
+      setWorking(false);
+      setStatus(error?.message || "Automatisk RDP-login kunne ikke startes.");
+    }
+  }, [automatic, sessionId, working, requestAutologin, verifyWasm]);
+
+  useEffect(() => {
+    if (!automatic || !working || !autologinMessage || !autoLoginRef.current) return;
+    const handle = autoLoginRef.current;
+    if (autologinMessage.request_id !== handle.request.request_id) return;
+    autoLoginRef.current = null;
+    if (autologinMessage.type === "native_rdp_autologin_denied") {
+      setWorking(false);
+      setStatus("Viborg1's beskyttede RDP-autologin er ikke tilgængeligt.");
+      return;
+    }
+    if (autologinMessage.type !== "native_rdp_autologin_envelope") return;
+    void handle.open(autologinMessage.envelope).then(launchWithCredentials).catch(() => {
+      setWorking(false);
+      setStatus("Krypteret RDP-login kunne ikke verificeres.");
+    });
+  }, [automatic, working, autologinMessage, launchWithCredentials]);
+
+  useEffect(() => {
+    // Do not retain an ECDH key or leave the UI indefinitely on a lost broker.
+    if (!automatic || !working || !autoLoginRef.current) return undefined;
+    const id = window.setTimeout(() => {
+      if (autoLoginRef.current) {
+        autoLoginRef.current = null;
+        setWorking(false);
+        setStatus("RDP-autologin udløb; prøv igen med en ny session.");
+      }
+    }, 25000);
+    return () => window.clearTimeout(id);
+  }, [automatic, working, autologinMessage]);
+
+  useEffect(() => () => {
+    autoLoginRef.current = null;
+  }, []);
 
   const onLoad = useCallback(() => {
     if (!boot || !iframeRef.current?.contentWindow) return;
@@ -129,10 +202,16 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
           GNOME RDP · FreeRDP WebAssembly · Viborg1-pilot
         </Typography>
         <Typography variant="body2">
-          Skærm, mus og tastatur håndteres direkte af FreeRDP inde i denne webside. RDP-brugernavn
-          og adgangskode indtastes kun i browseren og gemmes ikke i PlanIQ-databasen.
+          {automatic
+            ? "Kun superadministrator: Viborg1 opretter midlertidigt RDP-login, der krypteres direkte til din browsersession. Ingen manuel adgangskode eller certifikatindtastning."
+            : "Skærm, mus og tastatur håndteres af FreeRDP. Den nuværende manuelle pilot gemmer ikke GNOME RDP-adgangskoder i PlanIQ-databasen."}
         </Typography>
-        {!working && (
+        {!working && automatic && (
+          <Button variant="contained" disabled={!sessionId} onClick={startAutomatic}>
+            Forbind sikkert med automatisk RDP-login
+          </Button>
+        )}
+        {!working && !automatic && (
           <Stack spacing={1}>
             <TextField
               size="small" label="Verificeret SHA-256-fingeraftryk for GNOME RDP-certifikatet"
@@ -194,7 +273,8 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback }) {
         {working && <Button variant="outlined" color="inherit" onClick={() => {
           setBoot(null);
           setWorking(false);
-          setStatus("RDP-session lukket. Indtast login igen for at genforbinde.");
+          autoLoginRef.current = null;
+          setStatus(automatic ? "RDP-session lukket. Opret en ny sikker forbindelse." : "RDP-session lukket. Indtast login igen for at genforbinde.");
           setResolution(null);
         }}>Afbryd RDP</Button>}
         {working && (
