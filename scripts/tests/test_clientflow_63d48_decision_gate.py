@@ -115,7 +115,7 @@ def test_native_only_requires_guarded_local_physical_kiosk():
     assert '"/args-from:stdin"' in source
     assert '"/cert:fingerprint:sha256:"' in source
     assert '"/size:" + DISPLAY_MODE' in source
-    assert '"-nolisten tcp"' in source
+    assert "-nolisten tcp" in source
     assert 'stdout=subprocess.DEVNULL' in source
     assert 'stderr=subprocess.DEVNULL' in source
     assert 'start_new_session=True' in source
