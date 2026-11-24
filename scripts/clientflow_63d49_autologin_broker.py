@@ -34,6 +34,7 @@ CREDENTIALS = Path("/run/clientflow-rdp-63d30/credentials")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 GNOME_RUNNER = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30/clientflow_63d30_local_rdp_pilot.py")
 GNOME_RUNNER_SHA256 = "78972f7c7173a4894abc22d4518b1fc4d3189c76e30dd463715af03ef069af69"
+GNOME_GUARD_SHA256 = "709a5d9b1eba3364dfd2ac21f4e24525b0dc3261236456a9127aac7cfd54c000"
 MAGIC = "planiq-clientflow-rdp-v1"
 MAX_REQUEST = 1024
 
@@ -120,12 +121,27 @@ def _verify_physical_firewall() -> None:
     # Reuse independently audited root GNOME kernel guard. A stale JSON marker
     # (or timer alone) must never release GNOME RDP credentials.
     try:
-        meta = GNOME_RUNNER.lstat()
-        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022
-                or hashlib.sha256(GNOME_RUNNER.read_bytes()).hexdigest() != GNOME_RUNNER_SHA256):
-            raise BrokerDenied("UNTRUSTED_PHYSICAL_GUARD_CODE")
+        directory = GNOME_RUNNER.parent
+        meta = directory.lstat()
+        if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or stat.S_IMODE(meta.st_mode) != 0o700:
+            raise BrokerDenied("UNTRUSTED_PHYSICAL_GUARD_DIRECTORY")
+        for source, digest in (
+            (GNOME_RUNNER, GNOME_RUNNER_SHA256),
+            (directory / "clientflow_63d29_persistent_rdp_guard.py", GNOME_GUARD_SHA256),
+        ):
+            meta = source.lstat()
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022
+                    or hashlib.sha256(source.read_bytes()).hexdigest() != digest):
+                raise BrokerDenied("UNTRUSTED_PHYSICAL_GUARD_CODE")
+        # Python isolated mode excludes the script directory. Add ONLY the
+        # verified root-owned directory, retaining isolation from user paths.
+        bootstrap = (
+            "import sys,runpy; p=sys.argv[1]; "
+            "sys.path.insert(0,p.rsplit('/',1)[0]); "
+            "sys.argv=[p,'status']; runpy.run_path(p,run_name='__main__')"
+        )
         p = subprocess.run(
-            ["/usr/bin/python3", "-I", "-B", str(GNOME_RUNNER), "status"],
+            ["/usr/bin/python3", "-I", "-B", "-c", bootstrap, str(GNOME_RUNNER)],
             capture_output=True, text=True, timeout=10, check=False,
             env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
         )
@@ -218,9 +234,6 @@ def serve() -> None:
     meta = folder.lstat()
     if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022:
         raise BrokerDenied("UNSAFE_BROKER_DIRECTORY")
-    if SOCKET_PATH.exists() or SOCKET_PATH.is_symlink():
-        raise BrokerDenied("EXISTING_BROKER_SOCKET")
-
     listen_pid = os.environ.get("LISTEN_PID")
     listen_fds = os.environ.get("LISTEN_FDS")
     if listen_pid is not None or listen_fds is not None:
@@ -236,13 +249,17 @@ def serve() -> None:
             listener.close()
             raise BrokerDenied("UNTRUSTED_SYSTEMD_SOCKET_OWNER")
     else:
+        if SOCKET_PATH.exists() or SOCKET_PATH.is_symlink():
+            raise BrokerDenied("EXISTING_BROKER_SOCKET")
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         activated = False
     listener.settimeout(1.0)
     seen: set[str] = set()
+    bound_here = False
     try:
         if not activated:
             listener.bind(str(SOCKET_PATH))
+            bound_here = True
             os.chown(SOCKET_PATH, 0, agent.pw_gid)
             os.chmod(SOCKET_PATH, 0o660)
             listener.listen(4)
@@ -272,6 +289,8 @@ def serve() -> None:
                     if len(frame) > MAX_REQUEST or not frame.endswith(b"\n"):
                         raise BrokerDenied("INVALID_REQUEST_FRAME")
                     req = json.loads(bytes(frame).decode("ascii"))
+                    if type(req) is not dict:
+                        raise BrokerDenied("BAD_REQUEST_SHAPE")
                     binding = str(req.get("session_id", ""))
                     if binding in seen:
                         raise BrokerDenied("SESSION_ALREADY_ISSUED")
@@ -283,7 +302,7 @@ def serve() -> None:
                     pass
     finally:
         listener.close()
-        if not activated:
+        if bound_here:
             try:
                 meta = SOCKET_PATH.lstat()
                 if stat.S_ISSOCK(meta.st_mode) and meta.st_uid == 0:
