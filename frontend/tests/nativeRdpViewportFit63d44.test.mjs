@@ -245,6 +245,7 @@ test("explicit zoom 25–200 percent preserves the framebuffer and aspect ratio"
 });
 
 test("compact controls exclude diagnostics and use browser fullscreen", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
   assert.doesNotMatch(ui, /component="details"|Diagnostik|Bekræft fysisk billede|onFallback/);
   assert.match(ui, /requestFullscreen\(\)/);
   assert.match(ui, /exitFullscreen\(\)/);

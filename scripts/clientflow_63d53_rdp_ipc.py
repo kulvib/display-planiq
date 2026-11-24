@@ -163,7 +163,7 @@ def serve_lifecycle(conn):
             try:
                 ops.renew(session)
             except lifecycle.LifecycleDenied as exc:
-                if str(exc) != "WATCHDOG_BUSY":
+                if str(exc) not in {"WATCHDOG_BUSY", "PHYSICAL_STATUS_FAILED"}:
                     raise
 
     lifecycle.run_owned_session(session, hold, operations=ops)
