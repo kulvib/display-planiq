@@ -20,7 +20,6 @@ import socket
 import stat
 import subprocess
 import sys
-import time
 import urllib.request
 
 sys.dont_write_bytecode = True
@@ -232,8 +231,8 @@ def main() -> int:
                 raise RuntimeError("PHYSICAL_PREFLIGHT_NOT_PASSED")
             emit("GNOME_63D30_PREFLIGHT", "PASS")
             if not staged_runner_trusted():
+                new_stage = True  # partial stage still needs explicit cleanup
                 gnome("stage", staged=False)
-                new_stage = True
             if not staged_runner_trusted():
                 raise RuntimeError("GNOME_STAGE_SOURCE_MISMATCH")
             emit("ROOT_FIREWALL_WATCHDOG_STAGE", "PASS")
