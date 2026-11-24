@@ -161,3 +161,36 @@ cryptography runtime, peer identity and unit sandbox compatibility on Viborg1.
 CI must cover the new source. Physical startup, cleanup, automatic reconnect,
 normal long-running leases, step-up policy, dynamic resolution and fleet
 identity enrollment remain outstanding. Legacy manual pilot remains isolated.
+
+
+## 63D-54 — bounded physical installation candidate
+
+The operator script pins all 15 root/agent/unit inputs to the green
+63D-53B commit a194579ca1dc31988e8d82de52738a9d05a9adf7. It accepts only
+Viborg1 / ID 3 / installed ClientFlow 1248, verifies the original agent and
+clean physical state, verifies system Python crypto, and runs the existing
+read-only physical preflight. It creates an isolated root-owned source
+package and verified shadow of the three agent modules. Runtime systemd
+units are verified before starting the two local sockets; the existing agent
+is replaced only by a boot-ephemeral override. An independent 20-minute
+transient rollback timer is armed first. No GNOME RDP starts at installation;
+the authorized browser request starts it, under the unchanged six-minute
+physical watchdog. No package installation or release files are modified.
+
+Rollback blocks new leases, restores the original agent, waits for the
+root lifecycle/watchdog to remove physical state and then removes only
+hash-matching owned source and unit files. On uncertain cleanup or foreign
+state it stops rather than removing protection. The transient rollback service
+retries failures. Reboot clears runtime units/override/timer; the original
+persistent GNOME watchdog must handle any active physical session. The
+persistent staged source package may remain after an unexpected reboot and
+requires an explicit ownership-verified cleanup; never delete a stale
+firewall/watchdog to force installation. The operator copy is kept until reboot.
+
+This is not canonical release packaging. Do not activate experimental units
+individually. Before a physical pilot, deploy matching backend and frontend
+candidate code, retain the prior deployment IDs for rollback, and explicitly
+enable the existing Viborg1-only frontend pilot and autologin build flags.
+Verify actual deployed SHAs and health. Then run the hash-pinned installer
+on Viborg1 and exercise the real browser. CI only checks source contracts,
+not Ubuntu runtime unit behavior or physical cleanup. No release 1249 approval.
