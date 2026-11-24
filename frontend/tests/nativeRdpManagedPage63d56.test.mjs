@@ -30,3 +30,12 @@ test("automatic opening follows authorized generation and user intent", () => {
   assert.match(page, /url.searchParams.set\("native_rdp", "1"\)/);
   assert.match(page, /window.location.replace\(url.href\)/);
 });
+
+
+test("native document departure cancels old connection generation; hidden tabs do not use legacy idle stop", () => {
+  assert.match(page, /installNativeRdpPageLifecycle\(window/);
+  assert.match(page, /connectAttemptRef\.current \+= 1;[\s\S]*?const socket = wsRef\.current;[\s\S]*?socket\?\.close\(\)/);
+  assert.match(page, /restore: \(\) => \{ void connectRef\.current\?\.\(\); \}/);
+  assert.match(page, /if \(nativeRequested \|\| !connected \|\| !agentConnected\) return undefined;/);
+  assert.match(viewer, /setTimeout\(\(\) => \{ void startAutomatic\(\); \}, 0\)/);
+});

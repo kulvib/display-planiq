@@ -236,3 +236,21 @@ This does not extend PlanIQ login expiry. The bounded 20-minute physical
 installer rollback is still present until permanent packaging is approved.
 The old installed v1 agent/local protocol must be rolled back before installing
 the new v2 pair. No source-only test proves physical renewal.
+
+
+## 63D-57B — browser document lifecycle
+
+An enabled native Remote Desktop document actively closes its current control
+socket on pagehide, cancels outstanding connection tickets by generation and
+stops scheduled reconnect. Ordinary visibility changes never close native
+RDP. A back-forward-cache restoration starts a fresh control generation;
+explicit user disconnect intent is retained in the existing page state.
+The backend invalidates the browser generation, closes the native tunnel,
+and sends bounded concurrent session-close notifications before auxiliary DB
+and file cleanup. This includes a physical login still being prepared.
+Normal departure does not rely on React unmount or a final browser HTTP call.
+Crash/network-loss detection still depends on WebSocket liveness and the local
+watchdog; the renewed 90-second deadline is measured from the last successful
+renewal, not from the exact moment the tab was closed. Initial preparation
+retains the original short physical safety window. Physical verification
+must include closure during setup, active desktop, tab switch and reopening.

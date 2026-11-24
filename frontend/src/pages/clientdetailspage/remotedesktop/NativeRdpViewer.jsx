@@ -169,8 +169,11 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   }, [automatic, sessionId, working, requestAutologin, verifyWasm, cancelManaged, onDesiredChange]);
 
   useEffect(() => {
-    if (!automatic || !desired || !sessionId || working || autoAttemptedRef.current) return;
-    void startAutomatic();
+    if (!automatic || !desired || !sessionId || working || autoAttemptedRef.current) return undefined;
+    // Defer until the mount is committed. A StrictMode setup/cleanup replay
+    // must not consume this generation's one automatic opening.
+    const timer = window.setTimeout(() => { void startAutomatic(); }, 0);
+    return () => window.clearTimeout(timer);
   }, [automatic, desired, sessionId, working, startAutomatic]);
 
   // Retry an unexpectedly lost, previously active transport. A denied setup

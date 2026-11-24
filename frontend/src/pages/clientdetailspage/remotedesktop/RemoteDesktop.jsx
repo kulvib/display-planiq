@@ -33,6 +33,7 @@ import {
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
 import NativeRdpViewer from "./NativeRdpViewer";
+import { installNativeRdpPageLifecycle } from "./nativeRdpPageLifecycle.mjs";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
 import { createRemoteDesktopTiming } from "./remoteDesktopTiming.mjs";
 import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
@@ -831,7 +832,8 @@ export default function RemoteDesktop() {
     }
     connectRef.current = connect;
     void connect();
-    return () => {
+    const leave = () => {
+      // Invalidate pending tickets and callbacks before closing the old socket.
       connectAttemptRef.current += 1;
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
@@ -845,15 +847,35 @@ export default function RemoteDesktop() {
         window.clearTimeout(hiddenStopTimerRef.current);
         hiddenStopTimerRef.current = null;
       }
+      const socket = wsRef.current;
+      wsRef.current = null;
       try {
-        wsRef.current?.send(JSON.stringify({ type: "stop_stream" }));
-        wsRef.current?.close();
+        if (!nativeRequested && socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "stop_stream" }));
+        }
       } catch {}
+      try {
+        socket?.close();
+      } catch {}
+    };
+    const detachPageLifecycle = nativeRequested ? installNativeRdpPageLifecycle(window, {
+      leave: () => {
+        leave();
+        setConnected(false);
+        setAgentConnected(false);
+        setSessionId(null);
+        setNativeRdpAutologinMessage(null);
+      },
+      restore: () => { void connectRef.current?.(); },
+    }) : () => {};
+    return () => {
+      detachPageLifecycle();
+      leave();
     };
   }, [connect, nativeRequested]);
 
   useEffect(() => {
-    if (!connected || !agentConnected) return undefined;
+    if (nativeRequested || !connected || !agentConnected) return undefined;
 
     const applyIdleMode = () => {
       if (!pageVisibleRef.current) return;
@@ -912,7 +934,7 @@ export default function RemoteDesktop() {
       window.removeEventListener("pointerdown", handleActivity);
       window.removeEventListener("wheel", handleActivity);
     };
-  }, [connected, agentConnected, markRemoteActivity, startStream, stopStream]);
+  }, [nativeRequested, connected, agentConnected, markRemoteActivity, startStream, stopStream]);
 
   useEffect(() => {
     if (!lastFrameTs) return undefined;

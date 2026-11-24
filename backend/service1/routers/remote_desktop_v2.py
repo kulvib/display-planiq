@@ -606,22 +606,20 @@ async def _close_session_on_available_channels(browser: BrowserSession) -> None:
     control = CONTROL_AGENTS.get(browser.client_id)
     files = FILE_AGENTS.get(browser.client_id)
     input_channel = INPUT_AGENTS.get(browser.client_id)
-    if control:
-        try:
-            await _send_agent(control, payload)
-        except Exception:
-            pass
-    if files:
-        try:
-            await _send_agent(files, payload)
-        except Exception:
-            pass
     if input_channel:
         input_channel.ready_sessions.discard(browser.session_id)
+
+    async def close_channel(channel):
         try:
-            await _send_agent(input_channel, payload)
+            await asyncio.wait_for(_send_agent(channel, payload), timeout=3.0)
         except Exception:
+            # Closing a stale channel is best effort; the local lease and
+            # independent watchdog do not rely on the close message arriving.
             pass
+
+    # A blocked file channel must not delay stopping the desktop.
+    await asyncio.gather(*(close_channel(channel) for channel in
+                           (control, files, input_channel) if channel is not None))
 
 
 @router.put("/remote-desktop-agent/clients/{client_id}/status")
@@ -1745,6 +1743,9 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
         # Local import avoids the router's existing reverse module dependency.
         from .native_rdp_tunnel import close_native_rdp_session
         await close_native_rdp_session(client_id, session_id)
+        # Also stop a managed login that is still preparing and has not opened
+        # a native data tunnel yet. Do this before DB or transfer cleanup.
+        await _close_session_on_available_channels(browser)
         if receive_task is not None and not receive_task.done():
             receive_task.cancel()
             try:
@@ -1788,7 +1789,6 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
         for transfer_id, transfer in list(TRANSFERS.items()):
             if transfer.session_id == session_id:
                 _release_transfer(transfer_id)
-        await _close_session_on_available_channels(browser)
         with Session(engine) as db:
             close_remote_desktop_session(
                 db,
