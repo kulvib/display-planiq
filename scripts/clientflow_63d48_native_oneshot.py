@@ -227,13 +227,32 @@ def main() -> int:
                 ["/usr/bin/python3", str(get("scripts/clientflow_63d48_native_reference.py")), "preflight"],
                 timeout=20,
             )
-            for required in ("HOST_AND_ID_3_RELEASE_1248=PASS", "FREERDP_REFERENCE=",
-                             "X11_ISOLATION=", "X11_SERVER=", "XAUTH_PROGRAM=",
-                             "RDP_TLS_PIN_TOOL="):
-                if required not in native_preflight:
-                    raise RuntimeError("NATIVE_PREFLIGHT_INCOMPLETE")
-            if "=NOT_INSTALLED" in native_preflight:
-                raise RuntimeError("NATIVE_REFERENCE_DEPENDENCY_MISSING")
+            capabilities = {}
+            fields = (
+                "FREERDP_REFERENCE", "X11_ISOLATION", "X11_SERVER",
+                "XAUTH_PROGRAM", "RDP_TLS_PIN_TOOL", "X11_SCREEN_SAMPLER",
+            )
+            for line in native_preflight.splitlines():
+                key, _, value = line.partition("=")
+                if key in fields and not (key in capabilities):
+                    capabilities[key] = value.strip()
+            if "HOST_AND_ID_3_RELEASE_1248=PASS" not in native_preflight:
+                raise RuntimeError("NATIVE_PREFLIGHT_IDENTITY_MISMATCH")
+            for label in fields:
+                if label not in capabilities:
+                    raise RuntimeError("NATIVE_PREFLIGHT_MISSING_FIELD_" + label)
+                # Report only allow-listed non-sensitive executable names/status.
+                if capabilities[label] in ("NOT_INSTALLED", "OPTIONAL_NOT_INSTALLED"):
+                    emit(label, capabilities[label])
+                elif label == "X11_SCREEN_SAMPLER":
+                    emit(label, "AVAILABLE")
+            for label in fields[:5]:
+                if capabilities[label] == "NOT_INSTALLED":
+                    raise RuntimeError("REQUIRED_NATIVE_PROGRAM_MISSING_" + label)
+                if capabilities[label] == "OPTIONAL_NOT_INSTALLED":
+                    raise RuntimeError("REQUIRED_NATIVE_PROGRAM_MISSING_" + label)
+            # xwd is optional: when absent, the native RDP handshake can
+            # still be tested, but frame-change evidence is UNKNOWN.
             emit("NATIVE_FREERDP_XVFB_XAUTH_CAPABILITY", "PASS")
             preflight = command(
                 "PHYSICAL_PREFLIGHT",
