@@ -1,0 +1,32 @@
+# Fase 63D-48 · isoleret, *inaktiv* Apache Guacamole 1.6 reference
+
+# Guacd is only a supply-chain / process capability probe here.
+# It is not a production remote-control pathway. There is intentionally
+# NO Guacamole webapp, PostgreSQL login, browser reverse proxy, published port,
+# host-mounted secret, extra Render service or remote GNOME target in this file.
+# guacd terminates RDP TLS, so it cannot be substituted for PlanIQ's existing
+# end-to-end browser->GNOME TLS stream without a new audited trust boundary.
+name: clientflow-63d48-guacd-offline
+services:
+  guacd-offline:
+    image: guacamole/guacd@sha256:769987c20e99f59578305505ffa23418c24da73d579364f097cdf01d9866e5e5
+    restart: "no"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.75
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=16m
+    networks:
+      - private-lab
+    expose:
+      - "4822"
+    # Do not add ports:, network_mode: host, privileged: true,
+    # volumes: credentials or a public frontend here.
+networks:
+  private-lab:
+    internal: true
