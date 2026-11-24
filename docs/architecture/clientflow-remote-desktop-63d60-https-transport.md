@@ -62,3 +62,20 @@ must be measured before enabling; no media or renewal writes are added here.
 No browser/agent adapter, CORS integration, live endpoint, or transport switch
 yet. Tests cover the boundary primitives and fail-closed response handling,
 not a real HTTP/FreeRDP handshake or physical firewall test.
+
+## 63D-61C — experimental endpoint adapters
+
+Added isolated browser and agent binary peers using the same framing and
+sequence contract. Both require explicit approval and exact client 3. They
+accept an injected authenticated, bounded, no-retry request function; no
+credentials are persisted, no RDP bytes replayed after errors, and peer
+closure requests are best-effort with server supervision as backstop.
+Browser adapter exposes WebSocket-like events and bounded upload buffering;
+agent adapter exposes async iteration/send/context-manager. Tests cover
+canonical framing, ordered traffic and rejection without replay. Neither is
+wired into the running FreeRDP or agent forwarder. Remaining integration:
+parent-owned browser request channel with exact origin/source/generation,
+CORS and same-origin poll behavior, bounded no-redirect TLS HTTP client,
+actual mixed transport tests, explicit allowed-network policy and physical
+validation. No automatic transport selection is implemented yet. Do not
+activate the experimental HTTP router before these gates. WSS is unchanged.
