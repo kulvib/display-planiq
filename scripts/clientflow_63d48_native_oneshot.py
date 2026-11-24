@@ -217,7 +217,7 @@ def main() -> int:
                 raise RuntimeError("OPERATOR_SYMLINK")
             OP.mkdir(mode=0o700, exist_ok=True)
             op_stat = OP.lstat()
-            if op_stat.st_uid != 0 or op_stat.st_mode & 0o077:
+            if op_stat.st_uid != os.geteuid() or op_stat.st_mode & 0o077:
                 raise RuntimeError("OPERATOR_DIRECTORY_UNSAFE")
             emit("VIBORG1_ID3_RELEASE1248", "PASS")
             for relpath in PATHS:
