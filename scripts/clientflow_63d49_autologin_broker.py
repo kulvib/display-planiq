@@ -221,14 +221,31 @@ def serve() -> None:
     if SOCKET_PATH.exists() or SOCKET_PATH.is_symlink():
         raise BrokerDenied("EXISTING_BROKER_SOCKET")
 
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listen_pid = os.environ.get("LISTEN_PID")
+    listen_fds = os.environ.get("LISTEN_FDS")
+    if listen_pid is not None or listen_fds is not None:
+        if listen_pid != str(os.getpid()) or listen_fds != "1":
+            raise BrokerDenied("INVALID_SYSTEMD_SOCKET_ACTIVATION")
+        listener = socket.fromfd(3, socket.AF_UNIX, socket.SOCK_STREAM)
+        activated = True
+        if listener.getsockname() != str(SOCKET_PATH):
+            listener.close()
+            raise BrokerDenied("UNTRUSTED_SYSTEMD_SOCKET_PATH")
+        meta = SOCKET_PATH.lstat()
+        if not stat.S_ISSOCK(meta.st_mode) or meta.st_uid != 0 or meta.st_gid != agent.pw_gid or stat.S_IMODE(meta.st_mode) != 0o660:
+            listener.close()
+            raise BrokerDenied("UNTRUSTED_SYSTEMD_SOCKET_OWNER")
+    else:
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        activated = False
     listener.settimeout(1.0)
     seen: set[str] = set()
     try:
-        listener.bind(str(SOCKET_PATH))
-        os.chown(SOCKET_PATH, 0, agent.pw_gid)
-        os.chmod(SOCKET_PATH, 0o660)
-        listener.listen(4)
+        if not activated:
+            listener.bind(str(SOCKET_PATH))
+            os.chown(SOCKET_PATH, 0, agent.pw_gid)
+            os.chmod(SOCKET_PATH, 0o660)
+            listener.listen(4)
         print("RDP_AUTOLOGIN_BROKER=READY", flush=True)
         while True:
             try:
@@ -266,12 +283,14 @@ def serve() -> None:
                     pass
     finally:
         listener.close()
-        try:
-            meta = SOCKET_PATH.lstat()
-            if stat.S_ISSOCK(meta.st_mode) and meta.st_uid == 0:
-                SOCKET_PATH.unlink()
-        except FileNotFoundError:
-            pass
+        if not activated:
+            try:
+                meta = SOCKET_PATH.lstat()
+                if stat.S_ISSOCK(meta.st_mode) and meta.st_uid == 0:
+                    SOCKET_PATH.unlink()
+            except FileNotFoundError:
+                pass
+        # When socket-activated, systemd owns creation and RemoveOnStop.
         print("RDP_AUTOLOGIN_BROKER=STOPPED", flush=True)
 
 
