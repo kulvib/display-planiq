@@ -1,6 +1,4 @@
 """No expensive rebuild is bypassed unless all approved inputs match."""
-from pathlib import Path
-
 from scripts import plan_freerdp_wasm_build as plan
 
 

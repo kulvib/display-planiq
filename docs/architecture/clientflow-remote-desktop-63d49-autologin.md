@@ -270,3 +270,18 @@ the independent firewall/watchdog. Old pilot overrides must be rolled back.
 The physical system Python crypto/GNOME prerequisites, renewal, crash recovery,
 and dynamic resolution still require validation. Source CI does not authorize
 an actual release or prove physical behavior.
+
+
+## 63D-58C — final automatic-opening UI and physical display policy
+
+No initial manual Connect button (including the waiting-for-agent state).
+The one-shot launch has an immediate in-flight guard; cancellation before
+startup consumes the automatic attempt. Manual Connect is available only
+after intentional disconnect or failed setup. Retry count resets after a
+successful transport. The established framebuffer-fit observers remain the
+resolution adaptation mechanism; GNOME mirror-primary is the real kiosk
+screen. Do not request RDP dynamic monitor resizing or change physical
+monitor mode merely because the administrator resizes the browser. Actual
+RDP monitor renegotiation is not implemented and is not a release claim.
+Retain the physically tested initial 2560x1080 request for Viborg1. No
+new WASM build inputs or compiled assets changed.

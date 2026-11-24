@@ -39,3 +39,12 @@ test("native document departure cancels old connection generation; hidden tabs d
   assert.match(page, /if \(nativeRequested \|\| !connected \|\| !agentConnected\) return undefined;/);
   assert.match(viewer, /setTimeout\(\(\) => \{ void startAutomatic\(\); \}, 0\)/);
 });
+
+
+test("initial auto-start and recovery never display a manual connect button", () => {
+  assert.match(viewer, /const \[retryAllowed, setRetryAllowed\] = useState\(false\)/);
+  assert.match(viewer, /automatic && sessionId && \(!desired \|\| retryAllowed\) && \(/);
+  assert.match(viewer, /launchInProgressRef.current \|\| !requestAutologin/);
+  assert.match(viewer, /setRetryAllowed\(!shouldRecover\)/);
+  assert.match(viewer, /onDesiredChange\?\.\(false\);\s*autoAttemptedRef.current = true/);
+});

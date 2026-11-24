@@ -21,6 +21,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const transportReadyRef = useRef(false);
   const retryCountRef = useRef(0);
   const [recovering, setRecovering] = useState(false);
+  const [retryAllowed, setRetryAllowed] = useState(false);
+  const launchInProgressRef = useRef(false);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
   const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
   const [boot, setBoot] = useState(null);
@@ -66,7 +68,10 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
           event.source !== iframeRef.current?.contentWindow) return;
       if (event.data?.type === "planiq-native-rdp-status") {
         const ready = event.data.message === "Forbundet";
-        if (ready) transportReadyRef.current = true;
+        if (ready) {
+          transportReadyRef.current = true;
+          retryCountRef.current = 0;
+        }
         setStatus(ready ? "Forbundet" : "Forbinder …");
       }
       if (event.data?.type === "planiq-native-rdp-resolution") {
@@ -87,6 +92,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
         const shouldRecover = transportReadyRef.current && desired;
         transportReadyRef.current = false;
         setRecovering(shouldRecover);
+        launchInProgressRef.current = false;
+        setRetryAllowed(!shouldRecover);
         setStatus(shouldRecover ? "Genopretter forbindelse …" : "Forbindelsen blev afbrudt. Prøv igen.");
         setWorking(false);
       }
@@ -131,13 +138,17 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       if (operationRef.current !== operation) return;
       cancelManaged();
       setBoot(null);
+      launchInProgressRef.current = false;
+      setRetryAllowed(true);
       setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
       setWorking(false);
     }
   }, [clientId, sessionId, verifyWasm, cancelManaged]);
 
   const startAutomatic = useCallback(async () => {
-    if (!automatic || !sessionId || working || !requestAutologin) return;
+    if (!automatic || !sessionId || working || launchInProgressRef.current || !requestAutologin) return;
+    launchInProgressRef.current = true;
+    setRetryAllowed(false);
     onDesiredChange?.(true);
     autoAttemptedRef.current = true;
     transportReadyRef.current = false;
@@ -163,6 +174,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       cancelManaged();
       autoLoginRef.current = null;
       setAutoPendingRequestId(null);
+      launchInProgressRef.current = false;
+      setRetryAllowed(true);
       setWorking(false);
       setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
     }
@@ -184,6 +197,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     const delay = delays[retryCountRef.current];
     if (delay === undefined) {
       setRecovering(false);
+      setRetryAllowed(true);
       setStatus("Forbindelsen blev afbrudt. Prøv igen.");
       return undefined;
     }
@@ -202,6 +216,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     setAutoPendingRequestId(null);
     if (autologinMessage.type === "native_rdp_autologin_denied") {
       cancelManaged();
+      launchInProgressRef.current = false;
+      setRetryAllowed(true);
       setWorking(false);
       setStatus("Forbindelse ikke tilgængelig. Prøv igen.");
       return;
@@ -213,6 +229,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     ).catch(() => {
       if (operationRef.current !== operation) return;
       cancelManaged();
+      launchInProgressRef.current = false;
+      setRetryAllowed(true);
       setWorking(false);
       setStatus("Forbindelsen kunne ikke godkendes.");
     });
@@ -227,6 +245,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
         cancelManaged();
         autoLoginRef.current = null;
         setAutoPendingRequestId(null);
+        launchInProgressRef.current = false;
+        setRetryAllowed(true);
         setWorking(false);
         setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
       }
@@ -237,6 +257,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   useEffect(() => () => {
     operationRef.current += 1;
     cancelManaged();
+    launchInProgressRef.current = false;
     autoLoginRef.current = null;
   }, [cancelManaged]);
 
@@ -277,7 +298,10 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const disconnect = () => {
     operationRef.current += 1;
     cancelManaged();
+    launchInProgressRef.current = false;
+    setRetryAllowed(true);
     onDesiredChange?.(false);
+    autoAttemptedRef.current = true;
     retryCountRef.current = 0;
     transportReadyRef.current = false;
     setRecovering(false);
@@ -301,12 +325,15 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       <Stack spacing={1} sx={fullscreen ? { height: "100%", minHeight: 0 } : undefined}>
         {!working && (
           <Stack alignItems="center" spacing={1} sx={{ py: 4 }}>
-            <Button variant="contained" disabled={!automatic || !sessionId} onClick={startAutomatic}>
-              {recovering ? "Forbind nu" : "Forbind"}
-            </Button>
-            {recovering && <Button size="small" onClick={disconnect}>Afbryd</Button>}
+            {automatic && sessionId && (!desired || retryAllowed) && (
+              <Button variant="contained" onClick={startAutomatic}>Forbind</Button>
+            )}
+            {automatic && desired && !retryAllowed && <Button size="small" onClick={disconnect}>Afbryd</Button>}
             <Typography variant="body2" aria-live="polite">
-              {!automatic ? "Remote Desktop er ikke aktiveret for denne klient." : !sessionId && desired ? "Venter på klient …" : status}
+              {!automatic ? "Remote Desktop er ikke aktiveret for denne klient." :
+                !desired ? "Forbindelsen er afsluttet." :
+                !sessionId ? "Venter på klient …" :
+                !retryAllowed && !recovering ? "Forbinder …" : status}
             </Typography>
           </Stack>
         )}
