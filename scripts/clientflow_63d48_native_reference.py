@@ -257,7 +257,7 @@ def native(seconds: int) -> int:
     argv = [
         xvfb, "-a", "-s", "-screen 0 2560x1080x24 -nolisten tcp",
         "/usr/bin/python3", "-I", "-B",
-        str(Path(__file__).resolve()), "--isolated-worker", str(seconds),
+        str(Path(__file__).resolve()), "isolated-worker", str(seconds),
     ]
     env = {
         "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
@@ -300,7 +300,7 @@ def native(seconds: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("preflight", "native", "--isolated-worker"))
+    parser.add_argument("action", choices=("preflight", "native", "isolated-worker"))
     parser.add_argument("seconds", nargs="?", type=int, default=14)
     args = parser.parse_args()
     try:
