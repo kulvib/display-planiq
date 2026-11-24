@@ -10,7 +10,7 @@ SocketGroup=clientflow-remote-desktop-agent
 DirectoryMode=0755
 RemoveOnStop=yes
 Accept=no
-MaxConnections=4
+Backlog=4
 
 [Install]
 WantedBy=sockets.target
