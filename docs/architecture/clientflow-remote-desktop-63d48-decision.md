@@ -101,3 +101,13 @@ The first A/B investigation batch is implemented as non-production code, NOT a n
 - No saved screen pixels or RDP credentials, no public HTML test tool, no new Neon DB, no second Render service, no paid licenses.
 - Native Xvfb graphic activity is supportive evidence about the GNOME/RDP source, NOT proof that browser latency is fixed.
 - Release 1249 remains blocked.
+
+## One-shot native reference operator (preferred physical execution)
+
+The one-shot operator in scripts/clientflow_63d48_native_oneshot.py integrates all safety-critical steps into one root-only, SHA-pinned, **non-Render** physical test. It downloads verified GNOME 63D-29/30 and native 63D-48 source code, validates the actual GNOME primary mode through the kiosk user's existing D-Bus, checks normal ClientFlow release 1248 agent configuration, and checks Xvfb/Xauthority/native FreeRDP capability **before** starting GNOME RDP. It uses the independently reviewed root nftables/watchdog staging, starts a single six-minute RDP mirror-primary window, invokes a 14-second native FreeRDP graphics check with a separately verified TLS/auth-only test, and invokes GNOME stop before any watchdog unstage. It never exposes RDP or guacd publicly, logs a password or writes screenshot pixels.
+
+One-shot status is PASS only if the native reference process was still running through its bounded window, authentication passed, and all GNOME RDP cleanup checks passed. The result is **NOT** an end-to-end pointer-latency PASS. A second physical proof is still required for cursor/click/drag/scroll and the browser comparison. On a partial GNOME start or a cleanup error, the one-shot returns STOP and retains the independent firewall/watchdog if safe removal cannot be proven. An already staged independent watchdog is preserved rather than silently removed.
+
+Preferred invocation after full CI passes: a SHA256-verified copy from the fixed reviewed GitHub commit, run as root on Viborg1; only the calling wrapper should download the operator source. The operator obtains GNOME and native comparison dependencies from their independently fixed source commits and validates every SHA256. Do not run the operator in a public terminal, and do not paste temporary RDP credentials into chat.
+
+This is a *source-chain reference* and a necessary discriminator between GNOME and browser transport, not a final A/B victory for any candidate. Apache Guacamole remains a non-enabled, internal-only laboratory candidate until an audited agent-to-guacd trust boundary exists.
