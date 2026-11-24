@@ -88,3 +88,17 @@ policy remains an explicit security decision; no extra manual RDP credentials.
 Do not enable the automatic login flag, deploy this draft, or approve release
 1249 from the source-level regression tests. The six-minute watchdog remains
 the physical pilot boundary until independently validated lifecycle integration.
+
+
+## 63D-52B — control-plane-bound native tunnel shutdown (source only)
+
+Invalidate the control session and pending bootstrap before auxiliary activity
+lease persistence; close its exact native tunnel immediately. Retain a client's
+single tunnel slot until both bounded socket-close attempts complete. Bind the
+tunnel to the exact authenticated control channel object, reject a replacement
+even with the same credential, and check authorization before the first byte.
+Existing periodic DB checks remain; the added per-packet generation check is
+only an in-memory lookup. Keep cleanup on failed socket accept. This closes
+the transport, not the underlying GNOME credential lease. The root lifecycle,
+session-specific credential rotation, unattended start, reconnect and dynamic
+resolution remain unimplemented/unverified. No pilot activation or deployment.

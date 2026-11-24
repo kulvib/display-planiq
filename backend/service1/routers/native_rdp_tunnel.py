@@ -75,6 +75,8 @@ class NativeRdpTunnel:
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     to_browser: asyncio.Lock = field(default_factory=asyncio.Lock)
     to_agent: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Keep the exact control-plane channel generation, not just its credential.
+    control_channel: object | None = None
     agent_credential_id: str | None = None
     agent_token_version: int | None = None
     browser_to_agent: BinaryFlow = field(default_factory=BinaryFlow)
@@ -85,7 +87,7 @@ class NativeRdpTunnel:
         if active is None or active.client_id != self.client_id or active.user_id != self.user_id:
             return False
         current, state = _remote_desktop_browser_auth_state(active)
-        return bool(current is not None and state == "ok")
+        return bool(current is not None and current.is_superadmin and state == "ok")
 
     def authorized_agent(self) -> bool:
         # On an established socket the short-lived handshake token may expire.
@@ -93,7 +95,7 @@ class NativeRdpTunnel:
         # Reuse the existing agent-control-channel validator; never store JWTs
         # or query PostgreSQL for every binary RDP packet.
         control = CONTROL_AGENTS.get(self.client_id)
-        if not control or not self.agent_credential_id:
+        if not control or control is not self.control_channel or not self.agent_credential_id:
             return False
         if (
             str(control.credential_id) != self.agent_credential_id
@@ -153,6 +155,8 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
     cancelling and restarting it every 15 seconds or allocating two tasks and
     a gather per RDP frame. No RDP payload is inspected, buffered or dropped.
     """
+    if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
+        return
     next_check = time.monotonic() + CHECK_INTERVAL
     receive_task: asyncio.Task | None = None
     closed_task = asyncio.create_task(tunnel.closed.wait())
@@ -168,6 +172,8 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if closed_task in done or tunnel.closed.is_set():
+                return
+            if time.monotonic() >= tunnel.created_at + MAX_TUNNEL_LIFETIME:
                 return
             if receive_task not in done:
                 if not (tunnel.authorized_browser() and tunnel.authorized_agent()):
@@ -190,6 +196,10 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
                     tunnel.client_id, "browser_to_agent" if browser_side else "agent_to_browser",
                     frame_class,
                 )
+                return
+            # The generation check is in-memory; no per-frame database query.
+            if (tunnel.control_channel is not None and
+                    CONTROL_AGENTS.get(tunnel.client_id) is not tunnel.control_channel):
                 return
             peer = tunnel.agent if browser_side else tunnel.browser
             if peer is None:
@@ -221,14 +231,29 @@ async def _cleanup(tunnel: NativeRdpTunnel) -> None:
         return
     tunnel.closed.set()
     _traffic_summary(tunnel, "closed")
+    # Retain the one-client reservation until both close attempts complete.
+    # Otherwise a new tunnel could overlap an old, still-closing generation.
+    try:
+        await asyncio.gather(*(
+            _reject(socket, "RDP-session afsluttet", 1000)
+            for socket in (tunnel.agent, tunnel.browser) if socket is not None
+        ))
+    finally:
+        async with _LOCK:
+            if _TUNNELS.get(tunnel.tunnel_id) is tunnel:
+                _TUNNELS.pop(tunnel.tunnel_id, None)
+            if _CLIENT_TUNNELS.get(tunnel.client_id) == tunnel.tunnel_id:
+                _CLIENT_TUNNELS.pop(tunnel.client_id, None)
+
+
+async def close_native_rdp_session(client_id: int, session_id: str) -> None:
+    """Close only the matching generation on control-plane session teardown."""
     async with _LOCK:
-        if _TUNNELS.get(tunnel.tunnel_id) is tunnel:
-            _TUNNELS.pop(tunnel.tunnel_id, None)
-        if _CLIENT_TUNNELS.get(tunnel.client_id) == tunnel.tunnel_id:
-            _CLIENT_TUNNELS.pop(tunnel.client_id, None)
-    for socket in (tunnel.agent, tunnel.browser):
-        if socket is not None:
-            await _reject(socket, "RDP-session afsluttet", 1000)
+        tunnel_id = _CLIENT_TUNNELS.get(client_id)
+        tunnel = _TUNNELS.get(tunnel_id) if tunnel_id is not None else None
+        if tunnel is None or tunnel.session_id != session_id:
+            return
+    await _cleanup(tunnel)
 
 
 @router.websocket("/remote-desktop/browser/{client_id}/native-rdp/{session_id}/ws")
@@ -245,6 +270,7 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
                 ws, client_id=client_id, capability="remote_desktop", session=db
             )
         active = BROWSERS.get(session_id)
+        control = CONTROL_AGENTS.get(client_id)
         valid = bool(
             user is not None and user.id is not None
             and user.is_active and user.is_superadmin
@@ -254,11 +280,11 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
             and active.user_token_version == int(user.token_version or 0)
             and active.auth_session_binding == binding
             and _platform_client_accessible(client_id, user)
-            and CONTROL_AGENTS.get(client_id) is not None
+            and control is not None
         )
         if valid:
             current, state = _remote_desktop_browser_auth_state(active)
-            valid = current is not None and state == "ok"
+            valid = current is not None and current.is_superadmin and state == "ok"
         if not valid:
             await _reject(ws, "RDP-session ikke godkendt")
             return
@@ -271,18 +297,29 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
         tunnel = NativeRdpTunnel(
             client_id=client_id, session_id=session_id,
             tunnel_id=str(uuid.uuid4()), user_id=int(user.id), browser=ws,
+            control_channel=control,
         )
         async with _LOCK:
-            if len(_TUNNELS) >= MAX_TUNNELS or client_id in _CLIENT_TUNNELS:
-                await _reject(ws, "RDP-kanalen er allerede i brug", 4409)
-                return
-            _TUNNELS[tunnel.tunnel_id] = tunnel
-            _CLIENT_TUNNELS[client_id] = tunnel.tunnel_id
+            denied = (
+                len(_TUNNELS) >= MAX_TUNNELS or client_id in _CLIENT_TUNNELS
+                or BROWSERS.get(session_id) is not active
+                or CONTROL_AGENTS.get(client_id) is not control
+            )
+            if not denied:
+                _TUNNELS[tunnel.tunnel_id] = tunnel
+                _CLIENT_TUNNELS[client_id] = tunnel.tunnel_id
+        if denied:
+            await _reject(ws, "RDP-kanalen er allerede i brug eller sessionen er lukket", 4409)
+            return
 
-        await ws.accept(subprotocol=protocol)
         monitor: asyncio.Task | None = None
         try:
-            await _send_agent(CONTROL_AGENTS[client_id], {
+            await ws.accept(subprotocol=protocol)
+            if tunnel.closed.is_set() or not tunnel.authorized_browser():
+                return
+            if CONTROL_AGENTS.get(client_id) is not control:
+                return
+            await _send_agent(control, {
                 "type": "native_rdp_open",
                 "session_id": session_id,
                 "tunnel_id": tunnel.tunnel_id,
@@ -326,7 +363,8 @@ async def native_rdp_agent_ws(ws: WebSocket, client_id: int, session_id: str, tu
             return
         control = CONTROL_AGENTS.get(client_id)
         if (
-            control is None or str(control.credential_id) != str(credential.id)
+            control is None or control is not tunnel.control_channel
+            or str(control.credential_id) != str(credential.id)
             or int(control.token_version) != int(credential.token_version)
         ):
             await _reject(ws, "Agent og kontrolkanal har forskellig identitet", 4401)
@@ -335,9 +373,11 @@ async def native_rdp_agent_ws(ws: WebSocket, client_id: int, session_id: str, tu
         tunnel.agent_credential_id = str(credential.id)
         tunnel.agent_token_version = int(credential.token_version)
 
-    await ws.accept()
-    tunnel.ready.set()
     try:
+        await ws.accept()
+        if tunnel.closed.is_set():
+            return
+        tunnel.ready.set()
         await _pump(tunnel, ws, browser_side=False)
     except (asyncio.TimeoutError, WebSocketDisconnect, OSError, RuntimeError) as exc:
         logger.info("native_rdp_agent_closed client_id=%s reason=%s", client_id, type(exc).__name__)

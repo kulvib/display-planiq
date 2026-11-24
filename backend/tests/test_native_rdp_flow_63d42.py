@@ -281,3 +281,56 @@ def test_flow_logging_falls_back_to_uvicorn_without_sensitive_values(monkeypatch
     assert "bd29ed7a" not in emitted[0]
     assert "8457d398" not in emitted[0]
     assert "PRIVATE-MOCK" not in emitted[0]
+
+
+def test_63d52_control_teardown_only_closes_matching_native_generation(monkeypatch):
+    async def exercise():
+        browser, agent = SocketStub(), SocketStub()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        monkeypatch.setitem(relay._TUNNELS, tunnel.tunnel_id, tunnel)
+        monkeypatch.setitem(relay._CLIENT_TUNNELS, 3, tunnel.tunnel_id)
+        await relay.close_native_rdp_session(3, "another-session")
+        assert not tunnel.closed.is_set()
+        await relay.close_native_rdp_session(3, tunnel.session_id)
+        assert tunnel.closed.is_set()
+        assert browser.closed and agent.closed
+        assert tunnel.tunnel_id not in relay._TUNNELS
+        assert 3 not in relay._CLIENT_TUNNELS
+    asyncio.run(exercise())
+
+
+def test_63d52_revoked_tunnel_cannot_forward_first_packet():
+    async def exercise():
+        browser, agent = SocketStub(), SocketStub()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent,
+        )
+        tunnel.authorized_browser = lambda: False
+        tunnel.authorized_agent = lambda: True
+        await browser.rx.put({"type": "websocket.receive", "bytes": b"revoked"})
+        await relay._pump(tunnel, browser, browser_side=True)
+        assert agent.sent == []
+    asyncio.run(exercise())
+
+
+def test_63d52_replaced_control_channel_stops_binary_forwarding(monkeypatch):
+    async def exercise():
+        browser, agent = SocketStub(), SocketStub()
+        tunnel = relay.NativeRdpTunnel(
+            client_id=3, session_id="bd29ed7a-ad54-4f15-8028-5728fffe2156",
+            tunnel_id="8457d398-2e89-4292-995b-54a67983623a",
+            user_id=42, browser=browser, agent=agent, control_channel=object(),
+        )
+        tunnel.authorized_browser = lambda: True
+        tunnel.authorized_agent = lambda: True
+        monkeypatch.setitem(relay.CONTROL_AGENTS, 3, object())
+        await browser.rx.put({"type": "websocket.receive", "bytes": b"old-generation"})
+        await relay._pump(tunnel, browser, browser_side=True)
+        assert agent.sent == []
+    asyncio.run(exercise())

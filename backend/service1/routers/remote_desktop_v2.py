@@ -1684,6 +1684,14 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     except WebSocketDisconnect:
         pass
     finally:
+        # Invalidate the control-plane session before auxiliary cleanup or DB IO.
+        async with LOCK:
+            BROWSERS.pop(session_id, None)
+        browser.native_rdp_autologin_pending = None
+        browser.native_rdp_autologin_expires_at = 0.0
+        # Local import avoids the router's existing reverse module dependency.
+        from .native_rdp_tunnel import close_native_rdp_session
+        await close_native_rdp_session(client_id, session_id)
         if receive_task is not None and not receive_task.done():
             receive_task.cancel()
             try:
@@ -1712,8 +1720,6 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 "remote_desktop_activity_lease_close_failed client_id=%s session_id=%s",
                 client_id, session_id, exc_info=True,
             )
-        async with LOCK:
-            BROWSERS.pop(session_id, None)
         browser.pending_frame = None
         if browser.frame_sender and not browser.frame_sender.done():
             browser.frame_sender.cancel()
