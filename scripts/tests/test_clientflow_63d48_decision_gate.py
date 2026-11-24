@@ -155,3 +155,42 @@ def test_guacamole_reference_cannot_publish_ports_or_production_access():
         assert forbidden not in active
     assert active.count("expose:") == 1
     assert '"4822"' in active
+
+
+def test_kiosk_auth_uses_verified_user_environment_and_private_stdin(monkeypatch):
+    from types import SimpleNamespace
+
+    native = load("cf_63d48_kiosk_auth", NATIVE)
+    user = SimpleNamespace(pw_uid=1001, pw_gid=1001, pw_name="clientflow-kiosk",
+                           pw_dir="/home/clientflow-kiosk")
+    observed = {}
+    class Process:
+        returncode = 0
+
+        def communicate(self, input=None, timeout=None):
+            observed["input"] = input
+            return b"", b""
+
+    def popen(argv, **kwargs):
+        observed.update(argv=argv, kwargs=kwargs)
+        return Process()
+
+    monkeypatch.setattr(native, "require_executable", lambda _: "/usr/bin/xfreerdp")
+    monkeypatch.setattr(native.subprocess, "Popen", popen)
+    native.authenticate_as_kiosk(user, "/usr/bin/xvfb-run", "cfpilotabcdef12",
+                                 "p" * 48, "A" * 64)
+    assert observed["kwargs"]["user"] == 1001
+    assert observed["kwargs"]["group"] == 1001
+    assert observed["kwargs"]["env"]["HOME"] == user.pw_dir
+    assert observed["kwargs"]["env"]["USER"] == user.pw_name
+    assert observed["kwargs"]["env"]["LOGNAME"] == user.pw_name
+    assert observed["argv"][-1] == "/args-from:stdin"
+    assert b"+auth-only\n" in observed["input"]
+    assert b"/cert:fingerprint:sha256:" in observed["input"]
+    assert "p" * 48 not in repr(observed["argv"])
+    assert "p" * 48 not in repr(observed["kwargs"]["env"])
+
+    Process.returncode = 1
+    with pytest.raises(native.PreflightError, match="LOCAL_NATIVE_AUTH_NOT_VERIFIED"):
+        native.authenticate_as_kiosk(user, "/usr/bin/xvfb-run", "cfpilotabcdef12",
+                                     "p" * 48, "A" * 64)

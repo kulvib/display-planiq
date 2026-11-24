@@ -204,5 +204,19 @@ test("resolution reporting is same-origin, bounded and cannot request GNOME reso
   assert.match(ui, /Original pixelstørrelse \(1:1\)/);
   assert.match(ui, /Number\.isSafeInteger\(n\)/);
   assert.match(ui, /ikke en verificeret måling af Viborg1/);
-  assert.doesNotMatch(viewer, /\/(?:dynamic-resolution|size|smart-sizing)(?:"|:)/);
+  assert.doesNotMatch(viewer, /\/(?:dynamic-resolution|smart-sizing)(?:"|:)/);
+  assert.match(viewer, /\.\.\.\(isViborg1 \? \["\/size:2560x1080"\] : \[\]\)/);
+  assert.equal((viewer.match(/\/size:/g) || []).length, 1);
+});
+
+
+test("initial size experiment is scoped to exact physical client 3", () => {
+  const expression = viewer.match(/const isViborg1 = (\/[^\n]+\/)\s*\n\s*\.test\(new URL\(data\.tunnelUrl\)\.pathname\);/);
+  assert.ok(expression, "initial size must be scoped by the validated tunnel path");
+  const re = new RegExp(expression[1].slice(1, -1));
+  const session = "c8e4a40e-a48c-48a1-9a2c-35035cb9e9bc";
+  assert.equal(re.test("/api/remote-desktop/browser/3/native-rdp/" + session + "/ws"), true);
+  for (const client of ["30", "13", "56", "03"]) {
+    assert.equal(re.test("/api/remote-desktop/browser/" + client + "/native-rdp/" + session + "/ws"), false);
+  }
 });

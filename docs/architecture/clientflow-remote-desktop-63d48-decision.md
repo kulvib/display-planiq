@@ -122,3 +122,9 @@ Source audit found two issues in the pilot code, corrected together:
 3. The revised one-shot uses a distinct `/run/clientflow-63d48-reference-r2` directory to avoid reusing SHA-pinned obsolete source files left by the first STOP. The former runtime directory is not silently altered or deleted. Script retrieval remains tied to a fixed GitHub commit and SHA256; the installed kiosk release remains unchanged.
 
 The historical test STOP did not activate the six-minute RDP session. Retest only with the corrected SHA-pinned launcher once the new CI gate is green.
+
+## 63D-48F — physically observed kiosk authentication and scoped resolution experiment (2026-11-24)
+
+63D-48E: root auth returned 1 with no known signature, kiosk-user auth returned 0; native graphics process survived 14 seconds requesting 2560x1080. No X11 frame-change evidence (xwd absent), negotiated size and input-to-pixel delay unmeasured. GNOME stop/unstage and cleanup all PASS. Do not infer the precise root cause from the different environments. No Render or installed release changes.
+
+Promote the kiosk-user authentication path to the canonical native comparison script, retaining root guard verification, temporary credentials on stdin, certificate pin and private Xvfb. The browser candidate requests initial /size:2560x1080 ONLY on the validated client-3 tunnel path; no dynamic resolution or physical monitor configuration change. Regression tests check the scoped argument and unprivileged invocation. This does not prove correct canvas size, working input, low latency or automatic browser credentials. 63D-49 activation remains blocked; Guacamole is still an inactive comparison candidate. Do not deploy or merge until CI and the separate security gates are reviewed.

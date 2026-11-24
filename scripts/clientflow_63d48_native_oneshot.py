@@ -27,13 +27,13 @@ os.environ["PATH"] = "/usr/sbin:/usr/bin:/sbin:/bin"
 
 HOST = "viborg1-NUC14MNK-B2"
 RELEASE = "clientflow-1.3.47-seq-1248"
-OP = Path("/run/clientflow-63d48-reference-r2")
+OP = Path("/run/clientflow-63d48-reference-r3")
 LOCK = Path("/run/clientflow-63d48-reference.lock")
 STAGED = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30/clientflow_63d30_local_rdp_pilot.py")
 STAGED_GUARD = STAGED.parent / "clientflow_63d29_persistent_rdp_guard.py"
 STATE = Path("/var/lib/clientflow/rdp-pilot-63d30/state.json")
 COMMIT_GNOME = "e58a1f2a2fe52df79df5c0dc50649077d042ccc1"
-COMMIT_NATIVE = "0804edd5dac7ce597fdcd3c686fabeff044ae757"
+COMMIT_NATIVE = "86e20617da06173cafb9439e22f55e7159ae55f5"
 PATHS = {
     "scripts/clientflow_63d29_persistent_rdp_guard.py":
         (COMMIT_GNOME, "709a5d9b1eba3364dfd2ac21f4e24525b0dc3261236456a9127aac7cfd54c000"),
@@ -42,7 +42,7 @@ PATHS = {
     "scripts/clientflow_63d30_physical_preflight.py":
         (COMMIT_GNOME, "40967aa92d658d8ecf1288ad22b5cde8f247835c2d2070f6d2e785b144f40cc4"),
     "scripts/clientflow_63d48_native_reference.py":
-        (COMMIT_NATIVE, "a88de83dc8e4d9f96fed7e08b8500053be635c467b1cfce2afe9a338c17fb991"),
+        (COMMIT_NATIVE, "3f494bf8335382175011cbc3e252dcfa07fe3e62424d534f189829d4eecd62c8"),
 }
 TIMERS = ("clientflow-63d47-agent-rollback.timer", "clientflow-63d42-agent-rollback.timer")
 AGENT = "clientflow-remote-desktop-agent.service"

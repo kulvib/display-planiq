@@ -93,6 +93,11 @@
       error("SDL3-billedfladen #canvas mangler. RDP kan ikke vise skærmen.");
       return;
     }
+    // Physical pilot only: exact client 3 has a measured 2560x1080 primary.
+    // Request an initial RDP framebuffer, never a physical GNOME mode change.
+    // This is an A/B candidate, not proof of a negotiated resolution.
+    const isViborg1 = /^\/api\/remote-desktop\/browser\/3\/native-rdp\/[0-9a-f-]{36}\/ws$/
+      .test(new URL(data.tunnelUrl).pathname);
     // CSS presentation scale only. SDL3 retains its actual RDP window size
     // and accounts for CSS-to-window scaling when converting pointer events.
     try {
@@ -193,7 +198,8 @@
           const args = [
             "/v:127.0.0.1:3389", "/u:" + username, "/p:" + password,
             "/cert:fingerprint:sha256:" + certFingerprint,
-            // Pilot: only mandatory parameters, keeping strict TLS pinning.
+            ...(isViborg1 ? ["/size:2560x1080"] : []),
+            // Pilot: explicit measured size for Viborg1 only; strict TLS pinning.
             // Optional GFX/network/log flags made the first WASM startup abort
             // before a socket could be observed; enable only when proven.
 
