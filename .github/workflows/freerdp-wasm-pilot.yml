@@ -1,20 +1,42 @@
 name: FreeRDP 3.33.1 browser WASM reproducible build
 
-# Manual rebuild only: verified compiled output is source-locked and checked
-# at EVERY frontend build; avoid 80-minute CMake rebuilds on unrelated PR pushes.
+# Reuse only the exact previously proven build inputs and checked-in WASM bytes.
+# Manual dispatch or changed inputs always performs the complete upstream build.
 on:
   workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
       - scripts/apply_freerdp_em_screen_fix.py
+      - scripts/plan_freerdp_wasm_build.py
+      - scripts/prove_freerdp_pinned_wasm_chromium.py
+      - frontend/public/native-rdp/**
+      - frontend/scripts/checkNativeRdpWasm.mjs
       - .github/workflows/freerdp-wasm-pilot.yml
 
 permissions:
   contents: read
 
 jobs:
+  plan-build:
+    name: Verify exact previously proven WASM inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rebuild: ${{ steps.plan.outputs.rebuild }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Require rebuild on any input drift or manual dispatch
+        id: plan
+        env:
+          BUILD_EVENT: ${{ github.event_name }}
+        run: python3 scripts/plan_freerdp_wasm_build.py "$BUILD_EVENT" >> "$GITHUB_OUTPUT"
+
   compile-wasm:
+    needs: plan-build
+    if: needs.plan-build.outputs.rebuild == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container: emscripten/emsdk:6.0.12
@@ -99,7 +121,11 @@ jobs:
 
   chromium-wasm-proof:
     name: Proof of SDL3 screen + outgoing WebSocket in Chromium
-    needs: compile-wasm
+    needs: [plan-build, compile-wasm]
+    if: >-
+      always() && !cancelled() && needs.plan-build.result == 'success' &&
+      ((needs.plan-build.outputs.rebuild == 'true' && needs.compile-wasm.result == 'success') ||
+       (needs.plan-build.outputs.rebuild == 'false' && needs.compile-wasm.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -109,10 +135,19 @@ jobs:
           persist-credentials: false
 
       - name: Retrieve exact rebuilt FreeRDP WASM artifact
+        if: needs.plan-build.outputs.rebuild == 'true'
         uses: actions/download-artifact@v4
         with:
           name: planiq-freerdp-3.33.1-wasm
           path: ${{ runner.temp }}/verified-native-rdp
+
+      - name: Use only exact pinned repository WASM assets
+        if: needs.plan-build.outputs.rebuild == 'false'
+        run: |
+          set -euo pipefail
+          test "$(python3 scripts/plan_freerdp_wasm_build.py pull_request)" = "rebuild=false"
+          mkdir -p "${{ runner.temp }}/verified-native-rdp"
+          cp frontend/public/native-rdp/{sdl-freerdp.js,sdl-freerdp.wasm,provenance.json} "${{ runner.temp }}/verified-native-rdp"
 
       - name: Prove SDL3 display and real Chromium WebSocket Upgrade
         shell: bash

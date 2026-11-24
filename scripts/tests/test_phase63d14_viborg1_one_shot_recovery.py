@@ -11,6 +11,8 @@ from scripts import phase63d14_viborg1_one_shot_recovery as runner
 from scripts.tests.test_phase63d13_viborg1_recovery_preflight import fixture
 
 ROOT = Path(__file__).resolve().parents[2]
+# Exact historic approved recovery source, deliberately independent of current release code.
+FIXED_TRANSACTION = ROOT / 'scripts/tests/fixtures/63d14-fixed-transaction.txt'
 
 
 def _script_setup(tmp_path, monkeypatch):
@@ -22,7 +24,7 @@ def _script_setup(tmp_path, monkeypatch):
     source = active / 'release/lib/clientflow_release'
     source.mkdir(parents=True)
     (run_dir / 'phase63d14_viborg1_one_shot_recovery.py').write_bytes(Path(runner.__file__).read_bytes())
-    (run_dir / 'transaction.py').write_bytes((ROOT / 'client/release/lib/clientflow_release/transaction.py').read_bytes())
+    (run_dir / 'transaction.py').write_bytes(FIXED_TRANSACTION.read_bytes())
     (run_dir / 'phase63d13_viborg1_recovery_preflight.py').write_bytes((ROOT / 'scripts/phase63d13_viborg1_recovery_preflight.py').read_bytes())
     monkeypatch.setattr(runner, '_require_root', lambda: None)
     monkeypatch.setattr(runner, '__file__', str(run_dir / 'phase63d14_viborg1_one_shot_recovery.py'))
@@ -49,7 +51,7 @@ def test_read_only_preflight_green_and_no_mutations(tmp_path, monkeypatch):
     # Test root fixture is separate from production: preflight's inspect
     # still uses its own root-bound code and checks the exact local state.
     assert runner.SHA256_FIXED_TRANSACTION == hashlib.sha256(
-        (ROOT / 'client/release/lib/clientflow_release/transaction.py').read_bytes()
+        FIXED_TRANSACTION.read_bytes()
     ).hexdigest()
     assert runner.SHA256_63D13_PREFLIGHT == hashlib.sha256(
         (ROOT / 'scripts/phase63d13_viborg1_recovery_preflight.py').read_bytes()
@@ -160,7 +162,7 @@ def test_no_imports_activate_and_no_self_deployment_mutations():
 
 def test_exact_historic_1246_file_hashes_are_reproducible_from_63d13_diff():
     """63D-13 modified ONLY the intended lock/call sites, not other internals."""
-    transaction = (ROOT / 'client/release/lib/clientflow_release/transaction.py').read_text()
+    transaction = FIXED_TRANSACTION.read_text()
     controller = (ROOT / 'client/release/lib/clientflow_release/update_controller.py').read_text()
     historic_txn = transaction.replace(
         '    expected_update_deployment_id: str | None = None,\n', '', 1

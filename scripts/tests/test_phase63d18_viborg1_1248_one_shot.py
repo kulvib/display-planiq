@@ -13,6 +13,8 @@ import pytest
 from scripts import phase63d18_viborg1_1248_one_shot as runner
 
 ROOT = Path(__file__).resolve().parents[2]
+# Exact historic approved recovery source, deliberately independent of current release code.
+FIXED_TRANSACTION = ROOT / 'scripts/tests/fixtures/63d14-fixed-transaction.txt'
 DEPLOYMENT = "a35da2f0-ec43-4c61-a269-2da37ea6d8c9"
 
 
@@ -34,7 +36,7 @@ def fixture(root: Path, monkeypatch):
     runner_copy.write_bytes(Path(runner.__file__).read_bytes())
     runner_copy.chmod(0o600)
     fixed = run / "transaction.py"
-    fixed.write_bytes((ROOT / "client/release/lib/clientflow_release/transaction.py").read_bytes())
+    fixed.write_bytes(FIXED_TRANSACTION.read_bytes())
     fixed.chmod(0o600)
     (root / "etc/clientflow").mkdir(parents=True)
     identity = root / "etc/clientflow/identity.json"
