@@ -299,6 +299,64 @@ def preflight() -> int:
     return 0
 
 
+def kiosk_environment(user: pwd.struct_passwd) -> dict[str, str]:
+    return {
+        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": "C.UTF-8",
+        "HOME": user.pw_dir,
+        "USER": user.pw_name,
+        "LOGNAME": user.pw_name,
+        "XDG_RUNTIME_DIR": f"/run/user/{user.pw_uid}",
+    }
+
+
+def authenticate_as_kiosk(
+    user: pwd.struct_passwd, xvfb: str, username: str,
+    password: str, fingerprint: str,
+) -> None:
+    # 63D-48E physical A/B: root returned 1, kiosk returned 0.
+    # Use the proven kiosk environment; the precise root failure is unknown.
+    # Keep the real GNOME TLS pin, local target and private stdin.
+    client = require_executable(("xfreerdp", "xfreerdp3"))
+    args = [
+        "/v:127.0.0.1:3389", "/u:" + username, "/p:" + password,
+        "+auth-only", "/cert:fingerprint:sha256:" + fingerprint,
+        "/log-level:INFO",
+    ]
+    process = subprocess.Popen(
+        [xvfb, "-a", "-s", "-screen 0 2560x1080x24 -nolisten tcp",
+         client, "/args-from:stdin"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        user=user.pw_uid, group=user.pw_gid, extra_groups=[],
+        env=kiosk_environment(user), start_new_session=True, close_fds=True,
+    )
+    try:
+        stdout, stderr = process.communicate(
+            input=("\n".join(args) + "\n").encode(), timeout=25,
+        )
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate()
+        raise PreflightError("LOCAL_NATIVE_AUTH_NOT_VERIFIED") from None
+    finally:
+        args.clear()
+    # Match only known failure signatures; never print raw output.
+    raw = (stdout + stderr).lower()
+    markers = (
+        b"errconnect_logon_failure", b"errconnect_authentication_failed",
+        b"errconnect_tls_connect_failed", b"certificate verification failed",
+        b"errconnect_security_nego_connect_failed",
+        b"errconnect_connect_transport_failed", b"failed to open display",
+        b"failed to connect to x server", b"xvfb-run: error",
+        b"errconnect_connect_nla_failed",
+    )
+    if process.returncode != 0 or any(marker in raw for marker in markers):
+        raise PreflightError("LOCAL_NATIVE_AUTH_NOT_VERIFIED")
+
+
 def native(seconds: int) -> int:
     user = checked_target()
     if seconds < 5 or seconds > MAX_NATIVE_SECONDS:
@@ -313,16 +371,11 @@ def native(seconds: int) -> int:
     require_executable(("openssl",))
     username, password, fingerprint = private_login(user)
 
-    # First prove RDP authentication with the independently pinned 63D-30
-    # +auth-only probe. A process that merely stays alive may be a login prompt,
-    # so that cannot be counted as successful authentication.
-    auth = subprocess.run(
-        ["/usr/bin/python3", str(GNOME_RUNNER), "auth-probe"],
-        capture_output=True, text=True, timeout=35, check=False,
-        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
-    )
-    if auth.returncode or "FREERDP_LOCAL_AUTH_ONLY= PASS" not in auth.stdout:
-        raise PreflightError("LOCAL_NATIVE_AUTH_NOT_VERIFIED")
+    # A live process is not proof of authentication. Run the physically
+    # verified kiosk-user auth-only probe, not the failing root probe.
+    if validate_guard() < 65:
+        raise PreflightError("GNOME_SAFETY_WINDOW_TOO_SHORT")
+    authenticate_as_kiosk(user, xvfb, username, password, fingerprint)
     announce("NATIVE_RDP_AUTHENTICATION", "PASS")
 
     # The prior authentication must not have consumed the safety window.
@@ -351,12 +404,7 @@ def run_native_xvfb(
         "/usr/bin/python3", "-I", "-B",
         str(WORKER_PATH), "isolated-worker", str(seconds),
     ]
-    env = {
-        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
-        "HOME": user.pw_dir,
-        "XDG_RUNTIME_DIR": f"/run/user/{user.pw_uid}",
-        "LANG": "C.UTF-8",
-    }
+    env = kiosk_environment(user)
     started = time.monotonic()
     run = subprocess.Popen(
         argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
