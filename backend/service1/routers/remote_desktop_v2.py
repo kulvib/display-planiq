@@ -75,6 +75,7 @@ _SAFE_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,255}$")
 REMOTE_DESKTOP_HOME_PATH = "/home/clientflow-kiosk"
 
 BROWSER_MESSAGE_TYPES = {
+    "native_rdp_autologin_request",
     "start_stream", "stop_stream", "mouse", "key", "text", "shout",
     "request_frame", "file_list_request", "file_download_request",
     "file_multi_download_request", "file_delete_request",
@@ -108,6 +109,10 @@ class BrowserSession:
     screen_width: Optional[int] = None
     screen_height: Optional[int] = None
     geometry_fallback_attempted: bool = False
+    # 63D-49 one-shot bootstrap challenge, never a password, private key,
+    # TLS certificate or a persisted credential.
+    native_rdp_autologin_pending: Optional[str] = None
+    native_rdp_autologin_expires_at: float = 0.0
     # One most-recent waiting video frame, not an unbounded outgoing JPEG FIFO.
     # Control and file events retain FIFO semantics and the same authentication.
     pending_frame: Optional[dict[str, Any]] = None
@@ -778,6 +783,59 @@ async def _handle_control_agent_message(
                 if channel and channel.websocket is input_websocket and browser.session_id in BROWSERS:
                     channel.ready_sessions.add(session_id)
         return
+    if message_type in {"native_rdp_autologin_envelope", "native_rdp_autologin_denied"}:
+        # The agent is authenticated on this control channel and the browser
+        # must STILL have a valid superadmin login-session, role and RD lease.
+        # Neither Render nor Postgres should ever see a GNOME plaintext secret.
+        request_id = str(message.get("request_id") or "")
+        if (
+            client_id != 3 or not re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                request_id,
+            ) or browser.native_rdp_autologin_pending != request_id
+            or time.monotonic() > browser.native_rdp_autologin_expires_at
+        ):
+            return
+        current, state = _remote_desktop_browser_auth_state(browser)
+        if current is None or state != "ok":
+            browser.native_rdp_autologin_pending = None
+            return
+        browser.native_rdp_autologin_pending = None
+        browser.native_rdp_autologin_expires_at = 0.0
+        if message_type == "native_rdp_autologin_denied":
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied", "request_id": request_id
+            })
+            return
+        envelope = message.get("envelope")
+        keys = {
+            "schema", "session_id", "request_id", "public_key", "salt",
+            "nonce", "ciphertext", "expires_unix",
+        }
+        if (
+            not isinstance(envelope, dict) or set(envelope) != keys
+            or envelope.get("schema") != 1 or envelope.get("session_id") != session_id
+            or envelope.get("request_id") != request_id
+            or type(envelope.get("expires_unix")) is not int
+            or not 0 < envelope["expires_unix"] - int(time.time()) <= 360
+            or any(
+                not isinstance(envelope.get(key), str)
+                or not 1 <= len(envelope[key]) <= size
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", envelope[key])
+                for key, size in (
+                    ("public_key", 100), ("salt", 24),
+                    ("nonce", 20), ("ciphertext", 1024),
+                )
+            )
+        ):
+            return
+        # One-time, scoped opaque envelope. NO JSON logging, database,
+        # status payload, audit.details or HTTPS response with credentials.
+        await _send_browser(session_id, client_id, {
+            "type": "native_rdp_autologin_envelope",
+            "request_id": request_id, "envelope": envelope,
+        })
+        return
     if message_type == "agent_ready":
         with Session(engine) as session:
             try:
@@ -1325,6 +1383,52 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         await _send_browser(session_id, client_id, {"type": "error", "message": "Remote Desktop-controlkanalen er ikke forbundet"})
         return
     message_type = str(message.get("type") or "")
+    if message_type == "native_rdp_autologin_request":
+        if client_id != 3:
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        browser = await _browser_for_session(session_id, client_id)
+        if browser is None:
+            return
+        current, state = _remote_desktop_browser_auth_state(browser)
+        if current is None or state != "ok" or not current.is_superadmin:
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        request_id = message.get("request_id")
+        public_key = message.get("public_key")
+        request_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+        if (not isinstance(request_id, str)
+                or not re.fullmatch(request_pattern, request_id)
+                or not isinstance(public_key, str)
+                or not 80 <= len(public_key) <= 92
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", public_key)):
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        now = time.monotonic()
+        if browser.native_rdp_autologin_pending is not None and now < browser.native_rdp_autologin_expires_at:
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        browser.native_rdp_autologin_pending = request_id
+        browser.native_rdp_autologin_expires_at = now + 20
+        try:
+            await _send_agent(control, {
+                "type": "native_rdp_autologin_request",
+                "session_id": session_id, "request_id": request_id,
+                "public_key": public_key,
+            })
+        except Exception:
+            browser.native_rdp_autologin_pending = None
+            browser.native_rdp_autologin_expires_at = 0.0
+            raise
+        return
     if message_type in {"start_stream", "stop_stream", "request_frame"}:
         payload = dict(message)
         payload["session_id"] = session_id
