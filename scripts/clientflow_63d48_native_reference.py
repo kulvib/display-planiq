@@ -227,6 +227,8 @@ def preflight() -> int:
     for label, names in (
         ("FREERDP_REFERENCE", ("xfreerdp3", "xfreerdp")),
         ("X11_ISOLATION", ("xvfb-run",)),
+        ("X11_SERVER", ("Xvfb",)),
+        ("XAUTH_PROGRAM", ("xauth",)),
         ("RDP_TLS_PIN_TOOL", ("openssl",)),
         ("X11_SCREEN_SAMPLER", ("xwd",)),
     ):
@@ -249,6 +251,8 @@ def native(seconds: int) -> int:
         raise PreflightError("NOT_ENOUGH_GUARDED_TIME")
     xvfb = require_executable(("xvfb-run",))
     require_executable(("xfreerdp3", "xfreerdp"))
+    require_executable(("Xvfb",))
+    require_executable(("xauth",))
     require_executable(("openssl",))
     username, password, fingerprint = private_login(user)
 
