@@ -101,8 +101,8 @@ test("63D-49 has no storage, plaintext WSS, cookies or certificate-ignore fallba
   assert.match(src, /AES-GCM/);
   assert.match(src, /HKDF/);
   assert.match(ui, /VITE_NATIVE_RDP_AUTOLOGIN/);
-  assert.match(ui, /Forbind sikkert med automatisk RDP-login/);
-  assert.match(ui, /!working && !automatic/);
+  assert.match(ui, /onClick=\{startAutomatic\}/);
+  assert.doesNotMatch(ui, /TextField|onFallback|Bekræft fysisk billede/);
 });
 
 
@@ -113,7 +113,7 @@ test("63D-52 invalidates asynchronous launch on disconnect, error and session re
   assert.match(ui, /const disconnect = \(\) => \{\s*operationRef\.current \+= 1/);
   assert.match(ui, /await createBrowserWsTicket[^\n]+\n\s*if \(operationRef\.current !== operation\) return/);
   assert.match(ui, /await createNativeRdpAutologin[^\n]+\n\s*if \(operationRef\.current !== operation\) return/);
-  assert.match(parent, /key=\{\x60\$\{clientId\}:\$\{sessionId \|\| "pending"\}\x60\}/);
+  assert.match(parent, /key=\{\x60\$\{clientId\}:\$\{sessionId \|\| "pending"\}:\$\{agentConnected/);
 });
 
 

@@ -91,10 +91,8 @@ test("iframe passively measures browser mouse event delay and reports only bound
   assert.equal(JSON.stringify(perf).includes("example.test"), false);
 });
 
-test("display accepts only bounded numeric performance and does not call them RTT", () => {
-  assert.match(ui, /planiq-native-rdp-performance/);
-  assert.match(ui, /Number\.isSafeInteger\(data\[key\]\)/);
-  assert.match(ui, /Målingerne er ikke RDP-returforsinkelse/);
+test("internal performance measurements never appear in the normal viewer", () => {
+  assert.doesNotMatch(ui, /planiq-native-rdp-performance|Diagnostik|timerforsinkelse/);
   assert.match(source, /passive: true/);
   assert.doesNotMatch(source, /stopImmediatePropagation/);
   assert.doesNotMatch(source, /preventDefault\(/);

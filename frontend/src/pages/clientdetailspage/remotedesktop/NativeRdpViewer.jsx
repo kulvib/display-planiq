@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Box, Button, Paper, Stack, Typography } from "@mui/material";
 import { createBrowserWsTicket, getRemoteDesktopBrowserWsUrl } from "../../../api";
 import { normalizeNativeRdpFingerprint } from "./nativeRdpFingerprint";
 import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
@@ -9,25 +9,18 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
  * Removing the iframe destroys its WASM heap, sockets and threads.
  * RDP credentials never go through a PlanIQ HTTP endpoint or storage.
  */
-export default function NativeRdpViewer({ clientId, sessionId, onFallback, requestAutologin, autologinMessage }) {
+export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage }) {
   const iframeRef = useRef(null);
   const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
   const operationRef = useRef(0);
   const managedRequestRef = useRef(null);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
-  // Explicit pilot flag: legacy login remains rollback until the root broker,
-  // client agent and Render are validated together on physical Viborg1.
   const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [fingerprint, setFingerprint] = useState("");
-  const normalizedFingerprint = normalizeNativeRdpFingerprint(fingerprint);
   const [boot, setBoot] = useState(null);
   const [attempt, setAttempt] = useState(0);
-  const [status, setStatus] = useState("GNOME RDP-pilot er klar til forbindelse.");
+  const [status, setStatus] = useState("Klar til forbindelse");
   const [working, setWorking] = useState(false);
-  const [performance, setPerformance] = useState(null);
   const [resolution, setResolution] = useState(null);
   const [displayMode, setDisplayMode] = useState("fit");
   const [zoom, setZoom] = useState(100);
@@ -68,24 +61,6 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       if (event.data?.type === "planiq-native-rdp-status") {
         setStatus(String(event.data.message || "Forbundet").slice(0, 180));
       }
-      if (event.data?.type === "planiq-native-rdp-performance") {
-        const data = event.data;
-        const keys = [
-          "pointerEvents", "maxBrowserEventLagMs",
-          "peakOutboundQueueBytes", "maxBrowserTimerSlipMs"
-        ];
-        if (keys.every((key) =>
-          Number.isSafeInteger(data[key]) && data[key] >= 0 &&
-          data[key] <= 10_000_000
-        )) {
-          setPerformance({
-            pointerEvents: data.pointerEvents,
-            eventLag: data.maxBrowserEventLagMs,
-            queueKiB: Math.ceil(data.peakOutboundQueueBytes / 1024),
-            timerSlip: data.maxBrowserTimerSlipMs,
-          });
-        }
-      }
       if (event.data?.type === "planiq-native-rdp-resolution") {
         const { sourceWidth, sourceHeight, displayWidth, displayHeight, mode } = event.data;
         const pixels = [sourceWidth, sourceHeight, displayWidth, displayHeight];
@@ -100,7 +75,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
         autoLoginRef.current = null;
         setAutoPendingRequestId(null);
         setBoot(null);
-        setStatus(String(event.data.message || "RDP-fejl").slice(0, 180));
+        setStatus("Forbindelsen blev afbrudt. Prøv igen.");
         setWorking(false);
       }
     };
@@ -139,33 +114,21 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
         username: credentials.username, password: credentials.password, fingerprint: verifiedFingerprint,
       });
       setAttempt((value) => value + 1);
-      setPassword("");
-      setStatus("Indlæser FreeRDP med midlertidigt automatisk login …");
-    } catch (error) {
+      setStatus("Forbinder …");
+    } catch {
       if (operationRef.current !== operation) return;
       cancelManaged();
       setBoot(null);
-      setStatus(error?.message || "FreeRDP kunne ikke startes.");
+      setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
       setWorking(false);
     }
   }, [clientId, sessionId, verifyWasm, cancelManaged]);
 
-  const start = useCallback(() => {
-    if (!sessionId || !username.trim() || !password || !normalizedFingerprint || working) return;
-    setWorking(true);
-    setPerformance(null);
-    setResolution(null);
-    setStatus("Kontrollerer WASM-browsermiljø …");
-    const operation = ++operationRef.current;
-    void launchWithCredentials({ username: username.trim(), password, fingerprint: normalizedFingerprint }, operation);
-  }, [sessionId, username, password, normalizedFingerprint, working, launchWithCredentials]);
-
   const startAutomatic = useCallback(async () => {
     if (!automatic || !sessionId || working || !requestAutologin) return;
     setWorking(true);
-    setPerformance(null);
     setResolution(null);
-    setStatus("Godkender engangsadgang for superadministrator …");
+    setStatus("Forbinder …");
     const operation = ++operationRef.current;
     try {
       await verifyWasm();
@@ -178,14 +141,14 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       if (!requestAutologin({ ...handle.request, managed: true })) {
         throw new Error("Superadministratorens Remote Desktop-session er ikke forbundet.");
       }
-      setStatus("Klargør sikker Remote Desktop-forbindelse …");
-    } catch (error) {
+      setStatus("Forbinder …");
+    } catch {
       if (operationRef.current !== operation) return;
       cancelManaged();
       autoLoginRef.current = null;
       setAutoPendingRequestId(null);
       setWorking(false);
-      setStatus(error?.message || "Automatisk RDP-login kunne ikke startes.");
+      setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
     }
   }, [automatic, sessionId, working, requestAutologin, verifyWasm, cancelManaged]);
 
@@ -198,7 +161,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     if (autologinMessage.type === "native_rdp_autologin_denied") {
       cancelManaged();
       setWorking(false);
-      setStatus("Viborg1's beskyttede RDP-autologin er ikke tilgængeligt.");
+      setStatus("Forbindelse ikke tilgængelig. Prøv igen.");
       return;
     }
     if (autologinMessage.type !== "native_rdp_autologin_envelope") return;
@@ -209,7 +172,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
       if (operationRef.current !== operation) return;
       cancelManaged();
       setWorking(false);
-      setStatus("Krypteret RDP-login kunne ikke verificeres.");
+      setStatus("Forbindelsen kunne ikke godkendes.");
     });
   }, [automatic, working, autologinMessage, launchWithCredentials, cancelManaged]);
 
@@ -223,7 +186,7 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
         autoLoginRef.current = null;
         setAutoPendingRequestId(null);
         setWorking(false);
-        setStatus("RDP-autologin udløb; prøv igen med en ny session.");
+        setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
       }
     }, 190000);
     return () => window.clearTimeout(id);
@@ -278,7 +241,6 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     setAutoPendingRequestId(null);
     setStatus("Forbindelsen er afsluttet.");
     setResolution(null);
-    setPerformance(null);
   };
 
   useEffect(() => {
@@ -291,37 +253,16 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
     <Paper ref={panelRef} sx={{ p: 1, bgcolor: "#080c16", color: "white",
       "&:fullscreen": { p: 1, width: "100%", height: "100%", boxSizing: "border-box" } }}>
       <Stack spacing={1} sx={fullscreen ? { height: "100%", minHeight: 0 } : undefined}>
-        {!working && <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Remote Desktop</Typography>}
-        {!working && automatic && (
-          <Button variant="contained" disabled={!sessionId} onClick={startAutomatic}>
-            Forbind sikkert med automatisk RDP-login
-          </Button>
-        )}
-        {!working && !automatic && (
-          <Stack spacing={1}>
-            <TextField
-              size="small" label="Verificeret SHA-256-fingeraftryk for GNOME RDP-certifikatet"
-              value={fingerprint} onChange={(event) => setFingerprint(event.target.value)}
-              autoComplete="off" placeholder="AA:BB:CC:… (64 hextegn)"
-              error={fingerprint.trim().length > 0 && !normalizedFingerprint}
-              helperText="Hentes fra Viborg1 via en betroet administrationsterminal. Indtast ikke et fingeraftryk fra en ukendt RDP-forbindelse."
-              slotProps={{ htmlInput: { maxLength: 120, spellCheck: "false" } }}
-              sx={{ bgcolor: "white", borderRadius: 1 }}
-            />
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
-            <TextField size="small" label="GNOME RDP-brugernavn"
-              value={username} onChange={(event) => setUsername(event.target.value)}
-              autoComplete="off" slotProps={{ htmlInput: { maxLength: 128 } }}
-              sx={{ bgcolor: "white", borderRadius: 1, flex: 1 }} />
-            <TextField size="small" type="password" label="GNOME RDP-adgangskode"
-              value={password} onChange={(event) => setPassword(event.target.value)}
-              autoComplete="off" sx={{ bgcolor: "white", borderRadius: 1, flex: 1 }} />
-            <Button variant="contained" disabled={!username.trim() || !password || !sessionId || !normalizedFingerprint}
-              onClick={start}>Forbind GNOME RDP</Button>
-            </Stack>
+        {!working && (
+          <Stack alignItems="center" spacing={1} sx={{ py: 4 }}>
+            <Button variant="contained" disabled={!automatic || !sessionId} onClick={startAutomatic}>
+              Forbind
+            </Button>
+            <Typography variant="body2" aria-live="polite">
+              {automatic ? status : "Remote Desktop er ikke aktiveret for denne klient."}
+            </Typography>
           </Stack>
         )}
-        {!working && <Typography variant="body2" aria-live="polite">{status}</Typography>}
         {working && (
           <Stack direction="row" spacing={0} useFlexGap flexWrap="wrap" gap={0.75} alignItems="center">
             <Button size="small" variant={displayMode === "fit" ? "contained" : "outlined"}
@@ -350,35 +291,9 @@ export default function NativeRdpViewer({ clientId, sessionId, onFallback, reque
           </Stack>
         )}
         {working && fullscreenError && <Typography role="alert" variant="caption">{fullscreenError}</Typography>}
-        <Box component="details" sx={{ color: "#cbd5e1", fontSize: "0.8rem" }}>
-          <Box component="summary" sx={{ cursor: "pointer" }}>Diagnostik</Box>
-          {working && <Typography variant="body2">{status}</Typography>}
-        {working && resolution && (
-          <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
-            FreeRDP-canvas: {resolution.sourceWidth} × {resolution.sourceHeight} px ·
-            vist: {resolution.displayWidth} × {resolution.displayHeight} CSS-px
-            ({resolution.mode === "native" ? "1:1" : resolution.mode === "zoom" ? "zoom" : "tilpasset uden opskalering"}).
-            Dette er browserens billedflade, ikke en verificeret måling af Viborg1’s fysiske skærmopløsning.
-          </Typography>
+        {working && !resolution && (
+          <Typography variant="body2" aria-live="polite">Forbinder …</Typography>
         )}
-        {working && performance?.pointerEvents > 0 && (
-          <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
-            Browserens musehændelser: {performance.pointerEvents} ·
-            maksimal lokal eventforsinkelse {performance.eventLag} ms ·
-            maksimal WSS-afsendelseskø {performance.queueKiB} KiB ·
-            største lokal timerforsinkelse {performance.timerSlip} ms.
-            Målingerne er ikke RDP-returforsinkelse.
-          </Typography>
-        )}
-        {working && <Button variant="outlined" color="inherit" onClick={() => {
-          iframeRef.current?.contentWindow?.postMessage(
-            { type: "planiq-native-rdp-visible-confirmed" }, window.location.origin
-          );
-        }}>Bekræft fysisk billede</Button>}
-          <Button size="small" variant="text" color="inherit" onClick={onFallback}>
-            Brug HTTPS/JPEG-visning
-          </Button>
-        </Box>
         {working && (
           <Box sx={{ width: "100%", height: fullscreen ? undefined : "70vh",
             flex: fullscreen ? "1 1 0" : undefined, minHeight: fullscreen ? 0 : 320,

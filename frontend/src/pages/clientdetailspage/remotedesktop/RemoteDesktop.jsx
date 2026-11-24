@@ -198,8 +198,8 @@ export default function RemoteDesktop() {
   const [agentConnected, setAgentConnected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const nativeRdpPilotEnabled = import.meta.env.VITE_NATIVE_RDP_PILOT === "true" && Number(clientId) === 3;
-  const nativeRequested = nativeRdpPilotEnabled && new URLSearchParams(window.location.search).get("native_rdp") === "1";
-  const [nativeRdpMode, setNativeRdpMode] = useState(nativeRequested);
+  const nativeRequested = nativeRdpPilotEnabled;
+  const nativeRdpMode = nativeRequested;
   // 63D-49: opaque, one-use ECDH ciphertext only. No RDP credentials here.
   const [nativeRdpAutologinMessage, setNativeRdpAutologinMessage] = useState(null);
   const nativeRdpModeRef = useRef(nativeRequested);
@@ -418,9 +418,10 @@ export default function RemoteDesktop() {
     setStatus("Forbinder...");
     setConnected(false);
     setAgentConnected(false);
+    setSessionId(null);
+    setNativeRdpAutologinMessage(null);
     setKeyboardEnabled(false);
     nativeRdpModeRef.current = nativeRequested;
-    setNativeRdpMode(nativeRequested);
     setHasRemoteFrame(false);
     lastFrameStateChangeRef.current = 0;
     lastFrameGeometryRef.current = null;
@@ -467,7 +468,9 @@ export default function RemoteDesktop() {
 
     let ws;
     try {
-      ws = createWebSocketWithHttpsFallback({
+      ws = nativeRequested ? new WebSocket(
+        getRemoteDesktopBrowserWsUrl(clientId), getBrowserWsProtocols(ticket)
+      ) : createWebSocketWithHttpsFallback({
         openWebSocket: () => new WebSocket(
           getRemoteDesktopBrowserWsUrl(clientId),
           getBrowserWsProtocols(ticket)
@@ -487,11 +490,13 @@ export default function RemoteDesktop() {
     } catch (err) {
       setError(err?.message || "Kunne ikke åbne WebSocket-forbindelsen.");
       setStatus("WebSocket-fejl");
+      if (nativeRequested) scheduleReconnect("Forbindelsen kunne ikke oprettes");
       return;
     }
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (attemptId !== connectAttemptRef.current) return;
       reconnectAttemptRef.current = 0;
       setError("");
       setConnected(true);
@@ -508,10 +513,15 @@ export default function RemoteDesktop() {
       setTransportMode(null);
       setAgentConnected(false);
       setKeyboardEnabled(false);
+      if (nativeRequested && [4401, 4403, 1008].includes(event.code)) {
+        setStatus("Forbindelsen er ikke længere godkendt.");
+        return;
+      }
       scheduleReconnect(`Forbindelse lukket${event.reason ? `: ${event.reason}` : ""}`);
     };
 
     ws.onerror = () => {
+      if (attemptId !== connectAttemptRef.current) return;
       setError("WebSocket-fejl");
       setStatus("WebSocket-fejl");
     };
@@ -1410,17 +1420,11 @@ export default function RemoteDesktop() {
 
   const remoteScreenPanel = nativeRdpMode ? (
     <NativeRdpViewer
-      key={`${clientId}:${sessionId || "pending"}`}
+      key={`${clientId}:${sessionId || "pending"}:${agentConnected ? "online" : "offline"}`}
       clientId={clientId}
-      sessionId={sessionId}
+      sessionId={connected && agentConnected ? sessionId : null}
       requestAutologin={send}
       autologinMessage={nativeRdpAutologinMessage}
-      onFallback={() => {
-        nativeRdpModeRef.current = false;
-        setNativeRdpMode(false);
-        window.history.replaceState({}, "", window.location.pathname);
-        startStream("active", true);
-      }}
     />
   ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>
@@ -1630,32 +1634,11 @@ export default function RemoteDesktop() {
             Remote Desktop
           </Typography>
 
-          <Chip label={connected ? "Browser forbundet" : "Browser ikke forbundet"} sx={compactDarkChipSx(connected ? "success" : "neutral")} />
-          <Chip label={agentConnected ? "Klient-agent forbundet" : "Venter på klient-agent"} sx={compactDarkChipSx(agentConnected ? "success" : "warning")} />
+          {!nativeRequested && <><Chip label={connected ? "Browser forbundet" : "Browser ikke forbundet"} sx={compactDarkChipSx(connected ? "success" : "neutral")} />
+          <Chip label={agentConnected ? "Klient-agent forbundet" : "Venter på klient-agent"} sx={compactDarkChipSx(agentConnected ? "success" : "warning")} /></>}
 
-          {nativeRdpPilotEnabled && (
-            <Button
-              disabled={!connected || !agentConnected || !sessionId}
-              variant={nativeRdpMode ? "contained" : "outlined"}
-              onClick={() => {
-                if (nativeRdpMode) {
-                  nativeRdpModeRef.current = false;
-                  setNativeRdpMode(false);
-                  window.history.replaceState({}, "", window.location.pathname);
-                  startStream("active", true);
-                } else if (!window.crossOriginIsolated) {
-                  window.location.assign(window.location.pathname + "?native_rdp=1");
-                } else {
-                  stopStream();
-                  nativeRdpModeRef.current = true;
-                  setNativeRdpMode(true);
-                  setKeyboardEnabled(false);
-                }
-              }}
-            >
-              {nativeRdpMode ? "GNOME RDP aktiv · skift til JPEG" : "GNOME RDP · ny pilot"}
-            </Button>
-          )}
+          {nativeRequested && <Chip label={canControl ? "Klar" : "Ikke forbundet"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />}
+          {!nativeRequested && <>
           <Button onClick={connect} startIcon={<RefreshIcon />} variant="outlined">Genforbind</Button>
           <Button onClick={requestFullscreen} startIcon={<FullscreenIcon />} variant="outlined">Fuld skærm</Button>
           <Button
@@ -1688,6 +1671,7 @@ export default function RemoteDesktop() {
                 : "Mac → Ubuntu: Fra"}
             </Button>
           </Tooltip>
+          </>}
         </Stack>
 
         <Paper
@@ -1709,7 +1693,7 @@ export default function RemoteDesktop() {
             </Box>
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
               <Chip label={`Organisation: ${organizationName}`} sx={compactDarkChipSx("neutral")} />
-              <Chip label={`ID: ${clientId || "Ukendt"}`} sx={compactDarkChipSx("neutral")} />
+              {!nativeRequested && <Chip label={`ID: ${clientId || "Ukendt"}`} sx={compactDarkChipSx("neutral")} />}
               <Chip label={`Lokation: ${clientLocation}`} sx={compactDarkChipSx("neutral")} />
             </Stack>
           </Stack>

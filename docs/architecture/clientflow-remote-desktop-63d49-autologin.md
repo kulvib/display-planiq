@@ -194,3 +194,23 @@ enable the existing Viborg1-only frontend pilot and autologin build flags.
 Verify actual deployed SHAs and health. Then run the hash-pinned installer
 on Viborg1 and exercise the real browser. CI only checks source contracts,
 not Ubuntu runtime unit behavior or physical cleanup. No release 1249 approval.
+
+
+## 63D-56A — physically accepted managed viewer, normal UI cleanup
+
+Operator reported PASS on all eleven 63D-55C checks, including sealed
+automatic login, image/input, zoom/fullscreen and disconnect. The enabled
+Viborg1 native route now defaults to native mode, uses a direct authenticated
+WebSocket instead of HTTPS long polling, and does not offer JPEG switching,
+manual credential fields, diagnostics or manual image confirmation. File
+management and Shout out are preserved. The explicit disabled-pilot/other
+client legacy route remains a configuration rollback, not an automatic
+fallback for Viborg1. Internal packet checks and startup/error handling stay.
+The obsolete 45-second manual visibility timer is removed: bidirectional
+traffic does not certify rendered pixels, and failure to click a diagnostic
+button must not disconnect the desktop. The physical six-minute watchdog,
+backend one-hour cap, agent lease and installer rollback remain unchanged.
+Their replacement requires a separately verified renewable lease tied to the
+live authenticated control and local ownership, including independent fail-
+closed cleanup on process/network loss and PlanIQ authorization expiry.
+No deployment or release promotion from source-only CI.

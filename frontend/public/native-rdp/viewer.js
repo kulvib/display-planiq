@@ -62,14 +62,6 @@
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent || event.origin !== window.location.origin) return;
     const data = event.data;
-    if (data?.type === "planiq-native-rdp-visible-confirmed" && started) {
-      if (probe?.confirmVisible()) {
-        update("Fysisk GNOME-billede bekræftet · RDP-data går begge veje");
-      } else {
-        update("Skærmbillede kan først bekræftes efter binære data i begge retninger.");
-      }
-      return;
-    }
     if (data?.type === "planiq-native-rdp-display-mode" && started && !failed) {
       if (data.mode === "native" || data.mode === "fit") {
         viewportFit?.setMode(data.mode);
@@ -146,18 +138,13 @@
             maxBrowserTimerSlipMs: stats.maxTimerSlipMs || 0,
           }, window.location.origin);
           if (stats.toAgentBytes && stats.fromAgentBytes) {
-            // Traffic is not proof of a rendered desktop. Keep detailed status
-            // in the parent diagnostic panel, without covering the canvas.
+            // Transport activity is not proof of rendered desktop pixels.
             bidirectionalTraffic = true;
-            update("RDP-data begge veje · til GNOME " + stats.toAgentBytes +
-              " bytes / " + stats.toAgentFrames + " rammer · fra GNOME " +
-              stats.fromAgentBytes + " bytes / " + stats.fromAgentFrames +
-              " rammer · bekræft synligt skrivebord");
+            update("Forbundet");
           } else if (stats.toAgentBytes) {
-            update("RDP-klient har sendt " + stats.toAgentBytes +
-              " bytes · afventer første svar fra GNOME");
+            update("Forbinder …");
           } else {
-            update("Binær RDP-WebSocket etableret · afventer første RDP-byte");
+            update("Forbinder …");
           }
         },
       });
@@ -197,7 +184,7 @@
           window.Module.websocket.on("open", () => {
             transportOpened = true;
             if (transportTimer !== null) clearTimeout(transportTimer);
-            update("Binær RDP-WebSocket etableret · afventer første RDP-byte");
+            update("Forbinder …");
           });
           window.Module.websocket.on("close", () => error("RDP-tunnelen blev lukket. Vælg en ny forbindelse."));
           window.Module.websocket.on("error", () => error("RDP-transportfejl. Kontrollér GNOME og WSS-forbindelsen."));

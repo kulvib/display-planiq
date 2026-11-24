@@ -71,8 +71,6 @@
       } else if (elapsed >= 20000 && state.toAgentBytes > 0 &&
                  state.fromAgentBytes === 0) {
         fail("RDP-data blev sendt, men GNOME svarede ikke inden 20 sekunder. Kontrollér agentens TCP- og WSS-tællere.");
-      } else if (elapsed >= 45000 && !state.visibleConfirmed) {
-        fail("RDP-forbindelsen blev ikke bekræftet med synligt skrivebord inden 45 sekunder. Kontrollér GNOME-grafik eller vælg JPEG.");
       }
     };
     class RdpSocket extends BaseWebSocket {

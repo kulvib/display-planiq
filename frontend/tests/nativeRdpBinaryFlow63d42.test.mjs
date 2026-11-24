@@ -92,8 +92,8 @@ test("invalid target or nonbinary websocket data fails closed", () => {
   assert.match(h.failures[0], /ikke-binær/);
 });
 
-test("all stalled handshakes and unconfirmed black screens have bounded outcomes", () => {
-  for (const variant of ["no-send", "no-reply", "no-confirm"]) {
+test("stalled handshakes fail closed without requiring manual image confirmation", () => {
+  for (const variant of ["no-send", "no-reply"]) {
     const h = harness();
     const probe = h.install();
     const ws = new h.root.WebSocket(
@@ -102,8 +102,7 @@ test("all stalled handshakes and unconfirmed black screens have bounded outcomes
     );
     ws.emit("open");
     if (variant !== "no-send") ws.send(new Uint8Array([1, 2]));
-    if (variant === "no-confirm") ws.emit("message", new Uint8Array([3]).buffer);
-    h.clock(variant === "no-send" ? 12000 : variant === "no-reply" ? 20000 : 45000);
+    h.clock(variant === "no-send" ? 12000 : 20000);
     h.tick();
     assert.equal(h.failures.length, 1, variant);
     assert.equal(ws.closed, true, variant);
@@ -167,5 +166,24 @@ test("WSS queue and browser timer diagnostics contain only numbers", () => {
   h.clock(1800);
   h.tick();
   assert.equal(probe.snapshot().maxTimerSlipMs, 800);
+  probe.dispose();
+});
+
+
+test("bidirectional RDP remains open beyond 45 seconds without manual confirmation", () => {
+  const h = harness();
+  const probe = h.install();
+  const ws = new h.root.WebSocket(
+    "wss://api.example.test/api/remote-desktop/browser/3/native-rdp/test/ws", h.protocol);
+  ws.emit("open");
+  ws.send(new Uint8Array([1]));
+  ws.emit("message", new Uint8Array([2]).buffer);
+  for (const at of [45000, 360000, 3600000]) {
+    h.clock(at);
+    h.tick();
+    assert.equal(ws.closed, false);
+    assert.deepEqual(h.failures, []);
+  }
+  assert.equal(probe.snapshot().visibleConfirmed, false);
   probe.dispose();
 });

@@ -203,7 +203,7 @@ test("resolution reporting is same-origin, bounded and cannot request GNOME reso
   assert.match(ui, /Tilpas uden opskalering/);
   assert.match(ui, /Original pixelstørrelse \(1:1\)/);
   assert.match(ui, /Number\.isSafeInteger\(n\)/);
-  assert.match(ui, /ikke en verificeret måling af Viborg1/);
+  assert.doesNotMatch(ui, /FreeRDP-canvas|CSS-px/);
   assert.doesNotMatch(viewer, /\/(?:dynamic-resolution|smart-sizing)(?:"|:)/);
   assert.match(viewer, /\.\.\.\(isViborg1 \? \["\/size:2560x1080"\] : \[\]\)/);
   assert.equal((viewer.match(/\/size:/g) || []).length, 1);
@@ -244,11 +244,8 @@ test("explicit zoom 25–200 percent preserves the framebuffer and aspect ratio"
   fit.dispose();
 });
 
-test("compact controls keep diagnostic details collapsed and use browser fullscreen", () => {
-  const ui = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
-  assert.match(ui, /component="details"/);
-  assert.match(ui, /component="summary"[^>]*>Diagnostik/);
-  assert.doesNotMatch(ui, /component="details"[^>]*\bopen=/);
+test("compact controls exclude diagnostics and use browser fullscreen", () => {
+  assert.doesNotMatch(ui, /component="details"|Diagnostik|Bekræft fysisk billede|onFallback/);
   assert.match(ui, /requestFullscreen\(\)/);
   assert.match(ui, /exitFullscreen\(\)/);
   assert.match(ui, /fullscreenchange/);
