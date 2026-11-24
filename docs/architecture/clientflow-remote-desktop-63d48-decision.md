@@ -111,3 +111,14 @@ One-shot status is PASS only if the native reference process was still running t
 Preferred invocation after full CI passes: a SHA256-verified copy from the fixed reviewed GitHub commit, run as root on Viborg1; only the calling wrapper should download the operator source. The operator obtains GNOME and native comparison dependencies from their independently fixed source commits and validates every SHA256. Do not run the operator in a public terminal, and do not paste temporary RDP credentials into chat.
 
 This is a *source-chain reference* and a necessary discriminator between GNOME and browser transport, not a final A/B victory for any candidate. Apache Guacamole remains a non-enabled, internal-only laboratory candidate until an audited agent-to-guacd trust boundary exists.
+
+## 63D-48B – preflight correction from Viborg1 (24 November 2026)
+
+The first physical root operator reached `MONITOR_READONLY=PASS_2560x1080_60HZ_SCALE_1`, then returned `NATIVE_REFERENCE_DEPENDENCY_MISSING` before GNOME RDP stage. Release 1248 and Render were unchanged. This is **not** evidence of a GNOME, RDP or mouse failure.
+
+Source audit found two issues in the pilot code, corrected together:
+1. `xwd` is an **optional** X11 framebuffer-change sampler, but the original one-shot incorrectly treated any `=NOT_INSTALLED` result as a fatal required dependency. Now only FreeRDP, xvfb-run, Xvfb, xauth and openssl are mandatory; the operator reports exactly which of these is absent before staging GNOME. If xwd is unavailable, frame-change evidence remains UNKNOWN; this is not represented as a decoded-graphics PASS.
+2. The original root-protected `/run/clientflow-63d48-reference/` directory is inaccessible to the unprivileged `clientflow-kiosk` Xvfb worker. A new temporary, SHA256-verified root-owned **source-only** copy (0644) is staged under `/run/clientflow-63d48-native-worker.py`, executed as the kiosk user, then removed. No credentials, TLS keys, raw RDP bytes or images are placed in that readable file; all secrets remain on private stdin. A pre-existing worker file is never overwritten. A failed worker cleanup fails closed.
+3. The revised one-shot uses a distinct `/run/clientflow-63d48-reference-r2` directory to avoid reusing SHA-pinned obsolete source files left by the first STOP. The former runtime directory is not silently altered or deleted. Script retrieval remains tied to a fixed GitHub commit and SHA256; the installed kiosk release remains unchanged.
+
+The historical test STOP did not activate the six-minute RDP session. Retest only with the corrected SHA-pinned launcher once the new CI gate is green.
