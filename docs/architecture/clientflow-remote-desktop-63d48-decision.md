@@ -78,3 +78,26 @@ The present FreeRDP WebAssembly browser feature was officially introduced in **3
 13. Render deployment interruption behavior: https://render.com/docs/uptime-best-practices
 14. Browser WebSocket queuing/backpressure: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
 15. WebRTC real-time RTP and TURN economics: https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Intro_to_RTP and https://webrtc.org/getting-started/turn-server
+
+## Implementation batch 63D-48A — native reference, isolated Guacamole lab, evidence gate
+
+The first A/B investigation batch is implemented as non-production code, NOT a new streaming solution.
+
+- scripts/clientflow_63d48_native_reference.py: Viborg1-only root-verified capability check plus bounded native FreeRDP graphical reference. Requires an ALREADY ACTIVE six-minute GNOME Desktop Sharing pilot, independent root watchdog, verified kernel firewall, ephemeral protected credentials. Does NOT start RDP, alter GNOME display settings or change the ClientFlow agent. Uses private Xvfb with no TCP listener and unprivileged FreeRDP client, requests 2560x1080 in the REFERENCE CLIENT ONLY, checks one-time TLS certificate fingerprint and passes credentials via /args-from:stdin, never argv/env/logs. Optionally checks if the local X11 image changes. DOES NOT prove GNOME screen geometry or end-to-end pointer latency. Does not click, type or alter the remote kiosk.
+- scripts/clientflow_63d48_evidence_gate.py: offline strict secret-free A/B comparator for native-freerdp, browser-freerdp-wasm and browser-guacamole. Requires ALL THREE candidates, 2560x1080, verified interaction/security gates, 30+ measurements with a valid pointer-to-visible-change method and bounded CPU/memory/bandwidth. RDP bytes, WebSocket first-byte timers or browser event lag are not accepted as pointer RTT. Proposed targets: pointer p50 ≤150ms and p95 ≤250ms. It NEVER approves release 1249 automatically.
+- experiments/63d48-guacamole/compose.offline.yaml: digest-pinned, no host port, internal-only, read-only, low-privilege OFFLINE guacd capability definition. There is deliberately no Guacamole web application, user database, browser endpoint, physical GNOME connection or running service. It is NOT a completed Guacamole A/B. Before execution, validate actual image architecture, SBOM and Trivy severity and ensure no credential or private-route exposure.
+- scripts/tests/test_clientflow_63d48_decision_gate.py: negative tests for firewall/watchdog requirements, no-public-ports posture, native source size, no false positive latency, missing candidates, credentials never in evaluation files, and unknown Guacamole trust boundary.
+
+### Physical operator sequence (separate explicit safety gate)
+1. Keep active Render frontend/backend at e58a1f2a2fe52df79df5c0dc50649077d042ccc1, physical release 1248 and draft PR #413. Do NOT deploy this code into production.
+2. Run root-only pinned native operator with action preflight. It is safe without an active GNOME RDP pilot and never prints secrets.
+3. In the *already independently guarded* six-minute GNOME RDP window, run native 14. The private Xvfb client tests native graphical connection WITHOUT Render, WSS or WASM. Do not claim mouse or keyboard latency has been measured.
+4. Existing WASM evidence: physical source 2560x1080@60Hz, canvas 1024x768; FreeRDP default size is 1024x768. Test an explicit 2560x1080 client request only as a separate source-pinned, reversible experiment. Do not change the physical monitor mode or assume this resolves delay.
+5. Before enabling Guacamole, explicitly design authorized ephemeral browser -> guacd transport over Render, the NEW server-side RDP TLS termination trust boundary, localhost-only GNOME route, session expiry/revocation, concurrent sessions and deployment failures. The existing per-process native RDP WSS relay cannot simply be treated as a guacd ingress without new reviewed code.
+6. Only measured physical mouse pointer-to-visible-change response, correct video mode and successful real click/drag/scroll/keyboard tests can pass the final gate.
+
+### No-regression decisions
+- No public 3389/5900/4822, no NAT forwarding, default Guacamole login or password, no user bypass.
+- No saved screen pixels or RDP credentials, no public HTML test tool, no new Neon DB, no second Render service, no paid licenses.
+- Native Xvfb graphic activity is supportive evidence about the GNOME/RDP source, NOT proof that browser latency is fixed.
+- Release 1249 remains blocked.
