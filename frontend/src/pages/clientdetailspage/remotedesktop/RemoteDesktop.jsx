@@ -393,8 +393,12 @@ export default function RemoteDesktop() {
   }, [startStream]);
 
   const connect = useCallback(async () => {
-    if (!clientId) return;
+    if (!clientId || (nativeRequested && !window.crossOriginIsolated)) return;
     const attemptId = ++connectAttemptRef.current;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     const scheduleReconnect = (reason = "") => {
       if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current) return;
@@ -812,6 +816,19 @@ export default function RemoteDesktop() {
   }, [connect]);
 
   useEffect(() => {
+    // COEP is a document response header, not a React route property.
+    // On SPA navigation from a non-isolated page, load the real RDP route
+    // once. A missing server header must never cause a reload loop.
+    if (nativeRequested && !window.crossOriginIsolated) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("native_rdp") !== "1") {
+        url.searchParams.set("native_rdp", "1");
+        window.location.replace(url.href);
+        return undefined;
+      }
+      setError("Remote Desktop kunne ikke indlæses sikkert. Genindlæs siden.");
+      return undefined;
+    }
     connectRef.current = connect;
     void connect();
     return () => {
@@ -833,7 +850,7 @@ export default function RemoteDesktop() {
         wsRef.current?.close();
       } catch {}
     };
-  }, [connect]);
+  }, [connect, nativeRequested]);
 
   useEffect(() => {
     if (!connected || !agentConnected) return undefined;
@@ -1638,6 +1655,9 @@ export default function RemoteDesktop() {
           <Chip label={agentConnected ? "Klient-agent forbundet" : "Venter på klient-agent"} sx={compactDarkChipSx(agentConnected ? "success" : "warning")} /></>}
 
           {nativeRequested && <Chip label={canControl ? "Klar" : "Ikke forbundet"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />}
+          {nativeRequested && !canControl && (
+            <Button onClick={connect} variant="outlined" disabled={!window.crossOriginIsolated}>Genforbind</Button>
+          )}
           {!nativeRequested && <>
           <Button onClick={connect} startIcon={<RefreshIcon />} variant="outlined">Genforbind</Button>
           <Button onClick={requestFullscreen} startIcon={<FullscreenIcon />} variant="outlined">Fuld skærm</Button>
