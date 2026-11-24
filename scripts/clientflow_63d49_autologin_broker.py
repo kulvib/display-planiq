@@ -163,7 +163,7 @@ def _cert_path(uid: int) -> Path:
     return Path(f"/run/user/{uid}/clientflow-rdp-pilot-63d30/tls.crt")
 
 
-def _seal(request: dict) -> dict:
+def _seal(request: dict, *, authorize=None) -> dict:
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -188,22 +188,32 @@ def _seal(request: dict) -> dict:
     except ValueError as exc:
         raise BrokerDenied("INVALID_ECDH_PUBLIC_KEY") from exc
 
-    expires = _safe_grant()
-    _verify_physical_firewall()
-    # The independent firewall check can consume part of the short lease.
-    expires = min(expires, _safe_grant())
+    if authorize is None:
+        expires = _safe_grant()
+        _verify_physical_firewall()
+        # The independent firewall check can consume part of the short lease.
+        expires = min(expires, _safe_grant())
+        fingerprint = None
+    else:
+        # 63D-53: the separate privileged lifecycle has already verified
+        # GNOME, its certificate, nftables and watchdog. Do not run those
+        # privileged commands from the credential-only sealer.
+        expires, fingerprint = authorize(session)
     lines = _root_private(CREDENTIALS, max_size=512).decode("ascii").splitlines()
     if (len(lines) != 2 or not re.fullmatch(r"cfpilot[0-9a-f]{8}", lines[0]) or
             not re.fullmatch(r"[A-Za-z0-9_-]{40,80}", lines[1])):
         raise BrokerDenied("INVALID_GNOME_RDP_CREDENTIALS")
-    uid = pwd.getpwnam("clientflow-kiosk").pw_uid
-    cert = _cert_path(uid)
-    if cert.is_symlink() or not cert.is_file() or cert.stat().st_size > 32768:
-        raise BrokerDenied("UNSAFE_GNOME_CERTIFICATE")
-    try:
-        fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text("ascii"))).hexdigest()
-    except (ValueError, OSError, UnicodeError) as exc:
-        raise BrokerDenied("BAD_GNOME_CERTIFICATE") from exc
+    if authorize is None:
+        uid = pwd.getpwnam("clientflow-kiosk").pw_uid
+        cert = _cert_path(uid)
+        if cert.is_symlink() or not cert.is_file() or cert.stat().st_size > 32768:
+            raise BrokerDenied("UNSAFE_GNOME_CERTIFICATE")
+        try:
+            fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text("ascii"))).hexdigest()
+        except (ValueError, OSError, UnicodeError) as exc:
+            raise BrokerDenied("BAD_GNOME_CERTIFICATE") from exc
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+        raise BrokerDenied("BAD_GNOME_CERTIFICATE")
 
     own_key = ec.generate_private_key(ec.SECP256R1())
     shared = own_key.exchange(ec.ECDH(), peer)
@@ -215,6 +225,10 @@ def _seal(request: dict) -> dict:
         "username": lines[0], "password": lines[1], "fingerprint": fingerprint,
         "expires_unix": expires,
     }, separators=(",", ":")).encode("ascii")
+    if authorize is not None:
+        verified_expires, verified_fingerprint = authorize(session)
+        if verified_fingerprint != fingerprint or verified_expires < expires:
+            raise BrokerDenied("PHYSICAL_AUTHORIZATION_CHANGED")
     if expires <= int(time.time()):
         raise BrokerDenied("RDP_PILOT_EXPIRED")
     ciphertext = AESGCM(key).encrypt(iv, plaintext, aad)

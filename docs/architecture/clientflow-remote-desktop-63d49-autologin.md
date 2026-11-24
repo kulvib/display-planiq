@@ -102,3 +102,35 @@ only an in-memory lookup. Keep cleanup on failed socket accept. This closes
 the transport, not the underlying GNOME credential lease. The root lifecycle,
 session-specific credential rotation, unattended start, reconnect and dynamic
 resolution remain unimplemented/unverified. No pilot activation or deployment.
+
+
+## 63D-53A — isolated root lifecycle and credential-only proof (source only)
+
+The new lifecycle module wraps the original three source-pinned 63D-29/30
+operations. Its exclusive root-owned lock prevents two local owners; it
+rejects pre-existing operator state, stages the independent watchdog before
+GNOME start, arms only the existing guarded browser grant, and publishes
+a root-only 30-second attestation bound to the session, boot and live
+lifecycle process. On exit it revokes the attestation and browser grant,
+then attempts the original GNOME-first rollback even if revocation fails.
+It never removes the firewall or watchdog directly. Failed cleanup is an
+error, not a reason to remove protection. The certificate fingerprint in
+the attestation is public certificate data, not a TLS private key.
+
+The crypto sealer accepts an injected session authorization callback; the
+new proof module validates the root-owned files, deadlines and live owner
+without executing privileged kernel or kiosk commands. The legacy pilot path
+is untouched. Tests exercise exclusive ownership, failure ordering, cross-
+session rejection, boot/owner/expiry checks and the separated sealer.
+
+**Not installed or operational:** the new modules are source-only. The
+runtime adapter must bind the lifecycle hold callback to a live, authenticated
+agent AF_UNIX connection; verify peer credentials, socket ownership and
+bounded request/response framing. Integrate the separate sealer via the proof
+callback, gate requests in the server, and use fresh per-session credentials.
+Install only through reviewed hash-pinned packaging and validate systemd
+sandbox compatibility. No new privileged service is enabled by this commit.
+Root process liveness is not an independent cryptographic device identity;
+physical proof still depends on the trusted lifecycle and existing watchdog.
+The six-minute physical limit remains unchanged. Do not deploy or approve
+release 1249 from these tests.
