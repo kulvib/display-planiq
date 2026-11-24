@@ -112,6 +112,18 @@ def _tar_add_bytes(archive: tarfile.TarFile, name: str, data: bytes, *, mode: in
     archive.addfile(info, io.BytesIO(data))
 
 
+# Exactly these reviewed root helpers enter the canonical payload.
+NATIVE_RDP_ROOT_SOURCES = (
+    "clientflow_63d29_persistent_rdp_guard.py",
+    "clientflow_63d30_local_rdp_pilot.py",
+    "clientflow_native_rdp_browser_pilot.py",
+    "clientflow_63d49_autologin_broker.py",
+    "clientflow_63d53_rdp_proof.py",
+    "clientflow_63d53_rdp_lifecycle.py",
+    "clientflow_63d53_rdp_ipc.py",
+)
+
+
 def _create_payload(
     repo: Path,
     output: Path,
@@ -145,6 +157,11 @@ def _create_payload(
             raise ValueError(f"Canonical release-source mangler: {relative_root}")
         for path in _iter_files(source_root):
             sources.append((path, target_root / path.relative_to(source_root).as_posix()))
+    for name in NATIVE_RDP_ROOT_SOURCES:
+        source = repo / "scripts" / name
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("Canonical native RDP root helper missing")
+        sources.append((source, PurePosixPath(root) / "client-runtime/libexec/native-rdp/scripts" / name))
     package_root = repo / "client/release/lib/clientflow_release"
     for path in _iter_files(package_root):
         sources.append((path, PurePosixPath(root) / "release/lib/clientflow_release" / path.relative_to(package_root).as_posix()))

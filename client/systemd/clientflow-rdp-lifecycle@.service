@@ -1,0 +1,19 @@
+# Release-owned native RDP unit.
+[Unit]
+Description=ClientFlow native RDP lifecycle
+Requires=clientflow-rdp-sealer.socket
+After=clientflow-rdp-sealer.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/python3 -I -B /opt/clientflow/active/client-runtime/libexec/native-rdp/entrypoint.py lifecycle
+RuntimeMaxSec=infinity
+TimeoutStopSec=15
+UMask=0077
+Restart=no
+# The original independent watchdog and firewall remain mandatory.
