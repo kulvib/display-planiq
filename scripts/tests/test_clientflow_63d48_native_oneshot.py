@@ -60,9 +60,15 @@ def simulated(tmp_path, monkeypatch, *, fail_native=False, fail_start=False):
         elif action == "stop":
             assert staged and m.STATE.exists()
             m.STATE.unlink()
+            # Actual pinned 63D-30 stop retires the watchdog and staged code.
+            progress["staged"] = False
+            return ("RDP_STOPPED_AND_VERIFIED=True\n"
+                    "ROOT_WATCHDOG_AND_STAGED_CODE_REMOVED=True\n")
         elif action == "unstage":
-            assert staged
+            assert staged and progress["staged"]
             assert not m.STATE.exists()
+            progress["staged"] = False
+            return "ROOT_WATCHDOG_AND_STAGED_CODE_REMOVED=True\n"
         else:
             pytest.fail("unknown GNOME action")
 
@@ -82,7 +88,7 @@ def simulated(tmp_path, monkeypatch, *, fail_native=False, fail_start=False):
 def test_one_shot_creates_and_revokes_exactly_one_guarded_rdp_window(tmp_path, monkeypatch):
     m, events = simulated(tmp_path, monkeypatch)
     assert m.main() == 0
-    assert events == ["stage", "start", "native", "stop", "unstage"]
+    assert events == ["stage", "start", "native", "stop"]
     assert not m.STATE.exists()
 
 
@@ -92,7 +98,8 @@ def test_native_or_gnome_start_failure_stops_rdp_before_unstaging(
 ):
     m, events = simulated(tmp_path, monkeypatch, fail_native=fail_native, fail_start=fail_start)
     assert m.main() == 2
-    assert events[-2:] == ["stop", "unstage"]
+    assert events[-1] == "stop"
+    assert "unstage" not in events
     assert not m.STATE.exists()
 
 
@@ -138,7 +145,7 @@ def test_optional_xwd_is_not_a_reason_to_start_or_skip_guard(tmp_path, monkeypat
     output = capsys.readouterr().out
     assert "X11_SCREEN_SAMPLER=OPTIONAL_NOT_INSTALLED" in output
     assert "NATIVE_FREERDP_XVFB_XAUTH_CAPABILITY=PASS" in output
-    assert events == ["stage", "start", "native", "stop", "unstage"]
+    assert events == ["stage", "start", "native", "stop"]
 
 
 @pytest.mark.parametrize("label", [
@@ -177,3 +184,22 @@ def test_native_preflight_requires_all_six_expected_fields(tmp_path, monkeypatch
     monkeypatch.setattr(m, "command", command)
     assert m.main() == 2
     assert events == []
+
+
+def test_native_failure_preserves_only_exact_safe_tokens(tmp_path, monkeypatch, capsys):
+    m = module()
+    monkeypatch.setattr(m, "get", lambda name: tmp_path / Path(name).name)
+    monkeypatch.setattr(m.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
+        returncode=2,
+        stdout=("63D48_STOP=LOCAL_NATIVE_AUTH_NOT_VERIFIED\n"
+                "63D48_STOP=secret-value-never-print\n"
+                "NATIVE_RDP_SESSION=secret-value-never-print\n"
+                "NATIVE_REFERENCE_SECONDS=14\n"),
+        stderr="secret-value-never-print",
+    ))
+    with pytest.raises(RuntimeError, match="NATIVE_REFERENCE_EXIT_2"):
+        m.native_reference()
+    result = capsys.readouterr().out
+    assert "63D48_STOP=LOCAL_NATIVE_AUTH_NOT_VERIFIED" in result
+    assert "NATIVE_REFERENCE_SECONDS=14" in result
+    assert "secret-value-never-print" not in result
