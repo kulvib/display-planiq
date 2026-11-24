@@ -21,6 +21,7 @@ import socket
 import ssl
 import stat
 import struct
+import subprocess
 import time
 import uuid
 
@@ -31,6 +32,8 @@ APPROVAL = Path("/run/clientflow/native-rdp-approved")
 STATE = Path("/var/lib/clientflow/rdp-pilot-63d30/state.json")
 CREDENTIALS = Path("/run/clientflow-rdp-63d30/credentials")
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
+GNOME_RUNNER = Path("/var/lib/clientflow/rdp-pilot-bundle-63d30/clientflow_63d30_local_rdp_pilot.py")
+GNOME_RUNNER_SHA256 = "78972f7c7173a4894abc22d4518b1fc4d3189c76e30dd463715af03ef069af69"
 MAGIC = "planiq-clientflow-rdp-v1"
 MAX_REQUEST = 1024
 
@@ -113,6 +116,37 @@ def _safe_grant() -> int:
         raise BrokerDenied("RDP_PILOT_NOT_VERIFIED") from exc
 
 
+def _verify_physical_firewall() -> None:
+    # Reuse independently audited root GNOME kernel guard. A stale JSON marker
+    # (or timer alone) must never release GNOME RDP credentials.
+    try:
+        meta = GNOME_RUNNER.lstat()
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022
+                or hashlib.sha256(GNOME_RUNNER.read_bytes()).hexdigest() != GNOME_RUNNER_SHA256):
+            raise BrokerDenied("UNTRUSTED_PHYSICAL_GUARD_CODE")
+        p = subprocess.run(
+            ["/usr/bin/python3", "-I", "-B", str(GNOME_RUNNER), "status"],
+            capture_output=True, text=True, timeout=10, check=False,
+            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C.UTF-8"},
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BrokerDenied("PHYSICAL_FIREWALL_NOT_VERIFIED") from exc
+    expected = (
+        "PILOT_STATE_EXISTS= True",
+        "GUARD_KERNEL_VERIFIED= True",
+        "ROOT_WATCHDOG_VERIFIED= True",
+        "GNOME_RDP_SETTING= true",
+        "RDP_LISTENERS_3389_3398= [3389]",
+        "PILOT_EXPIRED= False",
+    )
+    if p.returncode or any(line not in p.stdout for line in expected):
+        raise BrokerDenied("PHYSICAL_FIREWALL_NOT_VERIFIED")
+
+
+def _cert_path(uid: int) -> Path:
+    return Path(f"/run/user/{uid}/clientflow-rdp-pilot-63d30/tls.crt")
+
+
 def _seal(request: dict) -> dict:
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -139,12 +173,13 @@ def _seal(request: dict) -> dict:
         raise BrokerDenied("INVALID_ECDH_PUBLIC_KEY") from exc
 
     expires = _safe_grant()
+    _verify_physical_firewall()
     lines = _root_private(CREDENTIALS, max_size=512).decode("ascii").splitlines()
     if (len(lines) != 2 or not re.fullmatch(r"cfpilot[0-9a-f]{8}", lines[0]) or
             not re.fullmatch(r"[A-Za-z0-9_-]{40,80}", lines[1])):
         raise BrokerDenied("INVALID_GNOME_RDP_CREDENTIALS")
     uid = pwd.getpwnam("clientflow-kiosk").pw_uid
-    cert = Path(f"/run/user/{uid}/clientflow-rdp-pilot-63d30/tls.crt")
+    cert = _cert_path(uid)
     if cert.is_symlink() or not cert.is_file() or cert.stat().st_size > 32768:
         raise BrokerDenied("UNSAFE_GNOME_CERTIFICATE")
     try:
@@ -211,10 +246,15 @@ def serve() -> None:
                     _, uid, _ = struct.unpack("3i", creds)
                     if uid != agent.pw_uid:
                         raise BrokerDenied("UNAUTHORIZED_LOCAL_PEER")
-                    frame = conn.recv(MAX_REQUEST + 1)
+                    frame = bytearray()
+                    while not frame.endswith(b"\n") and len(frame) <= MAX_REQUEST:
+                        piece = conn.recv(min(512, MAX_REQUEST + 1 - len(frame)))
+                        if not piece:
+                            break
+                        frame.extend(piece)
                     if len(frame) > MAX_REQUEST or not frame.endswith(b"\n"):
                         raise BrokerDenied("INVALID_REQUEST_FRAME")
-                    req = json.loads(frame.decode("ascii"))
+                    req = json.loads(bytes(frame).decode("ascii"))
                     binding = str(req.get("session_id", ""))
                     if binding in seen:
                         raise BrokerDenied("SESSION_ALREADY_ISSUED")
