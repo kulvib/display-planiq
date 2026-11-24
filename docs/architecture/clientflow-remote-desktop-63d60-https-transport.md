@@ -45,3 +45,20 @@ capacity, cancellation, independent cleanup and the existing native pump.
 No change to WSS, WASM, client binaries or production authorization. Still
 required: authenticated HTTP endpoints, strict body/read limits, browser and
 agent adapters, explicit IT policy and controlled proxy + physical proofs.
+
+## 63D-61B — isolated authenticated HTTP boundary
+
+The separate experimental router is intentionally not included in the app.
+It also requires an explicit opt-in environment flag and client 3. The browser
+open requires existing platform authentication, an allowed explicit origin,
+current managed session and a fresh one-time ticket consumed by the unchanged
+native tunnel handler. Agent open uses the current domain credential and exact
+native tunnel/control generation. The same owner, session, managed request
+and control channel are rechecked for every data request; a foreign owner
+cannot manipulate another peer. Strict byte body and sequence limits, one
+upload and poll lane through ASGI response delivery, maximum 16 peers, and
+independent supervision bound the prototype. Authentication reads per request
+must be measured before enabling; no media or renewal writes are added here.
+No browser/agent adapter, CORS integration, live endpoint, or transport switch
+yet. Tests cover the boundary primitives and fail-closed response handling,
+not a real HTTP/FreeRDP handshake or physical firewall test.
