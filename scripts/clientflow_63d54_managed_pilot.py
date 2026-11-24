@@ -2,7 +2,7 @@
 """63D-54: time-bounded physical pilot installer, not a release installer.
 
 Root, Viborg1 ID 3, release 1248 only. Pin the entire candidate source set to
-the already-green 63D-53B commit. No GNOME start at installation time; no
+the immutable renewable 63D-56B source snapshot. No GNOME start at installation time; no
 database, release-store, firewall policy, kiosk display, or Render mutations.
 A runtime timer restores the original agent independently of the browser.
 The original GNOME watchdog remains responsible for firewall-first protection
@@ -24,7 +24,7 @@ import sys
 import time
 import urllib.request
 
-COMMIT = "a194579ca1dc31988e8d82de52738a9d05a9adf7"
+COMMIT = "d3312298fd2ed8263ea07ba360154ab6ad7d25cf"
 HOST = "viborg1-NUC14MNK-B2"
 RELEASE = "clientflow-1.3.47-seq-1248"
 ROOT = Path("/run/clientflow-63d54-operator")
@@ -57,14 +57,14 @@ PINS = {
     "scripts/clientflow_63d30_physical_preflight.py": "40967aa92d658d8ecf1288ad22b5cde8f247835c2d2070f6d2e785b144f40cc4",
     "scripts/clientflow_native_rdp_browser_pilot.py": "02c63fc10deb3c0329c5309bdcb19a0edf8fa694c1c0045257cd79c304849e7f",
     "scripts/clientflow_63d49_autologin_broker.py": "00dc81e3215b3605503cbd03ed8a3ebcc899b8489bb268a0668f5c98c4a7445e",
-    "scripts/clientflow_63d53_rdp_ipc.py": "03d625311440ed59fc3c15f26f3a1df0a1f477b5b2ddad56fb99c80e993cef49",
-    "scripts/clientflow_63d53_rdp_lifecycle.py": "4697aaf75c0f19a781044774692c755bfd0773bba5802870a7cb3a50a1bc526c",
+    "scripts/clientflow_63d53_rdp_ipc.py": "393c971b624ad7805f3cec5c395184200c8831e8d8d8033c309acaed6a0c7b7f",
+    "scripts/clientflow_63d53_rdp_lifecycle.py": "5ee6afc5d8bf5a3d4401f77d8f36bb8eda47e1fcaea210466af0755bc9a8e2bb",
     "scripts/clientflow_63d53_rdp_proof.py": "daec30c30191f3dd6d9b0b4b12b773023bf5287ff34379150ef1b14f0df2e4f6",
-    "client/runtime/clientflow_runtime/remote_desktop_agent.py": "3d0a8690903d3b644f12331da17e338e692d64b78f130d963eb6fbc580947511",
+    "client/runtime/clientflow_runtime/remote_desktop_agent.py": "1fbcfb5667b29c55140d082bc7ec1e65ba81f5b2f407bd5186546597dca4311a",
     "client/runtime/clientflow_runtime/native_rdp_forwarder.py": "52bfba4fc883854e47c67d75f7a19e70757a663b20b7ca1903eec43c947e4ee3",
-    "client/runtime/clientflow_runtime/native_rdp_autologin.py": "5ed42eadf03e6a5cc8deada97e920c71a1ba2c0b5b3d02c8ac62f3863206c5e1",
+    "client/runtime/clientflow_runtime/native_rdp_autologin.py": "087822cd2b0928b7d0406be0aa8b646a4b32690105e9f3094bff074cacb0726f",
     "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle.socket": "9664b1e7c2b2c3627644d200a599018e7e64ebd32ce30b723024c9d91aa289a3",
-    "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle@.service": "ae121d617834dc048323602ab31405172138433bc801d14295c4c804030e677e",
+    "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle@.service": "35f49b92ce587c2496676ce92d9fc011511fabaa3c67e11c65634bfda899cbfc",
     "experiments/63d53-managed-rdp/clientflow-rdp-sealer.socket": "061ed3d0f426445e3b824fc4ab87a389ac10a333737a7e1b08217d7f4afca825",
     "experiments/63d53-managed-rdp/clientflow-rdp-sealer@.service": "99811bcc36e34ad2c16f5a86e9fe0a317fdd3c3f5275869d434af0d7290dc824"
 }
@@ -418,7 +418,7 @@ def install():
         print("GNOME_RDP_NOT_STARTED=PASS", flush=True)
         print("CLIENTFLOW_RELEASE_UNCHANGED=1248", flush=True)
         print("AGENT_ROLLBACK_TIMER_MINUTES=20", flush=True)
-        print("PHYSICAL_SESSION_MAX_MINUTES=6", flush=True)
+        print("PHYSICAL_SESSION_RENEWABLE=TRUE", flush=True)
         print("NO_CREDENTIALS_PRINTED=True", flush=True)
     except Exception:
         try:

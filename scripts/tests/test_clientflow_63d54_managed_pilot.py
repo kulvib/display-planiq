@@ -12,8 +12,8 @@ from scripts import clientflow_63d54_managed_pilot as pilot
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_pins_match_already_green_source_tree():
-    assert pilot.COMMIT == "a194579ca1dc31988e8d82de52738a9d05a9adf7"
+def test_pins_match_immutable_renewable_source_tree():
+    assert pilot.COMMIT == "d3312298fd2ed8263ea07ba360154ab6ad7d25cf"
     assert len(pilot.PINS) == 15
     for path, expected in pilot.PINS.items():
         raw = (ROOT / path).read_bytes()
