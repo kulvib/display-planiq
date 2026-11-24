@@ -200,6 +200,8 @@ export default function RemoteDesktop() {
   const nativeRdpPilotEnabled = import.meta.env.VITE_NATIVE_RDP_PILOT === "true" && Number(clientId) === 3;
   const nativeRequested = nativeRdpPilotEnabled && new URLSearchParams(window.location.search).get("native_rdp") === "1";
   const [nativeRdpMode, setNativeRdpMode] = useState(nativeRequested);
+  // 63D-49: opaque, one-use ECDH ciphertext only. No RDP credentials here.
+  const [nativeRdpAutologinMessage, setNativeRdpAutologinMessage] = useState(null);
   const nativeRdpModeRef = useRef(nativeRequested);
   const [status, setStatus] = useState("Ikke forbundet");
   const [error, setError] = useState("");
@@ -521,6 +523,12 @@ export default function RemoteDesktop() {
         return;
       }
 
+      if (msg.type === "native_rdp_autologin_envelope" ||
+          msg.type === "native_rdp_autologin_denied") {
+        setNativeRdpAutologinMessage(msg);
+        return;
+      }
+
       if (msg.type === "pong") {
         if (pingSentAtRef.current !== null) {
           setRoundTripMs(Math.round(Math.max(0, performance.now() - pingSentAtRef.current)));
@@ -530,6 +538,7 @@ export default function RemoteDesktop() {
       }
 
       if (msg.type === "hello") {
+        setNativeRdpAutologinMessage(null);
         setSessionId(msg.session_id);
         setAgentConnected(!!msg.agent_connected);
         const geometry = getRemoteScreenGeometryFromMessage(msg, true);
@@ -1401,6 +1410,8 @@ export default function RemoteDesktop() {
     <NativeRdpViewer
       clientId={clientId}
       sessionId={sessionId}
+      requestAutologin={send}
+      autologinMessage={nativeRdpAutologinMessage}
       onFallback={() => {
         nativeRdpModeRef.current = false;
         setNativeRdpMode(false);
