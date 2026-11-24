@@ -13,7 +13,7 @@ test("idle timeout is distinct from a transport failure and stops auto reconnect
 });
 test("only trusted user input, not progress or keepalive, reports idle activity", () => {
   assert.match(child, /!event.isTrusted/);
-  assert.match(viewer, /event.isTrusted\) reportActivity/);
+  assert.match(viewer, /event.isTrusted && !idleWarningOpen/);
   assert.match(viewer, /event.source !== iframeRef.current\?\.contentWindow/);
   assert.match(viewer, /type: "native_rdp_user_activity", request_id: requestId/);
   assert.match(child, /ClientFlow-forbindelsen blev afbrudt/);

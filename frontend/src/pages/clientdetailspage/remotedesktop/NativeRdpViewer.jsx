@@ -15,7 +15,7 @@ import { createNativeRdpAutologin } from "./nativeRdpAutologin.mjs";
  * Removing the iframe destroys its WASM heap, sockets and threads.
  * RDP credentials never go through a PlanIQ HTTP endpoint or storage.
  */
-export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange, idleStopped = false }) {
+export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange, idleStopped = false, idleWarningOpen = false }) {
   const iframeRef = useRef(null);
   const panelRef = useRef(null);
   const autoLoginRef = useRef(null);
@@ -57,13 +57,13 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   }, [requestAutologin, desired, idleStopped, working]);
 
   useEffect(() => {
-    const handle = event => { if (event.isTrusted) reportActivity(); };
+    const handle = event => { if (event.isTrusted && !idleWarningOpen) reportActivity(); };
     const names = ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"];
     for (const name of names) document.addEventListener(name, handle, { capture: true, passive: true });
     return () => {
       for (const name of names) document.removeEventListener(name, handle, true);
     };
-  }, [reportActivity]);
+  }, [reportActivity, idleWarningOpen]);
 
   useEffect(() => {
     const sync = () => setFullscreen(document.fullscreenElement === panelRef.current);

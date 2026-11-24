@@ -856,6 +856,7 @@ export default function RemoteDesktop() {
     clientId,
     nativeRequested,
     framePainter,
+    markIdleStopped,
     markRemoteActivity,
     paintLatestFrame,
     pointerMoves,
@@ -1517,6 +1518,7 @@ export default function RemoteDesktop() {
       desired={nativeDesktopWanted}
       onDesiredChange={setNativeDesktopWanted}
       idleStopped={idleStopped}
+      idleWarningOpen={Boolean(idleWarning)}
     />
   ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>
