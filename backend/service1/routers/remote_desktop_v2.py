@@ -36,6 +36,7 @@ from ..models import Client, User
 from ..http_ws_relay import close_relay, create_relay, get_relay, require_relay_scope
 from ..remote_desktop_v2 import (
     authorize_remote_desktop_session,
+    native_rdp_client_admitted,
     bearer_token,
     close_remote_desktop_session,
     record_remote_desktop_event,
@@ -820,7 +821,7 @@ async def _handle_control_agent_message(
         # Neither Render nor Postgres should ever see a GNOME plaintext secret.
         request_id = str(message.get("request_id") or "")
         if (
-            input_websocket is not None or client_id != 3 or not re.fullmatch(
+            input_websocket is not None or not native_rdp_client_admitted(client_id) or not re.fullmatch(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
                 request_id,
             ) or browser.native_rdp_autologin_pending != request_id
@@ -1435,8 +1436,9 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
     message_type = str(message.get("type") or "")
     if message_type == "native_rdp_autologin_cancel":
         browser = await _browser_for_session(session_id, client_id)
-        if browser is None or client_id != 3:
+        if browser is None:
             return
+        # Cancellation remains available for an already bound managed request.
         request_id = message.get("request_id")
         if not request_id or request_id != getattr(browser, "native_rdp_managed_request_id", None):
             return
@@ -1455,7 +1457,7 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
                                         "session_id": session_id, "request_id": request_id})
         return
     if message_type == "native_rdp_autologin_request":
-        if client_id != 3:
+        if not native_rdp_client_admitted(client_id):
             await _send_browser(session_id, client_id, {
                 "type": "native_rdp_autologin_denied"
             })
