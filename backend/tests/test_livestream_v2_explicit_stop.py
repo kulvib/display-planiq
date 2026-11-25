@@ -19,7 +19,8 @@ from sqlmodel import SQLModel, Session, create_engine
 
 from service1.models import Client
 from service1.livestream_v2_models import LivestreamV2Command, LivestreamV2Generation, LivestreamV2Viewer
-from service1 import livestream_v2
+from service1 import livestream_v2, display_control
+from service1.client_domain_models import ClientCommand
 from service1.routers import livestream_v2 as livestream_v2_router
 
 
@@ -305,6 +306,64 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
             self.assertEqual(client.livestream_desired_state, "running")
             self.assertEqual(client.livestream_status, "starting")
             self.assertEqual(target.state, "starting")
+
+    def _complete_resolution(self, session, *, width=1920, height=1080, command_type="apply_resolution", ok=True):
+        import uuid
+        now = display_control.utcnow()
+        command_id = str(uuid.uuid4())
+        session.add(ClientCommand(
+            id=command_id, client_id=self.CLIENT_ID, domain="display",
+            command_type=command_type, status="succeeded",
+            idempotency_key=command_id, requested_at=now, available_at=now,
+            expires_at=now + timedelta(seconds=120), completed_at=now,
+            result={"ok": ok, "output": "HDMI-1", "width": width, "height": height},
+        ))
+        session.flush()
+        display_control.apply_display_command_completion(
+            session, client_id=self.CLIENT_ID, command_id=command_id,
+        )
+
+    def test_confirmed_resize_restarts_once_without_browser_command(self):
+        self.seed_running_with_viewer()
+        with Session(self.engine) as session:
+            client = session.get(Client, self.CLIENT_ID)
+            client.display_resolution_current_output = "HDMI-1"
+            client.display_resolution_current_width = 2560
+            client.display_resolution_current_height = 1080
+            session.add(client)
+            session.flush()
+            self._complete_resolution(session)
+            session.flush()
+            current = livestream_v2.current_generation(session, self.CLIENT_ID)
+            self.assertNotEqual(current.id, self.GENERATION_ID)
+            self.assertEqual(current.state, "starting")
+            self.assertEqual(session.get(LivestreamV2Generation, self.GENERATION_ID).state, "superseded")
+            self._complete_resolution(session)
+            session.flush()
+            self.assertEqual(livestream_v2.current_generation(session, self.CLIENT_ID).id, current.id)
+            self.assertEqual(client.display_resolution_current_width, 1920)
+            self._complete_resolution(session, width=2560)
+            session.flush()
+            self.assertNotEqual(livestream_v2.current_generation(session, self.CLIENT_ID).id, current.id)
+
+    def test_resize_never_revives_explicit_stop(self):
+        self.seed_running_with_viewer()
+        with Session(self.engine) as session:
+            self.request_explicit_stop(session)
+            self._complete_resolution(session)
+            self.assertTrue(livestream_v2.explicit_stop_latched(session, self.CLIENT_ID))
+            self.assertEqual(livestream_v2.current_generation(session, self.CLIENT_ID).state, "stopping")
+            livestream_v2.generation_stopped(session, client_id=self.CLIENT_ID,
+                generation_id=self.GENERATION_ID, error_code=None)
+            self._complete_resolution(session, width=2560)
+            self.assertIsNone(livestream_v2.current_generation(session, self.CLIENT_ID))
+
+    def test_initial_detect_and_failed_resize_are_not_restart_events(self):
+        self.seed_running_with_viewer()
+        with Session(self.engine) as session:
+            self._complete_resolution(session, command_type="detect_resolution")
+            self._complete_resolution(session, width=2560, ok=False)
+            self.assertEqual(livestream_v2.current_generation(session, self.CLIENT_ID).id, self.GENERATION_ID)
 
 
 if __name__ == "__main__":

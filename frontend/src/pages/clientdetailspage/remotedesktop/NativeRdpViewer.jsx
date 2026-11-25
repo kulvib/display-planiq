@@ -433,6 +433,15 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
               <IconButton size="small" color="inherit" aria-label="Zoom ind" disabled={selectedZoom >= 200}
                 onClick={() => adjustZoom(25)}><AddIcon fontSize="small" /></IconButton>
             </Stack>
+            {resolution && (
+              <Tooltip title="Klientens faktiske skærmopløsning">
+                <Typography component="span" variant="body2" color="text.secondary"
+                  sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", px: 0.5 }}
+                  aria-label={`Skærmopløsning ${resolution.sourceWidth} gange ${resolution.sourceHeight}`}>
+                  {resolution.sourceWidth} × {resolution.sourceHeight}
+                </Typography>
+              </Tooltip>
+            )}
             <Box sx={{ flex: 1 }} />
             <Tooltip title={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}>
               <IconButton size="small" color="inherit" onClick={toggleFullscreen} aria-label={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"} sx={{ border: "1px solid rgba(148,163,184,0.26)", borderRadius: 1 }}>

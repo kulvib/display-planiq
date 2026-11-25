@@ -12,7 +12,7 @@ import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateCl
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { createLivestreamBrowserTiming, createHlsReserveController, latestManifestSegment, hlsHttpTransportLabel, livestreamLatencyStatus } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
-import { createPilotTransport, pilotGenerationFromHeartbeat } from "./livestreamPilotTransport.mjs";
+import { createPilotTransport, generationFromHeartbeat, pilotGenerationFromHeartbeat } from "./livestreamPilotTransport.mjs";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
 const HEALTH_STARTUP_WARNING_MS = 15_000;
@@ -370,16 +370,8 @@ function getDisplayRuntimeSignature(client) {
   const output = String(client?.display_resolution_current_output || "").trim();
   const width = parseOptionalNumber(client?.display_resolution_current_width);
   const height = parseOptionalNumber(client?.display_resolution_current_height);
-  const refresh = parseOptionalNumber(client?.display_resolution_current_refresh_rate);
-
-  if (!output && !width && !height) return "";
-
-  return [
-    output || "unknown-output",
-    width ?? "unknown-width",
-    height ?? "unknown-height",
-    refresh !== null ? Number(refresh).toFixed(2) : "unknown-refresh",
-  ].join("|");
+  if (!width || !height || width <= 0 || height <= 0) return "";
+  return [output || "unknown-output", width, height].join("|");
 }
 
 function parseOptionalNumber(value) {
@@ -748,9 +740,8 @@ export default function ClientDetailsLivestreamSection({
   const streamStartedByThisViewRef = useRef(false);
   const staleRestartInFlightRef = useRef(false);
   const lastStaleRestartAtRef = useRef(0);
-  const displayChangeRestartInFlightRef = useRef(false);
-  const lastDisplayChangeRestartAtRef = useRef(0);
   const lastDisplayRuntimeSignatureRef = useRef("");
+  const lastObservedGenerationRef = useRef(null);
 
   useEffect(() => {
     setViewerContactEstablished(false);
@@ -890,76 +881,16 @@ export default function ClientDetailsLivestreamSection({
     }
   }, [canControlStream, clientId, clientOnline, mobileViewerActive, onCommandSent]);
 
-  const restartStreamAfterDisplayChange = useCallback(async () => {
+  const refreshPlayerAfterDisplayChange = useCallback(() => {
     if (!clientId || clientOnline === false || !mobileViewerActive) return;
-    const streamHasBeenActive =
-      serverReady ||
-      manifestReady ||
-      lastSegNum !== null ||
-      Boolean(lastSegmentTimestamp);
+    const streamHasBeenActive = serverReady || manifestReady || lastSegNum !== null || Boolean(lastSegmentTimestamp);
     if (!streamHasBeenActive) return;
-
-    const now = Date.now();
-    if (displayChangeRestartInFlightRef.current || now - lastDisplayChangeRestartAtRef.current < 5000) {
-      return;
-    }
-
-    displayChangeRestartInFlightRef.current = true;
-    lastDisplayChangeRestartAtRef.current = now;
-
-    setAutoStartError("");
-    setAutoStartStatus("Genstarter livestream efter skærmændring …");
-
-    autoStartRequestedRef.current = false;
-    autoStartInFlightRef.current = false;
+    // Backend owns the new generation; reset only the local browser media.
     resetStreamState();
-    setRefreshing(true);
-
-    try {
-      // Display-resolution er en fysisk capture-boundary. Anmod derfor om en
-      // rigtig ny Livestream-v2 generation i stedet for idempotent start, som
-      // ellers coalescer mod den eksisterende producer og kan holde gammel
-      // geometri indtil næste periodiske probe. Viewer-presence ejer fortsat
-      // den normale start/stop-lifecycle.
-      await sendLivestreamCommand(clientId, "livestream_restart", {
-        source: "display_resolution_changed",
-      });
-      streamStartedByThisViewRef.current = true;
-      if (typeof onCommandSent === "function") {
-        try {
-          onCommandSent({ action: "livestream_restart", reason: "display_resolution_changed" });
-        } catch {
-          // Kommandoen er allerede sendt.
-        }
-      }
-      setAutoStartStatus("Livestream genstartet efter skærmændring — venter på segmenter …");
-    } catch (err) {
-      setAutoStartStatus("");
-      setAutoStartError(err?.message || "Kunne ikke genstarte livestream efter skærmændring.");
-    }
-
-    setLocalRefreshKey((k) => k + 1);
-
-    if (typeof onRestartStream === "function") {
-      try { onRestartStream(); } catch {}
-    }
-
-    window.setTimeout(() => {
-      displayChangeRestartInFlightRef.current = false;
-      setRefreshing(false);
-    }, 1500);
-  }, [
-    clientId,
-    clientOnline,
-    mobileViewerActive,
-    lastSegNum,
-    lastSegmentTimestamp,
-    manifestReady,
-    onCommandSent,
-    onRestartStream,
-    resetStreamState,
-    serverReady,
-  ]);
+    setAutoStartStatus("Tilpasser livestream til ny skærmopløsning …");
+    setLocalRefreshKey((key) => key + 1);
+  }, [clientId, clientOnline, mobileViewerActive, serverReady, manifestReady,
+      lastSegNum, lastSegmentTimestamp, resetStreamState]);
 
   useEffect(() => {
     autoStartRequestedRef.current = false;
@@ -975,6 +906,7 @@ export default function ClientDetailsLivestreamSection({
       hiddenMediaGraceTimerRef.current = null;
     }
     lastDisplayRuntimeSignatureRef.current = "";
+    lastObservedGenerationRef.current = null;
     setInactivityStopped(false);
     setInactivityStopMessage("");
     setAutoStartStatus("");
@@ -1159,6 +1091,12 @@ export default function ClientDetailsLivestreamSection({
           mediaCapabilityRef.current = String(payload.media_capability);
           setMediaCapabilityClientId(clientId);
         }
+        const observedGeneration = generationFromHeartbeat(payload);
+        if (lastObservedGenerationRef.current && observedGeneration &&
+            lastObservedGenerationRef.current !== observedGeneration) {
+          setLocalRefreshKey((key) => key + 1);
+        }
+        lastObservedGenerationRef.current = observedGeneration;
         setPilotGeneration(pilotGenerationFromHeartbeat(payload));
         setViewerContactEstablished(true);
         if (Number.isFinite(Number(payload?.active_viewers))) {
@@ -2237,10 +2175,8 @@ export default function ClientDetailsLivestreamSection({
 
     lastDisplayRuntimeSignatureRef.current = displayRuntimeSignature;
 
-    // Når klienten selv rapporterer en ny faktisk skærmopløsning efter xrandr,
-    // skal en allerede aktiv stream skifte generation med det samme. Callbacken
-    // starter aldrig en ellers inaktiv stream.
-    restartStreamAfterDisplayChange();
+    // Confirmed geometry changes refresh only this browser's media.
+    refreshPlayerAfterDisplayChange();
 
     return undefined;
   }, [
@@ -2251,7 +2187,7 @@ export default function ClientDetailsLivestreamSection({
     manifestReady,
     lastSegNum,
     lastSegmentTimestamp,
-    restartStreamAfterDisplayChange,
+    refreshPlayerAfterDisplayChange,
   ]);
 
   useEffect(() => {
@@ -2276,14 +2212,6 @@ export default function ClientDetailsLivestreamSection({
       );
 
     if (displayResolutionWatching && isTerminalStatus && statusBelongsToCurrentRequest) {
-      const shouldRefreshStream =
-        displayResolutionWatchingAction === "apply" &&
-        displayResolutionStatusNorm === "applied";
-
-      if (shouldRefreshStream) {
-        restartStreamAfterDisplayChange();
-      }
-
       if (displayResolutionWatchingAction === "detect" && displayResolutionStatusNorm === "detected") {
         setSettingsForm(getInitialDisplaySettingsForm(client));
         setSettingsTouched(false);
@@ -2333,7 +2261,6 @@ export default function ClientDetailsLivestreamSection({
     displayResolutionRequestBaseline,
     client,
     onDisplayResolutionSettingsSaved,
-    restartStreamAfterDisplayChange,
   ]);
 
   // -------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pilotGenerationFromHeartbeat, pilotMediaEndpoints } from "../src/pages/clientdetailspage/livestreamPilotTransport.mjs";
+import { generationFromHeartbeat, pilotGenerationFromHeartbeat, pilotMediaEndpoints } from "../src/pages/clientdetailspage/livestreamPilotTransport.mjs";
 
 const id = "62b641a3-bdad-4454-a5fd-cfb8e6774582";
 
@@ -22,4 +22,11 @@ test("generation-bound HTTPS ticket and WSS endpoints have no URL secrets", () =
   }
   assert.throws(() => pilotMediaEndpoints("https://api.example.test", "../3", id));
   assert.throws(() => pilotMediaEndpoints("https://api.example.test", 3, "../bad"));
+});
+
+test("ordinary HLS observes valid backend generations without enabling WSS", () => {
+  assert.equal(generationFromHeartbeat({generation:{id}}),id);
+  assert.equal(pilotGenerationFromHeartbeat({generation:{id}}),null);
+  assert.equal(generationFromHeartbeat({generation:{id:"../bad"}}),null);
+  assert.equal(generationFromHeartbeat(null),null);
 });
