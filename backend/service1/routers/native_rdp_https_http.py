@@ -7,7 +7,8 @@ No alternate RDP host/port, persisted media, or credentials in URLs.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import logging
 import os
 import re
 import time
@@ -27,6 +28,7 @@ from . import native_rdp_tunnel as native
 from . import remote_desktop_v2 as control
 
 router = APIRouter(tags=["experimental-native-binary-https"])
+logger = logging.getLogger(__name__)
 MAX_PEERS = 16
 BODY_TIMEOUT = 8.0
 OPEN_TIMEOUT = 8.0
@@ -88,6 +90,35 @@ class Owner:
 
 
 @dataclass
+class TransportCounters:
+    """Per-peer accepted work, not an assertion of remote delivery.
+
+    Counts are fixed-size and content-free; no DB operations or per-packet
+    logging. Report once at peer retirement.
+    """
+    started: float = field(default_factory=time.monotonic)
+    uploads: int = 0
+    upload_bytes: int = 0
+    nonempty_polls: int = 0
+    empty_polls: int = 0
+    download_bytes: int = 0
+    delivery_errors: int = 0
+
+    def report(self, role: str) -> None:
+        # Role is drawn only from the two authenticated endpoint types.
+        if role not in {"agent", "browser"}:
+            return
+        logger.info(
+            "native_rdp_https_summary role=%s elapsed_ms=%d uploads=%d "
+            "upload_wire_bytes=%d nonempty_polls=%d empty_polls=%d "
+            "download_wire_bytes=%d response_delivery_errors_observed=%d",
+            role, max(0, int((time.monotonic() - self.started) * 1000)),
+            self.uploads, self.upload_bytes, self.nonempty_polls,
+            self.empty_polls, self.download_bytes, self.delivery_errors,
+        )
+
+
+@dataclass
 class Entry:
     peer_id: str
     owner: Owner
@@ -100,6 +131,7 @@ class Entry:
     task: asyncio.Task | None = None
     uploading: bool = False
     polling: bool = False
+    counters: TransportCounters = field(default_factory=TransportCounters)
 
 
 def _browser_owner(request: Request, client_id: int) -> Owner:
@@ -216,6 +248,7 @@ async def _run(entry: Entry) -> None:
         await asyncio.gather(supervisor, return_exceptions=True)
         if _PEERS.get(entry.peer_id) is entry:
             _PEERS.pop(entry.peer_id, None)
+        entry.counters.report(entry.owner.role)
 
 
 async def _open(request: Request, owner: Owner, session_id: str,
@@ -308,6 +341,7 @@ class PeerResponse(Response):
             async with asyncio.timeout(BODY_TIMEOUT):
                 await super().__call__(scope, receive, send)
         except BaseException:
+            self.entry.counters.delivery_errors += 1
             await self.entry.peer.close()
             raise
         finally:
@@ -325,6 +359,8 @@ async def _send(request: Request, entry: Entry, sequence: str) -> Response:
         body = await _body(request)
         await _live(entry)
         next_seq = entry.peer.push(seq, body)
+        entry.counters.uploads += 1
+        entry.counters.upload_bytes += len(body)
         return PeerResponse(entry, "uploading", status_code=204,
                             headers={"X-ClientFlow-Sequence": str(next_seq), "Cache-Control": "no-store"})
     except (BinaryPeerFault, ClientDisconnect, asyncio.TimeoutError) as exc:
@@ -348,6 +384,11 @@ async def _poll(entry: Entry, sequence: str) -> Response:
         if batch.closed:
             raise HTTPException(410, "ClientFlow-session afsluttet")
         await _live(entry)
+        if batch.body:
+            entry.counters.nonempty_polls += 1
+            entry.counters.download_bytes += len(batch.body)
+        else:
+            entry.counters.empty_polls += 1
         return PeerResponse(entry, "polling", content=batch.body,
                             media_type="application/octet-stream",
                             headers={"X-ClientFlow-Sequence": str(batch.sequence), "Cache-Control": "no-store"})
