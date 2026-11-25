@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import io
 import json
 import os
@@ -124,6 +125,60 @@ NATIVE_RDP_ROOT_SOURCES = (
 )
 
 
+NATIVE_RDP_RUNTIME_MODULES = (
+    "remote_desktop_agent.py",
+    "native_rdp_forwarder.py",
+    "native_rdp_autologin.py",
+    "native_rdp_https_peer.py",
+)
+
+
+def validate_native_rdp_wheel(repo: Path, wheel: Path) -> None:
+    """Compare the tested runtime modules without executing or extracting wheel code."""
+    if wheel.is_symlink() or not wheel.is_file():
+        raise ValueError("Native RDP runtime wheel missing or unsafe")
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            for name in NATIVE_RDP_RUNTIME_MODULES:
+                source = repo / "client/runtime/clientflow_runtime" / name
+                if source.is_symlink() or not source.is_file():
+                    raise ValueError("Native RDP runtime source missing")
+                data = source.read_bytes()
+                member = "clientflow_runtime/" + name
+                matches = [info for info in archive.infolist() if info.filename == member]
+                if len(matches) != 1 or matches[0].is_dir() or matches[0].file_size != len(data):
+                    raise ValueError("Native RDP runtime wheel member mismatch: " + name)
+                if stat.S_ISLNK(matches[0].external_attr >> 16) or archive.read(matches[0]) != data:
+                    raise ValueError("Native RDP runtime wheel bytes mismatch: " + name)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Native RDP runtime wheel invalid") from exc
+
+
+def _validate_native_rdp_root_pins(repo: Path) -> None:
+    """Reject mismatched privileged helpers before a candidate is packaged."""
+    entrypoint = repo / "client/libexec/native-rdp/entrypoint.py"
+    if entrypoint.is_symlink() or not entrypoint.is_file():
+        raise ValueError("Canonical native RDP entrypoint missing")
+    tree = ast.parse(entrypoint.read_text(encoding="utf-8"))
+    assignments = [node.value for node in tree.body
+                   if isinstance(node, ast.Assign) and any(
+                       isinstance(target, ast.Name) and target.id == "PINS"
+                       for target in node.targets)]
+    if len(assignments) != 1:
+        raise ValueError("Canonical native RDP pin declaration invalid")
+    pins = ast.literal_eval(assignments[0])
+    if type(pins) is not dict or set(pins) != set(NATIVE_RDP_ROOT_SOURCES) | {"__init__.py"}:
+        raise ValueError("Canonical native RDP pin inventory mismatch")
+    for name, expected in pins.items():
+        source = (repo / "client/libexec/native-rdp/scripts" / name
+                  if name == "__init__.py" else repo / "scripts" / name)
+        if source.is_symlink() or not source.is_file():
+            raise ValueError("Canonical native RDP root helper missing")
+        size, digest = sha256_file(source)
+        if not 0 < size <= 128 * 1024 or digest != expected:
+            raise ValueError("Canonical native RDP root helper pin mismatch: " + name)
+
+
 def _create_payload(
     repo: Path,
     output: Path,
@@ -133,6 +188,7 @@ def _create_payload(
     runtime_inputs: Path | None,
     updater_pyz: Path,
 ) -> tuple[bool, list[dict]]:
+    _validate_native_rdp_root_pins(repo)
     root = f"clientflow-{version}"
     sources: list[tuple[Path, PurePosixPath]] = []
     # The installed release contains only runtime definitions/helpers/configuration and
