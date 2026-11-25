@@ -13,6 +13,6 @@
   ],
   "video_codec": "libx264",
   "preset": "veryfast",
-  "segment_seconds": 2,
+  "segment_seconds": 1,
   "playlist_size": 8
 }

@@ -401,4 +401,16 @@ class Uploader:
 
 
 def main() -> int:
-    return Uploader().run()
+    import threading
+    from .livestream_wss_publisher import worker
+
+    # The worker sends nothing until an opt-in capture creates a fresh pair.
+    # It owns its own token cache, socket and retry loop, separate from HLS.
+    stopping = threading.Event()
+    publisher = threading.Thread(target=worker, args=(stopping,), daemon=True)
+    publisher.start()
+    try:
+        return Uploader().run()
+    finally:
+        stopping.set()
+        publisher.join(timeout=3)

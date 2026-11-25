@@ -276,7 +276,7 @@ class Producer:
         fps = int(configuration.get("fps", 10))
         bitrate_kbit = int(configuration.get("bitrate_kbit", 12000))
         preset = str(configuration.get("preset") or "veryfast")
-        segment_seconds = int(configuration.get("segment_seconds", 2))
+        segment_seconds = int(configuration.get("segment_seconds", 1))
         playlist_size = int(configuration.get("playlist_size", 8))
         if not 1 <= fps <= 30:
             raise RuntimeError("fps er ugyldig")
@@ -318,6 +318,10 @@ class Producer:
                 raise RuntimeError(f"Påkrævet fil mangler: {binary}")
 
         fps, bitrate_kbit, preset, segment_seconds, playlist_size = self._configuration()
+        # Explicit opt-in only; preserve existing segment choices. A failed
+        # dual-branch attempt falls back to the established HLS-only pipeline.
+        continuous = (self._read_json(CONFIG_PATH).get("continuous_wss") is True
+                      and segment_seconds == 1)
         username, uid, gid, home, runtime_dir = self._resolve_wayland_user()
         cache_dir = self._prepare_capture_state(username, uid)
         environment = {
@@ -358,6 +362,8 @@ class Producer:
                 "--playlist-size", str(playlist_size),
                 "--source-mode", source_mode,
             ]
+            if continuous and retries == 0 and source_mode == "normal":
+                command.append("--continuous")
             self.generation_id = generation_id
             self.process = subprocess.Popen(
                 command,
