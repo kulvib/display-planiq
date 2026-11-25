@@ -1,18 +1,10 @@
 {
   "schema_version": 1,
-  "ffmpeg_binary": "ffmpeg",
-  "input_arguments": [
-    "-f",
-    "x11grab",
-    "-video_size",
-    "1920x1080",
-    "-framerate",
-    "25",
-    "-i",
-    ":0"
-  ],
-  "video_codec": "libx264",
+  "capture_backend": "wayland_mutter",
+  "fps": 10,
+  "bitrate_kbit": 12000,
   "preset": "veryfast",
   "segment_seconds": 1,
-  "playlist_size": 8
+  "playlist_size": 8,
+  "continuous_wss": false
 }

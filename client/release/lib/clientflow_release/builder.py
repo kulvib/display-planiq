@@ -154,6 +154,41 @@ def validate_native_rdp_wheel(repo: Path, wheel: Path) -> None:
         raise ValueError("Native RDP runtime wheel invalid") from exc
 
 
+LIVESTREAM_RUNTIME_MODULES = (
+    "livestream_agent.py",
+    "livestream_broker.py",
+    "livestream_paths.py",
+    "livestream_producer.py",
+    "livestream_uploader.py",
+    "livestream_wayland_capture.py",
+    "livestream_fmp4.py",
+    "livestream_fmp4_capture.py",
+    "livestream_wss_publisher.py",
+)
+
+
+def validate_livestream_wheel(repo: Path, wheel: Path) -> None:
+    """Reject absent, duplicated, symlinked or noncanonical Livestream code."""
+    if wheel.is_symlink() or not wheel.is_file():
+        raise ValueError("Livestream runtime wheel missing or unsafe")
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            for name in LIVESTREAM_RUNTIME_MODULES:
+                source = repo / "client/runtime/clientflow_runtime" / name
+                if source.is_symlink() or not source.is_file():
+                    raise ValueError("Livestream runtime source missing: " + name)
+                data = source.read_bytes()
+                member = "clientflow_runtime/" + name
+                matches = [info for info in archive.infolist() if info.filename == member]
+                if (len(matches) != 1 or matches[0].is_dir()
+                        or matches[0].file_size != len(data)
+                        or stat.S_ISLNK(matches[0].external_attr >> 16)
+                        or archive.read(matches[0]) != data):
+                    raise ValueError("Livestream runtime wheel member mismatch: " + name)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Livestream runtime wheel invalid") from exc
+
+
 def _validate_native_rdp_root_pins(repo: Path) -> None:
     """Reject mismatched privileged helpers before a candidate is packaged."""
     entrypoint = repo / "client/libexec/native-rdp/entrypoint.py"

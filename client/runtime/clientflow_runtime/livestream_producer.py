@@ -362,7 +362,8 @@ class Producer:
                 "--playlist-size", str(playlist_size),
                 "--source-mode", source_mode,
             ]
-            if continuous and retries == 0 and source_mode == "normal":
+            continuous_attempt = continuous and retries == 0 and source_mode == "normal"
+            if continuous_attempt:
                 command.append("--continuous")
             self.generation_id = generation_id
             self.process = subprocess.Popen(
@@ -399,7 +400,7 @@ class Producer:
                 if (
                     source_mode == "normal"
                     and isinstance(exc, RuntimeError)
-                    and str(exc).startswith("Wayland capture blev ikke HLS-klar inden for")
+                    and (continuous_attempt or str(exc).startswith("Wayland capture blev ikke HLS-klar inden for"))
                 ):
                     self.logger.warning(
                         "capture_startup_bounded_fallback",
