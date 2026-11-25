@@ -34,7 +34,7 @@ import {
   createScopedControlRoomRealtimeCapability,
   waitForControlRoomRealtime,
   getAuthSessionSignal,
-  getAuthToken,
+  assertActiveAuthSession,
   getOrganizations,
   getRemoteDesktopBrowserWsUrl,
   openRemoteDesktopBrowserHttpRelay,
@@ -386,8 +386,9 @@ export default function RemoteDesktop() {
         let generation = 0;
         let failures = 0;
         let refresh = true;
-        while (!signal.aborted && getAuthToken()) {
+        while (!signal.aborted) {
           try {
+            assertActiveAuthSession(signal);
             if (!capability) {
               const issued = await createScopedControlRoomRealtimeCapability(clientId, signal);
               signal.throwIfAborted();
@@ -417,7 +418,7 @@ export default function RemoteDesktop() {
             failures = 0;
           } catch (error) {
             capability = null;
-            if (signal.aborted || error?.status === 403 || !getAuthToken()) break;
+            if (signal.aborted || error?.name === "AbortError" || error?.status === 403) break;
             await waitForRealtimeRetry(realtimeRetryDelayMs(++failures, error), signal);
           }
         }

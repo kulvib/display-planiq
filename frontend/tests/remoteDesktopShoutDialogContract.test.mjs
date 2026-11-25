@@ -44,4 +44,7 @@ test("native toolbar centers confirmed physical resolution independently of canv
   assert.match(source, /getChromeStatus\(clientId, \{ signal \}\)/);
   assert.match(source, /waitForControlRoomRealtime\(capability, generation, 25, signal\)/);
   assert.match(source, /scope\?\.cancel\(\)/);
+  assert.match(source, /assertActiveAuthSession\(signal\)/);
+  assert.match(source, /error\?\.name === "AbortError"/);
+  assert.doesNotMatch(source, /getAuthToken/);
 });
