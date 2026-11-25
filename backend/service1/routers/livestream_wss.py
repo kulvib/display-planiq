@@ -1,7 +1,7 @@
 """Pilot-only authenticated continuous Livestream router factory.
 
-Deliberately not included in main.py until capture, browser MSE, transport
-fallback and transport-layer limits are integrated and tested together.
+Registered only for an explicitly configured temporary pilot client.
+An idle publisher sends no media until an authenticated subscriber is present.
 One event-loop/worker; no media queues, per-fragment database calls, media
 persistence, or dependency on the native RDP/control transport.
 """
@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..auth import (
     get_current_user, oauth2_scheme, require_active_browser_auth_session_binding,
-    validate_browser_auth_session_binding,
+    validate_browser_auth_session_binding, _maintenance_snapshot_or_503,
 )
 from ..client_ip import get_client_ip
 from ..db import engine
@@ -47,6 +47,7 @@ MAX_BYTES_PER_SECOND = 8 * 1024 * 1024
 
 class TicketRequest(BaseModel):
     viewer_id: str = Field(min_length=1, max_length=120)
+    probe_only: bool = False
 
 
 @dataclass
@@ -80,6 +81,8 @@ def _check_viewer(binding):
         )
         if user is None:
             raise HTTPException(401, "Inactive login")
+        if not getattr(user, "is_superadmin", False) and _maintenance_snapshot_or_503(session).enabled:
+            raise HTTPException(503, "Maintenance active")
         _generation_allowed(session, binding.client_id, binding.generation_id)
         require_hls_access(user, str(binding.client_id))
         # Require a live in-process lease from the existing heartbeat. A socket
@@ -119,16 +122,22 @@ async def _cancel(task):
         await asyncio.gather(task, return_exceptions=True)
 
 
-def create_livestream_wss_router(*, allowed_origins):
+def create_livestream_wss_router(*, allowed_origins, allowed_client_id):
     """Caller must provide the normalized, trusted frontend origin allowlist."""
     origins = frozenset(allowed_origins)
     if not origins or "*" in origins:
         raise ValueError("explicit Livestream origin allowlist required")
+    if type(allowed_client_id) is not int or allowed_client_id <= 0:
+        raise ValueError("explicit Livestream pilot client required")
     router = APIRouter()
     tickets = TicketStore()
     admission = Admission()
     relay = LiveRelay(max_channels=MAX_PUBLISHERS)
     channels = {}
+    subscribers = set()  # (generation, handle); only after auth/accept
+
+    def has_demand(generation_id):
+        return any(generation == generation_id for generation, _ in subscribers)
 
     @router.post("/livestream-wss/clients/{client_id}/generations/{generation_id}/ticket")
     def ticket(
@@ -137,7 +146,8 @@ def create_livestream_wss_router(*, allowed_origins):
         user: User = Depends(get_current_user),
         token: str = Depends(oauth2_scheme),
     ):
-        if request.headers.get("origin") not in origins:
+        origin = request.headers.get("origin")
+        if client_id != allowed_client_id or origin not in origins:
             raise HTTPException(403, "Invalid Livestream origin")
         enforce_request_rate_limit(
             request, bucket="livestream-wss-ticket", max_attempts=60, window_seconds=60,
@@ -149,20 +159,24 @@ def create_livestream_wss_router(*, allowed_origins):
                 client_id, generation_id, body.viewer_id, int(user.id),
                 int(user.token_version or 0),
                 require_active_browser_auth_session_binding(session, token=token, user=user),
+                origin,
             )
         _check_viewer(binding)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        if body.probe_only:
+            channel = channels.get(client_id)
+            return {"available": channel is not None and channel.epoch.generation_id == generation_id}
         try:
             raw = tickets.issue(binding)
         except TicketCapacity:
             raise HTTPException(503, "Livestream ticket capacity") from None
-        response.headers["Cache-Control"] = "no-store"
-        response.headers["Pragma"] = "no-cache"
         return {"ticket": raw, "subprotocol": TICKET_PROTOCOL, "ttl_seconds": TICKET_TTL}
 
     @router.websocket("/livestream-agent/clients/{client_id}/generations/{generation_id}/media/ws")
     async def publish(ws: WebSocket, client_id: int, generation_id: str):
         authorization = ws.headers.get("authorization") or ""
-        if (ws.headers.get("origin") is not None or ws.url.query
+        if (client_id != allowed_client_id or ws.headers.get("origin") is not None or ws.url.query
                 or not canonical_generation(generation_id) or client_id <= 0
                 or not authorization.lower().startswith("bearer ") or len(authorization) > 4096):
             await _close(ws, 4403)
@@ -181,7 +195,8 @@ def create_livestream_wss_router(*, allowed_origins):
             await asyncio.wait_for(ws.accept(), timeout=SEND_SECONDS)
             now = time.monotonic()
             next_auth = now + RECHECK_SECONDS
-            deadline = now + MEDIA_IDLE_SECONDS
+            deadline = None
+            streaming = False
             window = now
             messages = volume = 0
             pending = asyncio.create_task(ws.receive())
@@ -191,11 +206,22 @@ def create_livestream_wss_router(*, allowed_origins):
                     await run_in_threadpool(_check_publisher, client_id, generation_id, authorization)
                     next_auth = time.monotonic() + RECHECK_SECONDS
                     now = time.monotonic()
-                if now >= deadline:
+                demand = has_demand(generation_id)
+                if streaming and not demand:
+                    # Drop all retained media in finally. A reconnect creates
+                    # a new epoch; no old init/fragment survives idle periods.
+                    code = 1000
+                    break
+                if demand and not streaming:
+                    await asyncio.wait_for(ws.send_text("media:on"), timeout=SEND_SECONDS)
+                    streaming = True
+                    deadline = time.monotonic() + MEDIA_IDLE_SECONDS
+                if deadline is not None and now >= deadline:
                     code = 1013
                     break
+                wake_at = min(next_auth, now + 0.25, deadline if deadline is not None else next_auth)
                 done, _ = await asyncio.wait(
-                    {pending}, timeout=max(0.0, min(next_auth, deadline) - now)
+                    {pending}, timeout=max(0.0, wake_at - now)
                 )
                 if not done:
                     continue
@@ -203,6 +229,9 @@ def create_livestream_wss_router(*, allowed_origins):
                 pending = None
                 if message["type"] == "websocket.disconnect":
                     code = 1000
+                    break
+                if not streaming or not has_demand(generation_id):
+                    code = 1008
                     break
                 wire = message.get("bytes")
                 if type(wire) is not bytes or len(wire) > HEADER.size + MAX_FRAGMENT:
@@ -246,7 +275,8 @@ def create_livestream_wss_router(*, allowed_origins):
     @router.websocket("/livestream-wss/clients/{client_id}/generations/{generation_id}/subscribe")
     async def subscribe(ws: WebSocket, client_id: int, generation_id: str):
         raw = offered_ticket(ws.headers.get("sec-websocket-protocol") or "")
-        if (ws.headers.get("origin") not in origins or ws.url.query
+        origin = ws.headers.get("origin")
+        if (client_id != allowed_client_id or origin not in origins or ws.url.query
                 or not canonical_generation(generation_id) or raw is None):
             await _close(ws, 4403)
             return
@@ -259,7 +289,7 @@ def create_livestream_wss_router(*, allowed_origins):
         code = 1011
         try:
             await run_in_threadpool(_handshake_limit, ws)
-            binding = tickets.consume(raw, client_id=client_id, generation_id=generation_id)
+            binding = tickets.consume(raw, client_id=client_id, generation_id=generation_id, origin=origin)
             if binding is None:
                 raise HTTPException(403, "Invalid Livestream ticket")
             await run_in_threadpool(_check_viewer, binding)
@@ -268,6 +298,7 @@ def create_livestream_wss_router(*, allowed_origins):
                 code = 1013
                 return
             await asyncio.wait_for(ws.accept(subprotocol=TICKET_PROTOCOL), timeout=SEND_SECONDS)
+            subscribers.add((generation_id, handle))
             incoming = asyncio.create_task(ws.receive())
             cursor = 0
             start = time.monotonic()
@@ -314,6 +345,7 @@ def create_livestream_wss_router(*, allowed_origins):
         except Exception:
             code = 1011
         finally:
+            subscribers.discard((generation_id, handle))
             await _cancel(wake)
             await _cancel(incoming)
             await _close(ws, code)

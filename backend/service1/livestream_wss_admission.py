@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
 import re
 import secrets
 import threading
@@ -20,6 +21,18 @@ MAX_PUBLISHERS = 4
 MAX_VIEWERS = 8
 MAX_VIEWERS_PER_CLIENT = 3
 _TICKET_RE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
+
+
+def configured_pilot_client_id(value):
+    """One explicit temporary server-side pilot; absent/invalid is closed."""
+    raw = str(value or "").strip()
+    if not raw or not raw.isascii() or not raw.isdecimal() or len(raw) > 9:
+        return None
+    number = int(raw)
+    return number if number > 0 and str(number) == raw else None
+
+
+PILOT_CLIENT_ID = configured_pilot_client_id(os.getenv("CLIENTFLOW_LIVESTREAM_WSS_PILOT_CLIENT_ID"))
 
 
 def canonical_generation(value: str) -> bool:
@@ -37,6 +50,7 @@ class ViewerBinding:
     user_id: int
     token_version: int
     auth_session_binding: str
+    origin: str
 
 
 class TicketCapacity(RuntimeError):
@@ -68,7 +82,8 @@ class TicketStore:
                 or not isinstance(binding.viewer_id, str)
                 or not 1 <= len(binding.viewer_id) <= 120
                 or binding.viewer_id.strip() != binding.viewer_id
-                or not binding.auth_session_binding):
+                or not binding.auth_session_binding
+                or not isinstance(binding.origin, str) or not 1 <= len(binding.origin) <= 256):
             raise ValueError("invalid viewer binding")
         with self._lock:
             now = self._clock()
@@ -79,7 +94,7 @@ class TicketStore:
             self._tickets[self._key(raw)] = (now + TICKET_TTL, binding)
             return raw
 
-    def consume(self, raw, *, client_id, generation_id):
+    def consume(self, raw, *, client_id, generation_id, origin):
         if not isinstance(raw, str) or not _TICKET_RE.fullmatch(raw):
             return None
         with self._lock:
@@ -89,7 +104,8 @@ class TicketStore:
         if record is None:
             return None
         _, binding = record
-        if binding.client_id != client_id or binding.generation_id != generation_id:
+        if (binding.client_id != client_id or binding.generation_id != generation_id
+                or binding.origin != origin):
             return None
         return binding
 

@@ -10,6 +10,7 @@ from sqlmodel import Session
 
 from ..auth import get_access_token_session_context, get_current_user_or_client, oauth2_scheme
 from ..db import engine
+from ..livestream_wss_admission import PILOT_CLIENT_ID
 from ..models import Client, User
 from ..realtime_wakeup import current_generation as wake_generation, wait_for_change_async as wait_for_wake_change_async
 from ..livestream_v2 import (
@@ -468,6 +469,7 @@ def browser_viewer_heartbeat(
             "media_capability_expires_at": media_capability_expires_at.isoformat(),
             "media_capability_ttl_seconds": MEDIA_CAPABILITY_TTL_SECONDS,
             "generation": _generation_json(generation),
+            "continuous_wss_pilot": isinstance(user, User) and cid == PILOT_CLIENT_ID,
             "start_enqueued": command is not None,
         }
 

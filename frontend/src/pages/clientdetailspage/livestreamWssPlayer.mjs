@@ -18,7 +18,9 @@ export function createWssPlayer(video, {
   let disposed = false, failed = false, socket = null, source = null, buffer = null;
   let objectUrl = null, decoderEpoch = 0, decoderCleanup = () => {};
   let cursor = 0, lastTimestamp = -1, queue = [], started = false, announced = false;
-  let readyAt = clock(), lastFragmentAt = readyAt, lastProgressAt = readyAt;
+  const startedAt = clock();
+  let readyAt = startedAt, lastFragmentAt = readyAt, lastProgressAt = readyAt;
+  let everPlayable = false;
   let lastTime = null, lastEdge = null, lastLatencyAt = -Infinity;
   const abort = new AbortController();
 
@@ -64,6 +66,7 @@ export function createWssPlayer(video, {
     if (lastTime === null || position > lastTime + 0.01) {
       if (lastTime !== null && !video.paused && video.readyState >= 2 && !video.seeking && !announced) {
         announced = true;
+        everPlayable = true;
         onPlayable();
       }
       lastProgressAt = clock();
@@ -173,10 +176,13 @@ export function createWssPlayer(video, {
   function tick() {
     if (disposed || documentRef.visibilityState === "hidden") return;
     const now = clock();
-    if ((!announced && now - readyAt > STARTUP_MS) ||
+    if ((!everPlayable && now - startedAt > STARTUP_MS) ||
+        (!announced && now - readyAt > STARTUP_MS) ||
         now - lastFragmentAt > STARTUP_MS ||
         (announced && now - lastProgressAt > STALE_MS)) fail("media-timeout");
   }
+  video.muted = true;
+  video.playsInline = true;
   const timer = setInterval(tick, 500);
   documentRef.addEventListener("visibilitychange", visible);
   video.addEventListener("timeupdate", progress);
