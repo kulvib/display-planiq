@@ -1,7 +1,7 @@
 // Owns exactly one active player. Factories must return a synchronous disposer
 // and cancel all asynchronous work when disposed. The owner supplies a cheap,
 // generation-bound availability probe, and handles viewer lifecycle separately.
-// This candidate is not yet mounted by either view.
+// Mounted only when the authenticated heartbeat explicitly advertises the pilot.
 export function createLivestreamTransportController({
   startWss, startHls, probeWss, onTransport = () => {}, onFailure = () => {},
   isVisible = () => document.visibilityState !== "hidden",

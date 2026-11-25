@@ -1,0 +1,43 @@
+name: Livestream real Chromium MSE proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/livestream-mse-chromium.yml"
+      - "scripts/prove_livestream_mse_chromium63d75.mjs"
+      - "frontend/src/pages/clientdetailspage/livestream*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-mse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.21.0"
+      - name: Install missing offline-fixture generator
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -version
+          ffmpeg -hide_banner -encoders > "$RUNNER_TEMP/livestream-encoders.txt"
+          grep -w libx264 "$RUNNER_TEMP/livestream-encoders.txt"
+      - name: Verify installed media tools
+        run: |
+          set -euo pipefail
+          command -v google-chrome || command -v chromium || command -v chromium-browser
+          command -v ffmpeg
+          node --check scripts/prove_livestream_mse_chromium63d75.mjs
+      - name: Decode generated fMP4 using real Chromium MediaSource
+        run: node scripts/prove_livestream_mse_chromium63d75.mjs

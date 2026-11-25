@@ -692,6 +692,16 @@ app.include_router(livestream_media.router, prefix="/api")
 app.include_router(client_auth_compat_router, prefix="/api")
 app.include_router(shared_domain_router, prefix="/api")
 app.include_router(livestream_v2_router, prefix="/api")
+
+# Default closed: only one explicitly configured test client can use these
+# media routes. No change to HLS, Remote Desktop, terminal or agent wakeups.
+from .livestream_wss_admission import PILOT_CLIENT_ID
+from .routers.livestream_wss import create_livestream_wss_router
+if PILOT_CLIENT_ID is not None:
+    app.include_router(
+        create_livestream_wss_router(allowed_origins=ALLOWED_ORIGINS, allowed_client_id=PILOT_CLIENT_ID),
+        prefix="/api",
+    )
 app.include_router(terminal_auth_router,    prefix="/api")
 app.include_router(remote_desktop_auth_router, prefix="/api")
 app.include_router(remote_desktop_v2_router, prefix="/api")

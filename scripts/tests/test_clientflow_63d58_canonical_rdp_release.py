@@ -154,3 +154,35 @@ def test_build_rejects_mismatched_root_helper_before_packaging(tmp_path):
     helper.write_bytes(helper.read_bytes() + b"\n")
     with pytest.raises(ValueError, match="root helper pin mismatch"):
         builder._validate_native_rdp_root_pins(repo)
+
+
+def test_livestream_runtime_wheel_exact_members(tmp_path):
+    wheel = tmp_path / "clientflow_runtime-test.whl"
+    modules = builder.LIVESTREAM_RUNTIME_MODULES
+
+    def write_wheel(*, missing=None, changed=None, duplicate=None, symlink=None):
+        with zipfile.ZipFile(wheel, "w") as archive:
+            for name in modules:
+                if name == missing:
+                    continue
+                data = (ROOT / "client/runtime/clientflow_runtime" / name).read_bytes()
+                member = "clientflow_runtime/" + name
+                if name == changed:
+                    data = b"x" + data[1:]
+                if name == symlink:
+                    info = zipfile.ZipInfo(member)
+                    info.create_system = 3
+                    info.external_attr = 0o120777 << 16
+                    archive.writestr(info, data)
+                else:
+                    archive.writestr(member, data)
+                if name == duplicate:
+                    with pytest.warns(UserWarning, match="Duplicate name"):
+                        archive.writestr(member, data)
+
+    write_wheel()
+    builder.validate_livestream_wheel(ROOT, wheel)
+    for scenario in ("missing", "changed", "duplicate", "symlink"):
+        write_wheel(**{scenario: "livestream_fmp4_capture.py"})
+        with pytest.raises(ValueError, match="Livestream runtime wheel"):
+            builder.validate_livestream_wheel(ROOT, wheel)

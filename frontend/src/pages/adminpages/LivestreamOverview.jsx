@@ -25,6 +25,7 @@ import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } fro
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 import { createHlsReserveController, hlsHttpTransportLabel, livestreamLatencyStatus } from "../clientdetailspage/livestreamBrowserTiming.mjs";
+import { createPilotTransport, pilotGenerationFromHeartbeat } from "../clientdetailspage/livestreamPilotTransport.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -72,6 +73,8 @@ function LivestreamTile({ client, pageMediaActive }) {
   const previewRef = useRef(null);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
+  const transportControllerRef = useRef(null);
+  const wssActiveRef = useRef(false);
   const hlsReserveRef = useRef(null);
   const heartbeatTimerRef = useRef(null);
   const healthTimerRef = useRef(null);
@@ -94,6 +97,7 @@ function LivestreamTile({ client, pageMediaActive }) {
   const shouldRun = Boolean(pageMediaActive && intersecting && clientOnline && mobileViewerActive);
 
   const updateLatency = useCallback(() => {
+    if (wssActiveRef.current) return;
     const video = videoRef.current;
     let measured = hlsRef.current?.latency;
     if ((!Number.isFinite(measured) || measured < 0) && video?.seekable?.length) {
@@ -129,6 +133,9 @@ function LivestreamTile({ client, pageMediaActive }) {
   }, []);
 
   const destroyPlayer = useCallback(() => {
+    transportControllerRef.current?.dispose();
+    transportControllerRef.current = null;
+    wssActiveRef.current = false;
     hlsReserveRef.current?.dispose();
     hlsReserveRef.current = null;
     if (hlsRef.current) {
@@ -190,6 +197,8 @@ function LivestreamTile({ client, pageMediaActive }) {
     let cancelled = false;
     let mediaReady = false;
     let startupWarned = false;
+    let generation = null;
+    let healthInFlight = false;
     const startupWarning = window.setTimeout(() => {
       if (!cancelled && !mediaReady) {
         startupWarned = true;
@@ -202,15 +211,30 @@ function LivestreamTile({ client, pageMediaActive }) {
     setState("starting");
     setMessage("Starter preview …");
 
-    const startPlayer = async () => {
-      if (cancelled || hlsRef.current) return;
+    const startPlayer = () => {
+      if (cancelled || transportControllerRef.current) return;
       const video = videoRef.current;
       if (!video) return;
+      const startHls = (callbacks = {}) => {
+      let cancelled = false;
+      let activeHls = null;
+      let reserve = null;
+      let httpTransport = null;
+      let reportedPlayable = false;
+      const reportPlayable = () => queueMicrotask(() => {
+        if (cancelled || reportedPlayable || video.paused || video.readyState < 2) return;
+        reportedPlayable = true;
+        setMediaTransport(httpTransport);
+        callbacks.onHttpTransport?.(httpTransport);
+        callbacks.onPlayable?.();
+      });
+      video.addEventListener("playing", reportPlayable);
+      const initialise = async () => {
       try {
         const { default: Hls } = await import("hls.js");
         if (cancelled) return;
         const hlsUrl = `${apiUrl}/hls/${client.id}/index.m3u8?_wall=${Date.now()}`;
-        const httpTransport = hlsHttpTransportLabel(hlsUrl, window.location.href);
+        httpTransport = hlsHttpTransportLabel(hlsUrl, window.location.href);
         if (Hls.isSupported()) {
           const hls = new Hls({
             enableWorker: true,
@@ -226,14 +250,14 @@ function LivestreamTile({ client, pageMediaActive }) {
               if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
             },
           });
+          activeHls = hls;
           hlsRef.current = hls;
-          const reserve = createHlsReserveController(video, {
+          reserve = createHlsReserveController(video, {
             onReady: () => {
               if (cancelled) return;
               mediaReady = true;
               window.clearTimeout(startupWarning);
               setState("live");
-              setMediaTransport(httpTransport);
               setMessage("");
             },
             onBuffering: (value) => {
@@ -284,9 +308,8 @@ function LivestreamTile({ client, pageMediaActive }) {
           mediaReady = true;
           window.clearTimeout(startupWarning);
           setState("live");
-          setMediaTransport(httpTransport);
           setMessage("");
-          video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+          video.play().then(() => { if (!cancelled) setNeedsTapToPlay(false); }).catch(() => { if (!cancelled) setNeedsTapToPlay(true); });
           return;
         }
 
@@ -298,10 +321,54 @@ function LivestreamTile({ client, pageMediaActive }) {
           setMessage("Kunne ikke indlæse HLS-preview.");
         }
       }
+      };
+      void initialise();
+      return { dispose() {
+        if (cancelled) return;
+        cancelled = true;
+        video.removeEventListener("playing", reportPlayable);
+        reserve?.dispose();
+        if (hlsReserveRef.current === reserve) hlsReserveRef.current = null;
+        if (activeHls) {
+          try { activeHls.destroy(); } catch {}
+          if (hlsRef.current === activeHls) hlsRef.current = null;
+        }
+        try { video.pause(); video.removeAttribute("src"); video.load(); } catch {}
+        setLatencySeconds(null);
+        setMediaTransport(null);
+      } };
+      };
+
+      transportControllerRef.current = generation && !isTouchHandset
+        ? createPilotTransport(video, {
+            apiUrl, clientId: client.id, generation, viewerId: sessionViewerId,
+            authenticatedFetch, authHeaders, getAuthSessionSignal, startHls,
+            onTransport: label => {
+              wssActiveRef.current = label === "WSS";
+              setMediaTransport(label);
+              if (label === null) {
+                mediaReady = false;
+                setLatencySeconds(null);
+                setState("starting");
+              }
+            },
+            onWssPlayable: () => {
+              mediaReady = true;
+              window.clearTimeout(startupWarning);
+              setState("live");
+              setMessage("");
+              setNeedsTapToPlay(false);
+              setLatencySeconds(null);
+            },
+            onFailure: () => { setState("error"); setMessage("Kunne ikke genetablere preview."); },
+          })
+        : startHls();
     };
 
     const checkHealthUntilReady = async () => {
-      if (cancelled || !mediaCapabilityRef.current) return;
+      healthTimerRef.current = null;
+      if (cancelled || healthInFlight || transportControllerRef.current || !mediaCapabilityRef.current) return;
+      healthInFlight = true;
       try {
         const resp = await fetch(`${apiUrl}/api/hls-cap/${client.id}/health`, {
           credentials: "omit",
@@ -315,8 +382,8 @@ function LivestreamTile({ client, pageMediaActive }) {
             return;
           }
         }
-      } catch {}
-      if (!cancelled) {
+      } catch {} finally { healthInFlight = false; }
+      if (!cancelled && !transportControllerRef.current) {
         healthTimerRef.current = window.setTimeout(checkHealthUntilReady, HEALTH_STARTUP_POLL_MS);
       }
     };
@@ -351,7 +418,14 @@ function LivestreamTile({ client, pageMediaActive }) {
         if (Number.isFinite(Number(payload?.active_viewers))) {
           setActiveViewers(Number(payload.active_viewers));
         }
-        if (!hlsRef.current && !healthTimerRef.current) {
+        const nextGeneration = pilotGenerationFromHeartbeat(payload);
+        if (generation !== nextGeneration) {
+          generation = nextGeneration;
+          destroyPlayer();
+          mediaReady = false;
+          setState("starting");
+        }
+        if (!transportControllerRef.current && !healthTimerRef.current && !healthInFlight) {
           void checkHealthUntilReady();
         }
       } catch (error) {
@@ -375,7 +449,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       window.clearTimeout(startupWarning);
       stopLocalWork(true);
     };
-  }, [client.id, clientOnline, shouldRun, mobileViewerActive, isTouchHandset, stopLocalWork, updateLatency]);
+  }, [client.id, clientOnline, shouldRun, mobileViewerActive, isTouchHandset, stopLocalWork, updateLatency, destroyPlayer]);
 
   useEffect(() => () => stopLocalWork(true), [stopLocalWork]);
 
@@ -512,7 +586,7 @@ function LivestreamTile({ client, pageMediaActive }) {
             </Typography>
           </Box>
           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" justifyContent="flex-end">
-            {mediaTransport && shouldRun && <Chip size="small" label={`HLS · ${mediaTransport}`} sx={compactDarkChipSx("neutral")} />}
+            {mediaTransport && shouldRun && <Chip size="small" label={mediaTransport === "WSS" ? "WSS" : `HLS · ${mediaTransport}`} sx={compactDarkChipSx("neutral")} />}
             <Chip
               size="small"
               label={state === "live" ? latencyStatus.text : state === "offline" ? "Offline" : state === "error" ? "Fejl" : "Klargør"}

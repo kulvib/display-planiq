@@ -42,7 +42,7 @@ def app(monkeypatch):
 
     monkeypatch.setattr(wss, "_check_publisher", publisher)
     monkeypatch.setattr(wss, "_check_viewer", viewer)
-    api.include_router(wss.create_livestream_wss_router(allowed_origins=[ORIGIN]))
+    api.include_router(wss.create_livestream_wss_router(allowed_origins=[ORIGIN], allowed_client_id=3))
     return api
 
 
@@ -118,13 +118,14 @@ def test_ticket_origin_and_viewer(app):
         assert (await issue(app, origin=None))[0] == 403
         assert (await issue(app, viewer="other"))[0] == 403
         with pytest.raises(ValueError):
-            wss.create_livestream_wss_router(allowed_origins=["*"])
+            wss.create_livestream_wss_router(allowed_origins=["*"], allowed_client_id=3)
     asyncio.run(scenario())
 
 
 def test_no_auth_or_wrong_origin(app):
     async def scenario():
         for path, headers, protocols in [
+            (PUB.replace("/clients/3/", "/clients/4/"), {"authorization": "Bearer agent-test"}, ()),
             (PUB, {}, ()), (PUB, {"authorization": "Bearer wrong"}, ()),
             (SUB, {"origin": "https://wrong.example"}, await ticket(app)),
         ]:
@@ -143,14 +144,18 @@ def test_media_and_replay(app):
         publisher = Socket(app, PUB, {"authorization": "Bearer agent-test"})
         try:
             assert (await publisher.next())["type"] == "websocket.accept"
-            await publisher.send(first)
-            await publisher.send(frag)
+            # No media request before an authenticated subscriber.
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(publisher.outgoing.get(), 0.35)
             protocols = await ticket(app)
             viewer = Socket(app, SUB, {"origin": ORIGIN}, protocols)
             try:
                 accepted = await viewer.next()
                 assert accepted["type"] == "websocket.accept"
                 assert accepted["subprotocol"] == protocols[0]
+                assert (await publisher.next())["text"] == "media:on"
+                await publisher.send(first)
+                await publisher.send(frag)
                 assert (await viewer.next())["bytes"] == first
                 assert (await viewer.next())["bytes"] == frag
                 nxt = encode_frame(FRAGMENT, 2, 2000000, b"next")
@@ -158,6 +163,7 @@ def test_media_and_replay(app):
                 assert (await viewer.next())["bytes"] == nxt
             finally:
                 await viewer.close()
+            assert (await publisher.next())["type"] == "websocket.close"
             replay = Socket(app, SUB, {"origin": ORIGIN}, protocols)
             try:
                 assert (await replay.next())["type"] == "websocket.close"

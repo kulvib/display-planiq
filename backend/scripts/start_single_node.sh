@@ -88,7 +88,12 @@ cd /opt/display/backend
 gosu "$APP_USER" python scripts/run_migrations.py
 unset MIGRATION_ALLOW_EMPTY_DATABASE
 
-gosu "$APP_USER" python -m uvicorn service1.main:app \
-  --host 0.0.0.0 --port "${PORT:-10000}" --workers 1 --log-level info &
+# Keep the existing production launch exactly as-is when no pilot is requested.
+if [ -n "${CLIENTFLOW_LIVESTREAM_WSS_PILOT_CLIENT_ID:-}" ]; then
+  gosu "$APP_USER" python -m service1.livestream_pilot_server &
+else
+  gosu "$APP_USER" python -m uvicorn service1.main:app \
+    --host 0.0.0.0 --port "${PORT:-10000}" --workers 1 --log-level info &
+fi
 APP_PID=$!
 wait "$APP_PID"

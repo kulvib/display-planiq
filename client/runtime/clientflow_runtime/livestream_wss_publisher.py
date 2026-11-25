@@ -41,13 +41,29 @@ async def publish_once(transport, generation, connect, tls, stopping):
     if pair is None:
         return
     path = f"/api/livestream-agent/clients/{transport.credential.client_id}/generations/{generation}/media/ws"
+    url = transport.websocket_url(path)
+    if not url.startswith("wss://"):
+        return  # Never send a Livestream credential or media over cleartext.
     headers = await asyncio.to_thread(transport.websocket_headers)
     if stopping.is_set() or desired_generation() != generation:
         return
-    async with connect(transport.websocket_url(path), extra_headers=headers, ssl=tls,
+    async with connect(url, extra_headers=headers, ssl=tls,
                        open_timeout=5, close_timeout=1, ping_interval=15,
                        ping_timeout=5, max_size=4096, max_queue=2,
                        compression=None, write_limit=65536) as ws:
+        # Only a demand signal from the authenticated TLS endpoint permits
+        # media upload. Keep no in-flight media during idle. A close after
+        # demand ends causes a fresh epoch on reconnect.
+        while not stopping.is_set() and desired_generation() == generation:
+            try:
+                control = await asyncio.wait_for(ws.recv(), 0.5)
+            except asyncio.TimeoutError:
+                continue
+            if control != "media:on":
+                return
+            break
+        else:
+            return
         previous = None
         while not stopping.is_set() and desired_generation() == generation:
             pair = latest(generation)

@@ -12,6 +12,7 @@ import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateCl
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { createLivestreamBrowserTiming, createHlsReserveController, latestManifestSegment, hlsHttpTransportLabel, livestreamLatencyStatus } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
+import { createPilotTransport, pilotGenerationFromHeartbeat } from "./livestreamPilotTransport.mjs";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
 const HEALTH_STARTUP_WARNING_MS = 15_000;
@@ -683,6 +684,8 @@ export default function ClientDetailsLivestreamSection({
   const videoRef = useRef(null);
   const videoContainerRef = useRef(null);
   const hlsRef   = useRef(null);
+  const transportControllerRef = useRef(null);
+  const [pilotGeneration, setPilotGeneration] = useState(null);
   const lastHlsProgressAtRef = useRef(0);
   const hlsBrowserTiming = useMemo(() => createLivestreamBrowserTiming(), []);
   const [hlsLatencyStats, setHlsLatencyStats] = useState(null);
@@ -754,6 +757,7 @@ export default function ClientDetailsLivestreamSection({
     setViewerContactActiveViewers(null);
     mediaCapabilityRef.current = "";
     setMediaCapabilityClientId(null);
+    setPilotGeneration(null);
   }, [clientId]);
 
   const theme    = useTheme();
@@ -810,6 +814,8 @@ export default function ClientDetailsLivestreamSection({
   );
 
   const resetStreamState = useCallback(() => {
+    transportControllerRef.current?.dispose();
+    transportControllerRef.current = null;
     hlsReserveRef.current?.dispose();
     hlsReserveRef.current = null;
     setBufferStats(null);
@@ -1153,6 +1159,7 @@ export default function ClientDetailsLivestreamSection({
           mediaCapabilityRef.current = String(payload.media_capability);
           setMediaCapabilityClientId(clientId);
         }
+        setPilotGeneration(pilotGenerationFromHeartbeat(payload));
         setViewerContactEstablished(true);
         if (Number.isFinite(Number(payload?.active_viewers))) {
           setViewerContactActiveViewers(Number(payload.active_viewers));
@@ -1338,6 +1345,7 @@ export default function ClientDetailsLivestreamSection({
     hlsParams.set("_ts", String(Date.now()));
     const hlsUrl = `${apiUrl}/hls/${clientId}/index.m3u8?${hlsParams.toString()}`;
 
+    const startHls = (callbacks = {}) => {
     let disposed = false;
     let activeHls = null;
     let reserve = null;
@@ -1354,6 +1362,16 @@ export default function ClientDetailsLivestreamSection({
         video.load();
       } catch {}
     };
+
+    let reportedPlayable = false;
+    const reportPlayable = () => queueMicrotask(() => {
+      if (disposed || reportedPlayable || video.paused || video.readyState < 2) return;
+      reportedPlayable = true;
+      setMediaTransport(httpTransport);
+      callbacks.onHttpTransport?.(httpTransport);
+      callbacks.onPlayable?.();
+    });
+    video.addEventListener("playing", reportPlayable);
 
     const initialisePlayback = async () => {
       try {
@@ -1412,7 +1430,6 @@ export default function ClientDetailsLivestreamSection({
             onReady: () => {
               if (disposed) return;
               setManifestReady(true);
-              setMediaTransport(httpTransport);
               setError("");
             },
             onSnapshot: (value) => { if (!disposed) setBufferStats(value); },
@@ -1526,7 +1543,6 @@ export default function ClientDetailsLivestreamSection({
             if (disposed) return;
             lastHlsProgressAtRef.current = Date.now();
             setManifestReady(true);
-            setMediaTransport(httpTransport);
             playTimeout = window.setTimeout(() => {
               video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
             }, 100);
@@ -1543,8 +1559,10 @@ export default function ClientDetailsLivestreamSection({
 
     initialisePlayback();
 
-    return () => {
+    return { dispose() {
+      if (disposed) return;
       disposed = true;
+      video.removeEventListener("playing", reportPlayable);
       if (fatalErrorTimeout) window.clearTimeout(fatalErrorTimeout);
       if (playTimeout) window.clearTimeout(playTimeout);
       if (nativeLoadedHandler) video.removeEventListener("loadedmetadata", nativeLoadedHandler);
@@ -1558,14 +1576,43 @@ export default function ClientDetailsLivestreamSection({
       setManifestReady(false);
       setBufferStats(null);
       setMediaTransport(null);
+    } };
     };
-  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, hasMediaCapability, mobileViewerActive, hlsBrowserTiming]);
+
+    const transport = pilotGeneration && !isTouchHandset
+      ? createPilotTransport(video, {
+          apiUrl, clientId, generation: pilotGeneration, viewerId: viewerIdRef.current,
+          authenticatedFetch, authHeaders: getAuthHeaders, getAuthSessionSignal, startHls,
+          onTransport: label => {
+            setMediaTransport(label);
+            if (label === null) {
+              setManifestReady(false);
+              setLastSegmentLag(null);
+              setBufferStats(null);
+            }
+          },
+          onWssPlayable: () => {
+            setManifestReady(true);
+            setBuffering(false);
+            setNeedsTapToPlay(false);
+            setError("");
+            setLastSegmentLag(null);
+          },
+          onFailure: () => setError("Kunne ikke genetablere livestream-afspilleren."),
+        })
+      : startHls();
+    transportControllerRef.current = transport;
+    return () => {
+      if (transportControllerRef.current === transport) transportControllerRef.current = null;
+      transport.dispose();
+    };
+  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, hasMediaCapability, mobileViewerActive, hlsBrowserTiming, pilotGeneration, isTouchHandset]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || !manifestReady || inactivityStopped || !mobileViewerActive) return undefined;
+    if (!clientId || !manifestReady || mediaTransport === "WSS" || inactivityStopped || !mobileViewerActive) return undefined;
 
     let stopped = false;
 
@@ -1628,6 +1675,7 @@ export default function ClientDetailsLivestreamSection({
   }, [
     clientId,
     manifestReady,
+    mediaTransport,
     effectiveRefreshKey,
     inactivityStopped,
     mobileViewerActive,
@@ -2354,8 +2402,8 @@ export default function ClientDetailsLivestreamSection({
           </Stack>
           {manifestReady && mediaTransport && (
             <Box data-testid="livestream-transport" sx={{ display: "flex", justifyContent: "flex-end", alignSelf: { xs: "flex-end", md: "center" }, ml: { md: "auto" }, flexShrink: 0 }}>
-              <Tooltip title="Livestream: HLS via HTTP(S). WSS-medietransport er ikke implementeret.">
-                <Chip size="small" variant="outlined" label={`HLS · ${mediaTransport}`} sx={{ borderRadius: 999, fontWeight: 850 }} />
+              <Tooltip title={mediaTransport === "WSS" ? "Livestream via binær WebSocket" : "Livestream: HLS via HTTP(S)"}>
+                <Chip size="small" variant="outlined" label={mediaTransport === "WSS" ? "WSS" : `HLS · ${mediaTransport}`} sx={{ borderRadius: 999, fontWeight: 850 }} />
               </Tooltip>
             </Box>
           )}
