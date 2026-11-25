@@ -194,3 +194,32 @@ test("63D-73C slows before depletion, counts one waiting episode and measures du
   gate.dispose();
   assert.equal(video.playbackRate, 1);
 });
+
+test("63D-73E warm tab keeps the player and health polling independent of bearer rotation", () => {
+  const source = readFileSync(new URL("../src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx", import.meta.url), "utf8");
+  assert.match(source, /const hasMediaCapability = mediaCapabilityClientId !== null && mediaCapabilityClientId === clientId/);
+  assert.match(source, /mediaCapabilityRef\.current = String\(payload\.media_capability\);\s*setMediaCapabilityClientId\(clientId\)/);
+  assert.doesNotMatch(source, /setMediaCapability\(/);
+  assert.equal([...source.matchAll(/pageVisible, hasMediaCapability, mobileViewerActive/g)].length, 2);
+  assert.doesNotMatch(source, /pageVisible, mediaCapability, mobileViewerActive/);
+  assert.match(source, /Authorization: `Bearer \$\{mediaCapabilityRef\.current\}`/);
+  assert.match(source, /const token = mediaCapabilityRef\.current;\s*if \(token\) xhr\.setRequestHeader/);
+  assert.match(source, /HIDDEN_MEDIA_WARM_GRACE_MS = 30_000/);
+  assert.match(source, /setPageVisible\(false\);\s*\}, HIDDEN_MEDIA_WARM_GRACE_MS\)/);
+  assert.match(source, /if \(stopped \|\| !manifestReady \|\| document\.visibilityState === "hidden"\) return;/);
+  assert.match(source, /if \(document\.visibilityState === "hidden"\) return;\s*const video = videoRef\.current;\s*const hls = hlsRef\.current/);
+  assert.match(source, /sendLeaveOnce\("client_details_livestream_unmount"\)/);
+});
+
+test("63D-73E diagnostics grow with content and transport stays at toolbar right", () => {
+  const source = readFileSync(new URL("../src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx", import.meta.url), "utf8");
+  const panel = source.slice(source.indexOf('data-testid="livestream-diagnostics"'), source.indexOf('<Dialog open={settingsOpen}'));
+  assert.match(panel, /gridAutoRows: "minmax\(min-content, 1fr\)"/);
+  assert.match(panel, /height: "auto"/);
+  assert.doesNotMatch(panel, /maxHeight:|gridTemplateRows:|WebkitLineClamp|overflow: "hidden"|whiteSpace: "nowrap"|textOverflow:/);
+  assert.match(panel, /whiteSpace: "normal"/);
+  assert.match(panel, /overflowWrap: "anywhere"/);
+  assert.match(panel, /flexShrink: 0/);
+  assert.match(source, /Skærmindstillinger\s*<\/Button>\s*\)\}\s*<\/Stack>\s*\{manifestReady && mediaTransport && \(/);
+  assert.match(source, /data-testid="livestream-transport"[^\n]+justifyContent: "flex-end"[^\n]+ml: \{ md: "auto" \}/);
+});

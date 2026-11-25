@@ -55,8 +55,8 @@ test("portrait and landscape phone livestream start stop use only viewer leases"
   assert.match(wall, /pageMediaActive && intersecting && clientOnline && mobileViewerActive/);
   assert.match(wall, /if \(cancelled\) \{[\s\S]*?livestream_wall_late_heartbeat/);
   assert.match(detail, /!clientId \|\| inactivityStopped \|\| !mobileViewerActive/);
-  assert.match(detail, /!clientId \|\| inactivityStopped \|\| !pageVisible \|\| !mediaCapability \|\| !mobileViewerActive/);
-  assert.match(detail, /!clientId \|\| !serverReady \|\| inactivityStopped \|\| !pageVisible \|\| !mediaCapability \|\| !mobileViewerActive/);
+  assert.match(detail, /!clientId \|\| inactivityStopped \|\| !pageVisible \|\| !hasMediaCapability \|\| !mobileViewerActive/);
+  assert.match(detail, /!clientId \|\| !serverReady \|\| inactivityStopped \|\| !pageVisible \|\| !hasMediaCapability \|\| !mobileViewerActive/);
   assert.match(detail, /client_details_livestream_late_heartbeat/);
   // Desktop still has the same auto-start lease and HLS handling.
   assert.match(detail, /const mobileViewerActive = !isTouchHandset \|\| mobileSession\.isActive/);
