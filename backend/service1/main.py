@@ -373,6 +373,7 @@ app.add_middleware(
         "Range",
         "X-CSRF-Token",
         "X-ClientFlow-Ticket",
+        "X-ClientFlow-Sequence",
         REQUEST_ID_HEADER,
     ],
     # Direct browser→API transport gør disse data cross-origin. Eksponér kun
