@@ -168,8 +168,8 @@ export class NativeHttpsBrowserPeer extends EventTarget {
           batch.push(this._queue.shift());
         }
         if (this._up >= MAX_SEQUENCE) throw new Error("Upload sequence exhausted");
-        const result = await this._call("POST", this._base + this._peer + "/send/" + this._up,
-          encodeBatch(batch), { "Content-Type": "application/octet-stream" }, 0, 12000);
+        const result = await this._call("POST", this._base + this._peer + "/send",
+          encodeBatch(batch), { "Content-Type": "application/octet-stream", "X-ClientFlow-Sequence": String(this._up) }, 0, 12000);
         if (this.readyState !== this.OPEN) return;
         if (result.status !== 204 || result.headers["x-clientflow-sequence"] !== String(this._up + 1)) {
           throw new Error("Upload rejected");
@@ -189,8 +189,8 @@ export class NativeHttpsBrowserPeer extends EventTarget {
     try {
       while (this.readyState === this.OPEN) {
         if (this._down >= MAX_SEQUENCE) throw new Error("Download sequence exhausted");
-        const result = await this._call("GET", this._base + this._peer + "/poll/" + this._down,
-          undefined, {}, MAX_BATCH, 28000);
+        const result = await this._call("GET", this._base + this._peer + "/poll",
+          undefined, { "X-ClientFlow-Sequence": String(this._down) }, MAX_BATCH, 28000);
         if (this.readyState !== this.OPEN) return;
         if (result.status !== 200 || result.headers["content-type"] !== "application/octet-stream" ||
             result.headers["x-clientflow-sequence"] !== String(this._down)) throw new Error("Poll rejected");
