@@ -223,3 +223,86 @@ test("63D-73E diagnostics grow with content and transport stays at toolbar right
   assert.match(source, /Skærmindstillinger\s*<\/Button>\s*\)\}\s*<\/Stack>\s*\{manifestReady && mediaTransport && \(/);
   assert.match(source, /data-testid="livestream-transport"[^\n]+justifyContent: "flex-end"[^\n]+ml: \{ md: "auto" \}/);
 });
+
+function fakeVisibility() {
+  const events = new Map();
+  const doc = { visibilityState: "visible",
+    addEventListener(name, fn) { events.set(name, fn); },
+    removeEventListener(name, fn) { if (events.get(name) === fn) events.delete(name); },
+    show(value) { this.visibilityState = value; events.get("visibilitychange")?.(); },
+  };
+  const mediaEvents = new Map();
+  const hls = { latency: 6, liveSyncPosition: 106, stops: 0, starts: [],
+    on(name, fn) { mediaEvents.set(name, fn); },
+    off(name, fn) { if (mediaEvents.get(name) === fn) mediaEvents.delete(name); },
+    emit(details) { mediaEvents.get("level")?.("level", {details}); },
+    stopLoad() { this.stops++; }, startLoad(position) { this.starts.push(position); },
+  };
+  return { doc, hls, events, mediaEvents };
+}
+test("63D-73F healthy short switch preserves instance and playback", async () => {
+  const video = fakeVideo();
+  let clock = 0;
+  const {doc,hls} = fakeVisibility();
+  const gate = createHlsReserveController(video,{now:()=>clock});
+  video.ranges=[[0,12]];
+  gate.pump(); await Promise.resolve();
+  gate.bindLiveVisibility(hls,doc,"level");
+  doc.show("hidden"); clock=5000; video.currentTime=5;
+  doc.show("visible");
+  assert.equal(hls.stops,0);
+  assert.equal(video.paused,false);
+  gate.dispose();
+});
+test("63D-73F stalled tab skips old media and waits for fresh contiguous reserve", async () => {
+  const video=fakeVideo();
+  let clock=0;
+  const {doc,hls,events,mediaEvents}=fakeVisibility();
+  const gate=createHlsReserveController(video,{now:()=>clock});
+  video.ranges=[[0,8]];
+  gate.pump(); await Promise.resolve();
+  let timeout;
+  gate.bindLiveVisibility(hls,doc,"level",{schedule:fn=>{timeout=fn;return 1;},cancel:()=>{timeout=null;}});
+  doc.show("hidden"); clock=20000; video.emit("waiting");
+  assert.equal(gate.snapshot().stalls,0);
+  doc.show("visible");
+  assert.equal(hls.stops,1);
+  assert.deepEqual(hls.starts,[-1]);
+  assert.equal(video.paused,true);
+  assert.equal(gate.pump(),false);
+  hls.emit({live:false,fragments:[{start:100,duration:2}]});
+  assert.equal(video.currentTime,0);
+  hls.emit({live:true,fragments:[{start:100,duration:2},{start:102,duration:2},{start:104,duration:2},{start:106,duration:2}]});
+  assert.equal(video.currentTime,104);
+  assert.equal(timeout,null);
+  assert.equal(gate.pump(),false);
+  video.ranges=[[0,8],[104,108]];
+  video.emit("progress"); await Promise.resolve();
+  assert.equal(video.paused,false);
+  assert.equal(gate.snapshot().aheadSeconds,4);
+  gate.dispose();
+  assert.equal(events.size,0); assert.equal(mediaEvents.size,0);
+});
+test("63D-73F bounded local fallback and disposal", async () => {
+  const video=fakeVideo();
+  let clock=0, timeout, failures=0;
+  const {doc,hls}=fakeVisibility();
+  const gate=createHlsReserveController(video,{now:()=>clock});
+  video.ranges=[[0,8]];
+  gate.pump(); await Promise.resolve();
+  gate.bindLiveVisibility(hls,doc,"level",{onFailure:()=>failures++,schedule:(fn,ms)=>{assert.equal(ms,12000);timeout=fn;return 1;},cancel:()=>{timeout=null;}});
+  doc.show("hidden"); clock=20000; doc.show("visible");
+  timeout();
+  assert.equal(failures,1);
+  doc.show("hidden"); clock=40000; doc.show("visible");
+  gate.dispose();
+  assert.equal(timeout,null);
+  assert.equal(failures,1);
+});
+test("63D-73F both HLS.js views bind live recovery and dispose reserve", () => {
+  for(const path of ["../src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx","../src/pages/adminpages/LivestreamOverview.jsx"]) {
+    const source=readFileSync(new URL(path,import.meta.url),"utf8");
+    assert.match(source,/reserve\.bindLiveVisibility\(hls, document, Hls\.Events\.LEVEL_UPDATED/);
+    assert.match(source,/(?:reserve|hlsReserveRef\.current)\??\.dispose\(\)/);
+  }
+});

@@ -82,6 +82,10 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
   let stalledMs = 0;
   let lastSampleAt = -Infinity;
   let rate = 1;
+  let liveRecoveryHeld = false;
+  let visibilityDocument = null;
+  let detachVisibility = () => {};
+  const hidden = () => visibilityDocument?.visibilityState === "hidden";
   const minimum = () => duration * segments;
   const buffer = () => contiguousVideoBuffer(video);
   // Container timestamps may differ by a few frames from EXTINF/targetduration.
@@ -127,7 +131,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     publish(true);
   }
   function pump() {
-    if (disposed) return false;
+    if (disposed || liveRecoveryHeld || hidden()) return false;
     if (phase === "playing") { regulate(); publish(); return false; }
     publish();
     if (pending || blocked || video.seeking || video.readyState < 2) return false;
@@ -169,7 +173,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     publish(true);
   }
   function waiting() {
-    if (disposed || phase !== "playing" || video.paused || video.seeking) return;
+    if (disposed || hidden() || liveRecoveryHeld || phase !== "playing" || video.paused || video.seeking) return;
     if (stallStarted === null) {
       stalls++;
       stallStarted = now();
@@ -183,7 +187,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     rearm();
   }
   function tick() {
-    if (disposed) return;
+    if (disposed || hidden() || liveRecoveryHeld) return;
     if (phase === "playing") {
       regulate();
       if (stableSince !== null && now() - stableSince >= 30_000 && (buffer()?.ahead ?? 0) >= duration) {
@@ -197,6 +201,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
   }
   function onPlaying() {
     if (disposed) return;
+    if (liveRecoveryHeld) { video.pause(); return; }
     // The gate owns autoplay. If an external caller attempts premature playback,
     // pause it rather than silently bypassing the minimum reserve.
     if (phase !== "playing" && !pending) {
@@ -212,12 +217,92 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     playing();
     onBuffering(false);
   }
+  // Keep a healthy short switch warm. After a stalled background interval,
+  // seek from a fresh aligned live playlist, not from the old buffer.
+  function bindLiveVisibility(hls, doc, levelUpdatedEvent, { onFailure = () => {}, schedule = (fn, ms) => setTimeout(fn, ms), cancel = (id) => clearTimeout(id) } = {}) {
+    detachVisibility();
+    visibilityDocument = doc;
+    let hiddenAt = null;
+    let hiddenPosition = null;
+    let timer = null;
+    const clear = () => {
+      if (timer !== null) cancel(timer);
+      timer = null;
+    };
+    const fail = () => {
+      clear();
+      if (disposed || hidden() || !liveRecoveryHeld) return;
+      liveRecoveryHeld = false;
+      rearm();
+      onFailure();
+    };
+    const onLevel = (_event, data) => {
+      if (disposed || hidden() || !liveRecoveryHeld) return;
+      const details = data?.details;
+      const fragments = details?.fragments;
+      if (!details?.live || !Array.isArray(fragments) || !fragments.length) return;
+      const first = fragments[0]?.start;
+      const last = fragments[fragments.length - 1];
+      const edge = last?.start + last?.duration;
+      if (!Number.isFinite(first) || !Number.isFinite(edge) || edge - first < minimum() - 0.05) return;
+      const sync = Number.isFinite(hls.liveSyncPosition) ? hls.liveSyncPosition : edge - minimum();
+      const target = Math.max(first, Math.min(sync, edge - minimum()));
+      if (!Number.isFinite(target) || target < 0) return;
+      try { if (Math.abs(video.currentTime - target) > 0.05) video.currentTime = target; }
+      catch { return; }
+      clear();
+      liveRecoveryHeld = false;
+      pump();
+    };
+    const onVisibility = () => {
+      if (disposed) return;
+      if (hidden()) {
+        hiddenAt = now();
+        hiddenPosition = video.currentTime;
+        clear();
+        finishStall();
+        return;
+      }
+      if (hiddenAt === null) return;
+      const elapsed = Math.max(0, (now() - hiddenAt) / 1000);
+      const advanced = Number.isFinite(hiddenPosition) ? Math.max(0, video.currentTime - hiddenPosition) : 0;
+      hiddenAt = null;
+      hiddenPosition = null;
+      const latency = hls.latency;
+      const behind = Number.isFinite(latency) && latency > Math.max(6, duration * 3) + duration;
+      const stalledInBackground = elapsed >= duration && elapsed - advanced >= duration;
+      if (!liveRecoveryHeld && !behind && !stalledInBackground && !video.paused) {
+        pump();
+        return;
+      }
+      if (!ready && !liveRecoveryHeld) { pump(); return; }
+      liveRecoveryHeld = true;
+      rearm();
+      clear();
+      timer = schedule(fail, 12_000);
+      try {
+        hls.stopLoad();
+        hls.startLoad(-1);
+      } catch { fail(); }
+    };
+    doc.addEventListener("visibilitychange", onVisibility);
+    hls.on(levelUpdatedEvent, onLevel);
+    if (hidden()) onVisibility();
+    detachVisibility = () => {
+      clear();
+      doc.removeEventListener("visibilitychange", onVisibility);
+      hls.off(levelUpdatedEvent, onLevel);
+      visibilityDocument = null;
+      liveRecoveryHeld = false;
+    };
+  }
   const listeners = { progress: pump, loadeddata: pump, canplay: pump, seeked: pump, timeupdate: tick, waiting, playing: onPlaying };
   video.autoplay = false;
   for (const [event, handler] of Object.entries(listeners)) video.addEventListener(event, handler);
   return {
     pump,
     rearm,
+    bindLiveVisibility,
     setTargetDuration(value) {
       if (Number.isFinite(value) && value >= 0.25 && value <= 10) duration = value;
       pump();
@@ -228,7 +313,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
       return pump();
     },
     catchUp(livePosition) {
-      if (disposed || phase !== "playing" || video.paused || video.seeking || !Number.isFinite(livePosition)) return false;
+      if (disposed || hidden() || liveRecoveryHeld || phase !== "playing" || video.paused || video.seeking || !Number.isFinite(livePosition)) return false;
       if (livePosition - video.currentTime <= Math.max(6, duration * 3)) return false;
       const range = buffer();
       if (!range) return false;
@@ -241,6 +326,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     dispose() {
       if (disposed) return;
       disposed = true;
+      detachVisibility();
       epoch++;
       setRate(1);
       for (const [event, handler] of Object.entries(listeners)) video.removeEventListener(event, handler);

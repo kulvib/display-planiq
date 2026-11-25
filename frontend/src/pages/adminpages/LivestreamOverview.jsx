@@ -244,6 +244,9 @@ function LivestreamTile({ client, pageMediaActive }) {
             onTapRequired: (value) => { if (!cancelled) setNeedsTapToPlay(value); },
           });
           hlsReserveRef.current = reserve;
+          reserve.bindLiveVisibility(hls, document, Hls.Events.LEVEL_UPDATED, {
+            onFailure: () => { if (!cancelled) hls.loadSource(hlsUrl); },
+          });
           hls.on(Hls.Events.BUFFER_APPENDED, () => reserve.pump());
           hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(hlsUrl));
           hls.on(Hls.Events.MANIFEST_PARSED, () => reserve.pump());

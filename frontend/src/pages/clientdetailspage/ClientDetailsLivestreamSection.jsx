@@ -1442,6 +1442,9 @@ export default function ClientDetailsLivestreamSection({
             onTapRequired: (value) => { if (!disposed) setNeedsTapToPlay(value); },
           });
           hlsReserveRef.current = reserve;
+          reserve.bindLiveVisibility(hls, document, Hls.Events.LEVEL_UPDATED, {
+            onFailure: () => { if (!disposed) setLocalRefreshKey((key) => key + 1); },
+          });
           hls.on(Hls.Events.BUFFER_APPENDED, () => reserve.pump());
           hls.attachMedia(video);
 
