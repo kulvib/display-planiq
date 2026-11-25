@@ -179,8 +179,12 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
 
             async def transfer(source, target, sh, th, frames):
                 if isinstance(source, str):
-                    result = await client.post(source + "/send/0", content=encode_batch(frames),
-                                               headers={**sh, "content-type": "application/octet-stream"})
+                    stable = "/browser/" in source
+                    path = source + ("/send" if stable else "/send/0")
+                    headers = {**sh, "content-type": "application/octet-stream"}
+                    if stable:
+                        headers["x-clientflow-sequence"] = "0"
+                    result = await client.post(path, content=encode_batch(frames), headers=headers)
                     assert result.status_code == 204 and result.headers["x-clientflow-sequence"] == "1"
                 else:
                     for frame in frames:
@@ -189,7 +193,10 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                 seq = download_sequences.get(target, 0) if isinstance(target, str) else 0
                 while len(actual) < len(frames):
                     if isinstance(target, str):
-                        result = await client.get(target + "/poll/" + str(seq), headers=th)
+                        stable = "/browser/" in target
+                        path = target + ("/poll" if stable else "/poll/" + str(seq))
+                        headers = {**th, "x-clientflow-sequence": str(seq)} if stable else th
+                        result = await client.get(path, headers=headers)
                         assert result.status_code == 200, result.text
                         assert result.headers["x-clientflow-sequence"] == str(seq)
                         if result.content:
@@ -208,8 +215,8 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                                    "browser": "https" if browser_https else "wss",
                                    "agent": "https" if agent_https else "wss"}]
                 if browser_https:
-                    denied = await client.post(browser + "/send/1", content=encode_batch([b"denied"]),
-                                               headers={**bh, "origin": "https://other.invalid",
+                    denied = await client.post(browser + "/send", content=encode_batch([b"denied"]),
+                                               headers={**bh, "x-clientflow-sequence": "1", "origin": "https://other.invalid",
                                                         "content-type": "application/octet-stream"})
                     assert denied.status_code == 403
                     assert not native._TUNNELS[tunnel_id].closed.is_set()
@@ -219,7 +226,8 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                 for entry in http._PEERS.values():
                     await entry.peer.send_bytes(b"must-not-be-delivered")
                 if browser_https:
-                    denied = await client.get(browser + "/poll/" + str(download_sequences[browser]), headers=bh)
+                    denied = await client.get(browser + "/poll", headers={**bh,
+                        "x-clientflow-sequence": str(download_sequences[browser])})
                     assert denied.status_code == 403
                     assert denied.json()["detail"] == "ClientFlow-session ikke godkendt"
                     assert b"must-not-be-delivered" not in denied.content
