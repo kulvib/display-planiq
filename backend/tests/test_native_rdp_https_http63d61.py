@@ -191,3 +191,29 @@ def test_stable_browser_sequence_header_requires_one_canonical_value():
     for values in ([], [b"0", b"1"], [b"0, 1"], [b"01"], [b"-1"], [b"9007199254740991"]):
         with pytest.raises(HTTPException):
             http._sequence(http._header_sequence(request(values)))
+
+
+def test_native_policy_keeps_roles_independent_and_unknown_clients_denied(monkeypatch):
+    from service1 import remote_desktop_v2 as policy
+
+    monkeypatch.delenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", raising=False)
+    for role in ("browser", "agent"):
+        assert policy.native_rdp_transport_allowed(3, role, "wss")
+        assert not policy.native_rdp_transport_allowed(3, role, "https")
+        assert not policy.native_rdp_transport_allowed(4, role, "wss")
+        assert not policy.native_rdp_transport_allowed("3", role, "wss")
+        assert not policy.native_rdp_transport_allowed(3, role, "invalid")
+
+    monkeypatch.setenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", "true")
+    assert policy.native_rdp_transport_allowed(3, "browser", "https")
+    assert policy.native_rdp_transport_allowed(3, "agent", "https")
+    assert not policy.native_rdp_transport_allowed(3, "other", "https")
+    monkeypatch.setattr(policy, "NATIVE_RDP_CLIENT_POLICIES", {
+        3: policy.NativeRdpTransportPolicy(frozenset({"wss", "https"}), frozenset({"wss"}))
+    })
+    http._gate(3, "browser")
+    with pytest.raises(HTTPException):
+        http._gate(3, "agent")
+    assert policy.native_rdp_transport_allowed(3, "agent", "wss")
+    assert not policy.native_rdp_client_admitted(4)
+    assert not policy.native_rdp_transport_allowed(4, "agent", "https")
