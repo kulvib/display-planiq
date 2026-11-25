@@ -12,6 +12,7 @@ from pathlib import Path
 import stat
 import struct
 import tempfile
+import time
 
 MAX_INIT = 128 * 1024
 MAX_FRAGMENT = 2 * 1024 * 1024
@@ -120,7 +121,7 @@ def publish_latest(directory: Path, payload: bytes):
         Path(tmp).unlink(missing_ok=True)
 
 
-def read_latest(directory: Path):
+def read_latest(directory: Path, *, max_age_seconds: float | None = None):
     """Open a bounded regular file; reject symlinks, devices and FIFO blocking."""
     directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -128,6 +129,8 @@ def read_latest(directory: Path):
         try:
             info = os.fstat(fd)
             require(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= MAX_PAIR, "invalid media file")
+            if max_age_seconds is not None:
+                require(0 <= time.time() - info.st_mtime <= max_age_seconds, "stale media file")
             with os.fdopen(fd, "rb", closefd=False) as handle:
                 payload = handle.read(MAX_PAIR + 1)
             require(len(payload) == info.st_size, "media file changed")

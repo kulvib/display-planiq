@@ -261,6 +261,7 @@ def _build_pipeline(
     segment_seconds: int,
     playlist_size: int,
     source_mode: str = "normal",
+    continuous: bool = False,
 ) -> Gst.Pipeline:
     # The first attempt preserves the established fast path. When a verified
     # zero-buffer startup times out, the producer may try a bounded, non-pool
@@ -290,11 +291,23 @@ def _build_pipeline(
         f"! video/x-raw,format=I420,framerate={fps}/1 "
         f"! x264enc name=h264_encoder tune=zerolatency speed-preset={preset} key-int-max={key_interval} "
         f"bframes=0 bitrate={bitrate_kbit} "
-        "! h264parse config-interval=-1 "
+        + ("! tee name=cf_encode cf_encode. ! queue " if continuous else "")
+        + "! h264parse config-interval=-1 "
         "! mpegtsmux name=ts_mux "
         f"! hlssink target-duration={segment_seconds} playlist-length={playlist_size} "
         f"max-files={max_files} location=\"{location}\" playlist-location=\"{playlist}\""
     )
+    if continuous:
+        if segment_seconds != 1:
+            raise ValueError("Continuous pilot requires one-second keyframes")
+        description += (
+            " cf_encode. ! queue name=cf_mp4_queue max-size-buffers=30 "
+            "max-size-bytes=4194304 max-size-time=2000000000 leaky=downstream "
+            "! valve name=cf_mp4_valve "
+            "! h264parse config-interval=-1 ! video/x-h264,stream-format=avc,alignment=au "
+            "! mp4mux fragment-duration=1000 streamable=true "
+            "! appsink name=cf_mp4_sink async=false sync=false max-buffers=4 drop=false"
+        )
     pipeline = Gst.parse_launch(description)
     if not isinstance(pipeline, Gst.Pipeline):
         raise RuntimeError("GStreamer pipeline could not be created")
@@ -502,6 +515,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-seconds", type=int, required=True)
     parser.add_argument("--playlist-size", type=int, required=True)
     parser.add_argument("--source-mode", choices=("normal", "bounded"), default="normal")
+    parser.add_argument("--continuous", action="store_true")
     return parser.parse_args()
 
 
@@ -549,8 +563,19 @@ def main() -> int:
             args.segment_seconds,
             args.playlist_size,
             source_mode=args.source_mode,
+            continuous=args.continuous,
         )
-        _run_pipeline(pipeline, output)
+        if args.continuous:
+            # The helper is executed as a standalone system-Python script.
+            from livestream_fmp4_capture import FragmentHandoff
+            handoff = FragmentHandoff(Gst, pipeline, output)
+            handoff.start()
+            try:
+                _run_pipeline(pipeline, output)
+            finally:
+                handoff.close()
+        else:
+            _run_pipeline(pipeline, output)
         return 0
     finally:
         capture.close()

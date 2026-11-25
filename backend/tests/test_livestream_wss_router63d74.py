@@ -1,11 +1,14 @@
-"""ASGI wire/route tests with authorization boundary test doubles."""
+"""Exercise real ASGI routing without adding TestClient/httpx2 dependencies.
+
+Authorization calls use test doubles here; actual DB authorization is separate.
+"""
+import asyncio
 from contextlib import nullcontext
+import json
 from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, HTTPException
-from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from service1.routers import livestream_wss as wss
 from service1.livestream_wss_core import INIT, FRAGMENT, encode_frame
@@ -18,11 +21,11 @@ TICKET = f"/livestream-wss/clients/3/generations/{GEN}/ticket"
 
 
 @pytest.fixture
-def api(monkeypatch):
-    app = FastAPI()
+def app(monkeypatch):
+    api = FastAPI()
     user = SimpleNamespace(id=7, token_version=2)
-    app.dependency_overrides[wss.get_current_user] = lambda: user
-    app.dependency_overrides[wss.oauth2_scheme] = lambda: "browser-test"
+    api.dependency_overrides[wss.get_current_user] = lambda: user
+    api.dependency_overrides[wss.oauth2_scheme] = lambda: "browser-test"
     monkeypatch.setattr(wss, "Session", lambda *_: nullcontext(None))
     monkeypatch.setattr(wss, "require_active_browser_auth_session_binding", lambda *a, **kw: "binding")
     monkeypatch.setattr(wss, "enforce_request_rate_limit", lambda *a, **kw: None)
@@ -39,62 +42,144 @@ def api(monkeypatch):
 
     monkeypatch.setattr(wss, "_check_publisher", publisher)
     monkeypatch.setattr(wss, "_check_viewer", viewer)
-    app.include_router(wss.create_livestream_wss_router(allowed_origins=[ORIGIN]))
-    with TestClient(app) as client:
-        yield client
+    api.include_router(wss.create_livestream_wss_router(allowed_origins=[ORIGIN]))
+    return api
 
 
-def ticket(api):
-    response = api.post(TICKET, json={"viewer_id": "viewer-test"}, headers={"origin": ORIGIN})
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    data = response.json()
-    return [data["subprotocol"], data["ticket"]]
+def scope(path, headers, *, socket=False, protocols=()):
+    return {
+        "type": "websocket" if socket else "http",
+        "asgi": {"version": "3.0", "spec_version": "2.4"},
+        "http_version": "1.1", "scheme": "wss" if socket else "https",
+        "path": path, "raw_path": path.encode(), "root_path": "",
+        "query_string": b"", "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": ("127.0.0.1", 1234), "server": ("test", 443),
+        **({"subprotocols": list(protocols)} if socket else {"method": "POST"}),
+    }
 
 
-def test_ticket_origin_and_viewer(api):
-    assert api.post(TICKET, json={"viewer_id": "viewer-test"}).status_code == 403
-    assert api.post(TICKET, json={"viewer_id": "other"}, headers={"origin": ORIGIN}).status_code == 403
-    with pytest.raises(ValueError):
-        wss.create_livestream_wss_router(allowed_origins=["*"])
+async def issue(app, viewer="viewer-test", origin=ORIGIN):
+    headers = {"content-type": "application/json"}
+    if origin is not None:
+        headers["origin"] = origin
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": json.dumps({"viewer_id": viewer}).encode(),
+                "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await asyncio.wait_for(app(scope(TICKET, headers), receive, send), 5)
+    start = messages[0]
+    body = json.loads(b"".join(m.get("body", b"") for m in messages[1:]))
+    return start["status"], dict(start["headers"]), body
 
 
-def test_no_auth_or_wrong_origin(api):
-    with pytest.raises(WebSocketDisconnect):
-        with api.websocket_connect(PUB):
-            pytest.fail("unauthenticated publisher accepted")
-    with pytest.raises(WebSocketDisconnect):
-        with api.websocket_connect(PUB, headers={"authorization": "Bearer wrong"}):
-            pytest.fail("wrong publisher accepted")
-    with pytest.raises(WebSocketDisconnect):
-        with api.websocket_connect(SUB, subprotocols=ticket(api), headers={"origin": "https://wrong.example"}):
-            pytest.fail("cross-origin subscriber accepted")
+async def ticket(app):
+    code, headers, body = await issue(app)
+    assert code == 200 and headers[b"cache-control"] == b"no-store"
+    return [body["subprotocol"], body["ticket"]]
 
 
-def test_media_and_replay(api):
-    first = encode_frame(INIT, 0, 0, b"init")
-    fragment = encode_frame(FRAGMENT, 1, 1000000, b"fragment")
-    with api.websocket_connect(PUB, headers={"authorization": "Bearer agent-test"}) as publisher:
-        publisher.send_bytes(first)
-        publisher.send_bytes(fragment)
-        protocols = ticket(api)
-        with api.websocket_connect(SUB, subprotocols=protocols, headers={"origin": ORIGIN}) as viewer:
-            assert viewer.accepted_subprotocol == protocols[0]
-            assert viewer.receive_bytes() == first
-            assert viewer.receive_bytes() == fragment
-            next_frame = encode_frame(FRAGMENT, 2, 2000000, b"next")
-            publisher.send_bytes(next_frame)
-            assert viewer.receive_bytes() == next_frame
-        with pytest.raises(WebSocketDisconnect):
-            with api.websocket_connect(SUB, subprotocols=protocols, headers={"origin": ORIGIN}):
-                pytest.fail("replay accepted")
+class Socket:
+    def __init__(self, app, path, headers=None, protocols=()):
+        headers = dict(headers or {})
+        if protocols:
+            headers["sec-websocket-protocol"] = ", ".join(protocols)
+        self.incoming = asyncio.Queue(maxsize=8)
+        self.outgoing = asyncio.Queue(maxsize=8)
+        self.incoming.put_nowait({"type": "websocket.connect"})
+        self.task = asyncio.create_task(app(
+            scope(path, headers, socket=True, protocols=protocols),
+            self.incoming.get, self.outgoing.put,
+        ))
+
+    async def next(self):
+        return await asyncio.wait_for(self.outgoing.get(), 5)
+
+    async def send(self, payload):
+        await asyncio.wait_for(self.incoming.put({"type": "websocket.receive", "bytes": payload}), 5)
+
+    async def close(self):
+        if not self.task.done():
+            await self.incoming.put({"type": "websocket.disconnect", "code": 1000})
+        try:
+            await asyncio.wait_for(self.task, 5)
+        finally:
+            if not self.task.done():
+                self.task.cancel()
+                await asyncio.gather(self.task, return_exceptions=True)
 
 
-def test_malformed_publisher_clears_channel(api):
-    with api.websocket_connect(PUB, headers={"authorization": "Bearer agent-test"}) as publisher:
-        publisher.send_bytes(b"not-a-frame")
-        with pytest.raises(WebSocketDisconnect):
-            publisher.receive_bytes()
-    with pytest.raises(WebSocketDisconnect):
-        with api.websocket_connect(SUB, subprotocols=ticket(api), headers={"origin": ORIGIN}):
-            pytest.fail("stale channel accepted")
+def test_ticket_origin_and_viewer(app):
+    async def scenario():
+        assert (await issue(app, origin=None))[0] == 403
+        assert (await issue(app, viewer="other"))[0] == 403
+        with pytest.raises(ValueError):
+            wss.create_livestream_wss_router(allowed_origins=["*"])
+    asyncio.run(scenario())
+
+
+def test_no_auth_or_wrong_origin(app):
+    async def scenario():
+        for path, headers, protocols in [
+            (PUB, {}, ()), (PUB, {"authorization": "Bearer wrong"}, ()),
+            (SUB, {"origin": "https://wrong.example"}, await ticket(app)),
+        ]:
+            sock = Socket(app, path, headers, protocols)
+            try:
+                assert (await sock.next())["type"] == "websocket.close"
+            finally:
+                await sock.close()
+    asyncio.run(scenario())
+
+
+def test_media_and_replay(app):
+    async def scenario():
+        first = encode_frame(INIT, 0, 0, b"init")
+        frag = encode_frame(FRAGMENT, 1, 1000000, b"fragment")
+        publisher = Socket(app, PUB, {"authorization": "Bearer agent-test"})
+        try:
+            assert (await publisher.next())["type"] == "websocket.accept"
+            await publisher.send(first)
+            await publisher.send(frag)
+            protocols = await ticket(app)
+            viewer = Socket(app, SUB, {"origin": ORIGIN}, protocols)
+            try:
+                accepted = await viewer.next()
+                assert accepted["type"] == "websocket.accept"
+                assert accepted["subprotocol"] == protocols[0]
+                assert (await viewer.next())["bytes"] == first
+                assert (await viewer.next())["bytes"] == frag
+                nxt = encode_frame(FRAGMENT, 2, 2000000, b"next")
+                await publisher.send(nxt)
+                assert (await viewer.next())["bytes"] == nxt
+            finally:
+                await viewer.close()
+            replay = Socket(app, SUB, {"origin": ORIGIN}, protocols)
+            try:
+                assert (await replay.next())["type"] == "websocket.close"
+            finally:
+                await replay.close()
+        finally:
+            await publisher.close()
+    asyncio.run(scenario())
+
+
+def test_malformed_publisher_clears_channel(app):
+    async def scenario():
+        publisher = Socket(app, PUB, {"authorization": "Bearer agent-test"})
+        try:
+            assert (await publisher.next())["type"] == "websocket.accept"
+            await publisher.send(b"not-a-frame")
+            assert (await publisher.next())["type"] == "websocket.close"
+        finally:
+            await publisher.close()
+        viewer = Socket(app, SUB, {"origin": ORIGIN}, await ticket(app))
+        try:
+            assert (await viewer.next())["type"] == "websocket.close"
+        finally:
+            await viewer.close()
+    asyncio.run(scenario())
