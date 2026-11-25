@@ -129,3 +129,23 @@ request adapter: raw binary GET/POST, bounded response reads, redirect
 refusal and certificate hostname mismatch. Local automated proof only;
 no real municipal proxy, Render throughput or physical FreeRDP/GNOME proof.
 Deployment remains disabled pending CI.
+
+## 63D-65 — agent HTTPS throughput and validation cost
+
+Physical WSS passed 20/20; Terminal 9/9; mixed WSS/HTTPS 10/10 functional
+but significantly slower. Render observed 1003 HTTP 200/204 responses in
+one minute, CPU up to 0.252 vCPU and memory 139–156 MB across the service.
+The direct agent uses persistent HTTP/1.1 TLS lanes, separate upload, poll
+and teardown; respects the configured HTTPS proxy via the original urllib
+path (no pooling in that path). No retry on ambiguous delivery. The bounded
+read-ahead uploader batches already available 16 KiB blocks, max 15 frames
+per batch, one upload in flight. First block has no intentional delay.
+Each HTTP operation still checks the exact bearer owner against the DB.
+Before reading or waiting, check identity/generation/idle/expiry in memory;
+perform full authorization before accepting/delivering data. No auth cache.
+The native periodic watchdog and independent contact expiry remain unchanged.
+No new dependencies, no WSS algorithm change. Logs report only request,
+connection, error counts and cumulative response duration. Keep-alive is
+subject to the actual proxy/server. Blocking workers are not force-cancelled;
+retired lanes cannot be reused and socket timeouts/cleanup remain necessary.
+CI and repeat physical measurement are required before approving performance.

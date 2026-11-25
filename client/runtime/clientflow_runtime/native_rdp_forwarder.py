@@ -145,6 +145,16 @@ async def forward_native_rdp(
                     counters["wss_to_tcp_bytes"] += len(packet)
 
             async def send_remote_bytes() -> None:
+                if mode == "https":
+                    from .native_rdp_https_peer import upload_stream
+
+                    def sent(packet):
+                        counters["tcp_to_wss_frames"] += 1
+                        counters["tcp_to_wss_bytes"] += len(packet)
+
+                    await upload_stream(reader, websocket,
+                                        lambda: ensure_native_rdp_guard(client_id=client_id), sent)
+                    return
                 while True:
                     ensure_native_rdp_guard(client_id=client_id)
                     packet = await reader.read(MAX_PDU_CHUNK)

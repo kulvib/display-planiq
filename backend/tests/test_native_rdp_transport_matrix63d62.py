@@ -202,6 +202,10 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                     assert denied.status_code == 403
                     assert not native._TUNNELS[tunnel_id].closed.is_set()
                 valid[0] = False
+                # Make the revoked poll immediately runnable, without relying on
+                # the 15-second independent native tunnel watchdog.
+                for entry in http._PEERS.values():
+                    await entry.peer.send_bytes(b"must-not-be-delivered")
                 if browser_https:
                     denied = await client.get(browser + "/poll/1", headers=bh)
                     assert denied.status_code == 403

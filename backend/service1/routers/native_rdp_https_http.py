@@ -10,6 +10,8 @@ import asyncio
 from dataclasses import dataclass
 import os
 import re
+import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 import uuid
@@ -130,7 +132,7 @@ def _agent_owner(request: Request, client_id: int) -> Owner:
         raise HTTPException(401, "Ugyldig agentgodkendelse") from exc
 
 
-def _active_context(owner: Owner, session_id: str) -> tuple[Any, Any, str]:
+def _identity_context(owner: Owner, session_id: str) -> tuple[Any, Any, str]:
     active = control.BROWSERS.get(session_id)
     channel = control.CONTROL_AGENTS.get(owner.client_id)
     if (active is None or channel is None or active.client_id != owner.client_id
@@ -148,12 +150,22 @@ def _active_context(owner: Owner, session_id: str) -> tuple[Any, Any, str]:
                  and int(channel.token_version) == owner.version)
     if not valid:
         raise HTTPException(404, "ClientFlow-session ikke fundet")
+    idle = getattr(active, "native_idle", None)
+    expiry = getattr(active, "expires_at", None)
+    if ((idle is not None and idle.expired(time.monotonic()))
+            or (expiry is not None and expiry <= datetime.now(timezone.utc).replace(tzinfo=None))):
+        raise HTTPException(403, "ClientFlow-session ikke godkendt")
+    return active, channel, active.native_rdp_managed_request_id
+
+
+def _active_context(owner: Owner, session_id: str) -> tuple[Any, Any, str]:
+    active, channel, request_id = _identity_context(owner, session_id)
     current, state = control._remote_desktop_browser_auth_state(active)
     if current is None or not current.is_superadmin or state != "ok":
         raise HTTPException(403, "ClientFlow-session ikke godkendt")
     if not control._remote_desktop_agent_channel_valid(channel):
         raise HTTPException(403, "ClientFlow-agent ikke godkendt")
-    return active, channel, active.native_rdp_managed_request_id
+    return active, channel, request_id
 
 
 def _tunnel(entry: Entry):
@@ -169,9 +181,11 @@ def _tunnel(entry: Entry):
     return tunnel if attached is entry.peer else None
 
 
-async def _live(entry: Entry) -> None:
+async def _live(entry: Entry, *, database: bool = True) -> None:
     try:
-        active, channel, request_id = _active_context(entry.owner, entry.session_id)
+        _gate(entry.owner.client_id)
+        validate = _active_context if database else _identity_context
+        active, channel, request_id = validate(entry.owner, entry.session_id)
         if (active is not entry.active or channel is not entry.channel
                 or request_id != entry.request_id or _tunnel(entry) is None
                 or entry.peer.closed.is_set()):
@@ -301,7 +315,7 @@ class PeerResponse(Response):
 
 
 async def _send(request: Request, entry: Entry, sequence: str) -> Response:
-    await _live(entry)
+    await _live(entry, database=False)
     if entry.uploading:
         await entry.peer.close()
         raise HTTPException(409, "Samtidig ClientFlow-upload")
@@ -324,7 +338,7 @@ async def _send(request: Request, entry: Entry, sequence: str) -> Response:
 
 
 async def _poll(entry: Entry, sequence: str) -> Response:
-    await _live(entry)
+    await _live(entry, database=False)
     if entry.polling:
         await entry.peer.close()
         raise HTTPException(409, "Samtidig ClientFlow-poll")

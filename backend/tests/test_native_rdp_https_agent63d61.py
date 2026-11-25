@@ -72,3 +72,36 @@ def test_agent_requires_explicit_approval_and_exact_generation():
         NativeHttpsAgentPeer(request, client_id=4, session_id=SESSION, tunnel_id=TUNNEL, approved=True)
     with pytest.raises(PeerError):
         NativeHttpsAgentPeer(request, client_id=3, session_id="../bad", tunnel_id=TUNNEL, approved=True)
+
+
+def test_agent_read_ahead_batches_in_order_without_replaying():
+    from clientflow_runtime.native_rdp_https_peer import upload_stream
+
+    async def exercise():
+        first_ack = asyncio.Event()
+        frames = [bytes([i]) * 16384 for i in range(20)]
+        sent = []
+        batches = []
+        class Reader:
+            async def read(self, size):
+                assert size == 16384
+                return frames.pop(0) if frames else b""
+        class Peer:
+            async def send_many(self, batch):
+                assert 0 < len(batch) <= 15
+                assert len(encode(batch)) <= 262144
+                batches.append(list(batch))
+                if len(batches) == 1:
+                    await first_ack.wait()
+        async def release():
+            while not batches:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            first_ack.set()
+        expected = list(frames)
+        await asyncio.wait_for(asyncio.gather(
+            upload_stream(Reader(), Peer(), lambda: None, sent.append), release()), 2)
+        assert sent == expected
+        assert [frame for batch in batches for frame in batch] == expected
+        assert len(batches) < len(expected)
+    asyncio.run(exercise())

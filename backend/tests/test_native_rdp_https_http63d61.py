@@ -69,7 +69,7 @@ def test_streamed_body_is_bounded_before_push():
 
 def test_send_and_poll_lanes_held_through_asgi_delivery(monkeypatch):
     async def exercise():
-        async def live(_entry):
+        async def live(_entry, **_kwargs):
             pass
         monkeypatch.setattr(http, "_live", live)
         owner = http.Owner("browser", 3, "42", 1, "login")
@@ -96,7 +96,7 @@ def test_send_and_poll_lanes_held_through_asgi_delivery(monkeypatch):
 
 def test_concurrent_upload_fails_closed(monkeypatch):
     async def exercise():
-        async def live(_entry):
+        async def live(_entry, **_kwargs):
             pass
         monkeypatch.setattr(http, "_live", live)
         peer = http.HttpPeer({}, None)

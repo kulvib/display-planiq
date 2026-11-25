@@ -38,8 +38,15 @@ def test_real_tls_agent_request_rejects_redirect_and_oversize(tmp_path, monkeypa
                                           serialization.PrivateFormat.PKCS8,
                                           serialization.NoEncryption()))
     calls = []
+    clients = []
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def setup(self):
+            super().setup()
+            clients.append(self.client_address[1])
+
         def log_message(self, *_args):
             pass
 
@@ -87,6 +94,9 @@ def test_real_tls_agent_request_rejects_redirect_and_oversize(tmp_path, monkeypa
         assert result.headers["x-clientflow-sequence"] == "0"
         result = await request("POST", prefix + "send", b"\x00\xff", 0, 3)
         assert result.status_code == 204 and result.headers["x-clientflow-sequence"] == "1"
+        result = await request("POST", prefix + "send", b"\x00\xff", 0, 3)
+        assert result.status_code == 204
+        assert len(set(clients)) == 2
         with pytest.raises(PeerError):
             await request("GET", prefix + "redirect", None, 32, 3)
         with pytest.raises(PeerError):
@@ -95,15 +105,20 @@ def test_real_tls_agent_request_rejects_redirect_and_oversize(tmp_path, monkeypa
             credential=SimpleNamespace(backend_url=f"https://127.0.0.1:{server.server_port}"),
             access_token=transport.access_token,
         )
-        with pytest.raises(OSError):
-            await make_agent_https_request(wrong, context)("GET", prefix + "poll", None, 32, 3)
+        wrong_request = make_agent_https_request(wrong, context)
+        try:
+            with pytest.raises(OSError):
+                await wrong_request("GET", prefix + "poll", None, 32, 3)
+        finally:
+            wrong_request.close()
 
     try:
         asyncio.run(exercise())
-        assert len(calls) == 4
+        assert len(calls) == 5
         assert all(token == "Bearer synthetic-test-token" for _, token in calls)
         assert not any(path.endswith("forbidden-target") for path, _ in calls)
     finally:
+        request.close()
         server.shutdown()
         server.server_close()
         worker.join(timeout=3)
