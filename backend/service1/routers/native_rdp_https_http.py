@@ -427,6 +427,25 @@ def _request_entry(request: Request, client_id: int, role: str, peer_id: str) ->
     return _entry(owner, peer_id)
 
 
+def _header_sequence(request: Request) -> str:
+    # Exactly one canonical sequence; duplicate and comma-combined headers
+    # are invalid. The existing lane validators fail closed on empty/invalid.
+    values = request.headers.getlist("x-clientflow-sequence")
+    return values[0] if len(values) == 1 else ""
+
+
+@router.post("/remote-desktop/native-https/browser/{client_id}/{peer_id}/send")
+async def browser_send_batch(client_id: int, peer_id: str, request: Request):
+    entry = _request_entry(request, client_id, "browser", peer_id)
+    return await _send(request, entry, _header_sequence(request))
+
+
+@router.get("/remote-desktop/native-https/browser/{client_id}/{peer_id}/poll")
+async def browser_poll_batch(client_id: int, peer_id: str, request: Request):
+    entry = _request_entry(request, client_id, "browser", peer_id)
+    return await _poll(entry, _header_sequence(request))
+
+
 @router.post("/remote-desktop/native-https/{role}/{client_id}/{peer_id}/send/{sequence}")
 async def send_batch(role: str, client_id: int, peer_id: str, sequence: str, request: Request):
     return await _send(request, _request_entry(request, client_id, role, peer_id), sequence)
