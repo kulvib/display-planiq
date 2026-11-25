@@ -269,7 +269,17 @@ function LivestreamTile({ client, pageMediaActive }) {
           });
           hlsReserveRef.current = reserve;
           reserve.bindLiveVisibility(hls, document, Hls.Events.LEVEL_UPDATED, {
-            onFailure: () => { if (!cancelled) hls.loadSource(hlsUrl); },
+            onFailure: () => {
+              if (cancelled) return;
+              if (generation) { hls.loadSource(hlsUrl); return; }
+              // Rebuild only the local HLS player; preserve viewer heartbeat,
+              // capability and backend generation.
+              destroyPlayer();
+              mediaReady = false;
+              setState("starting");
+              setMessage("Genindlæser HLS-afspiller …");
+              startPlayer();
+            },
           });
           hls.on(Hls.Events.BUFFER_APPENDED, () => reserve.pump());
           hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(hlsUrl));

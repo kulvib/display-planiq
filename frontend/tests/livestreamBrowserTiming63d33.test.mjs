@@ -274,12 +274,16 @@ test("63D-73F stalled tab skips old media and waits for fresh contiguous reserve
   assert.equal(video.currentTime,0);
   hls.emit({live:true,fragments:[{start:100,duration:2},{start:102,duration:2},{start:104,duration:2},{start:106,duration:2}]});
   assert.equal(video.currentTime,104);
-  assert.equal(timeout,null);
+  assert.equal(typeof timeout,"function");
   assert.equal(gate.pump(),false);
   video.ranges=[[0,8],[104,108]];
   video.emit("progress"); await Promise.resolve();
   assert.equal(video.paused,false);
   assert.equal(gate.snapshot().aheadSeconds,4);
+  assert.equal(typeof timeout,"function");
+  video.currentTime=104.25;
+  video.emit("timeupdate");
+  assert.equal(timeout,null);
   gate.dispose();
   assert.equal(events.size,0); assert.equal(mediaEvents.size,0);
 });
@@ -290,7 +294,7 @@ test("63D-73F bounded local fallback and disposal", async () => {
   const gate=createHlsReserveController(video,{now:()=>clock});
   video.ranges=[[0,8]];
   gate.pump(); await Promise.resolve();
-  gate.bindLiveVisibility(hls,doc,"level",{onFailure:()=>failures++,schedule:(fn,ms)=>{assert.equal(ms,12000);timeout=fn;return 1;},cancel:()=>{timeout=null;}});
+  gate.bindLiveVisibility(hls,doc,"level",{onFailure:()=>failures++,schedule:(fn,ms)=>{assert.equal(ms,8000);timeout=fn;return 1;},cancel:()=>{timeout=null;}});
   doc.show("hidden"); clock=20000; doc.show("visible");
   timeout();
   assert.equal(failures,1);
@@ -325,4 +329,54 @@ test("63D-74 both live views use numeric presentation, no false green on unknown
   assert.match(wall, /state === "live" \? latencyStatus\.text/);
   assert.doesNotMatch(wall, /Number\(hlsRef\.current\?\.latency\)/);
   assert.doesNotMatch(wall, /const value = Number\(seconds\)/);
+});
+
+test("63D-78 a playlist and a successful play promise cannot mask a frozen image", async () => {
+  const video=fakeVideo(); let clock=0, timer=null, failures=0;
+  const {doc,hls}=fakeVisibility();
+  const gate=createHlsReserveController(video,{now:()=>clock});
+  video.ranges=[[0,8]]; gate.pump(); await Promise.resolve();
+  gate.bindLiveVisibility(hls,doc,"level",{
+    onFailure:()=>failures++,
+    schedule:(fn,ms)=>{timer={fn,ms};return 1;},cancel:()=>{timer=null;}
+  });
+  doc.show("hidden");clock=20_000;doc.show("visible");
+  assert.equal(timer.ms,8000);
+  hls.emit({live:true,fragments:[{start:100,duration:2},{start:102,duration:2},{start:104,duration:2},{start:106,duration:2}]});
+  assert.equal(timer.ms,5000);
+  video.ranges=[[104,108]];
+  video.emit("progress");await Promise.resolve();
+  assert.equal(video.paused,false);
+  video.emit("timeupdate"); // seek target, no advancement
+  assert.equal(timer.ms,5000);
+  timer.fn();
+  assert.equal(failures,1);
+  assert.equal(video.paused,true);
+  gate.dispose();
+});
+test("63D-78 verifies warm return without restarting healthy playback", async () => {
+  const video=fakeVideo();let clock=0,timer=null;
+  const {doc,hls}=fakeVisibility();const gate=createHlsReserveController(video,{now:()=>clock});
+  video.ranges=[[0,20]];gate.pump();await Promise.resolve();
+  gate.bindLiveVisibility(hls,doc,"level",{schedule:(fn,ms)=>{timer={fn,ms};return 1;},cancel:()=>{timer=null;}});
+  doc.show("hidden");clock=5000;video.currentTime=5;doc.show("visible");
+  assert.equal(hls.stops,0);assert.equal(timer.ms,3000);
+  video.currentTime=5.25;video.emit("timeupdate");
+  assert.equal(timer,null);assert.equal(hls.stops,0);
+  doc.show("hidden");clock=10000;video.currentTime=10.25;doc.show("visible");
+  assert.equal(timer.ms,3000);
+  timer.fn();assert.equal(hls.stops,1);assert.equal(timer.ms,8000);
+  gate.dispose();assert.equal(timer,null);
+});
+test("63D-78 a second hide cancels playback verification; visible return re-enters fresh recovery", async () => {
+  const video=fakeVideo();let clock=0,timer=null,failures=0;
+  const {doc,hls}=fakeVisibility();const gate=createHlsReserveController(video,{now:()=>clock});
+  video.ranges=[[0,8]];gate.pump();await Promise.resolve();
+  gate.bindLiveVisibility(hls,doc,"level",{onFailure:()=>failures++,schedule:(fn,ms)=>{timer={fn,ms};return 1;},cancel:()=>{timer=null;}});
+  doc.show("hidden");clock=5000;doc.show("visible");
+  hls.emit({live:true,fragments:[{start:100,duration:2},{start:102,duration:2},{start:104,duration:2},{start:106,duration:2}]});
+  assert.equal(timer.ms,5000);
+  doc.show("hidden");assert.equal(timer,null);
+  clock=10000;doc.show("visible");assert.equal(hls.stops,2);assert.equal(timer.ms,8000);
+  gate.dispose();assert.equal(timer,null);assert.equal(failures,0);
 });
