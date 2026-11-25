@@ -59,3 +59,13 @@ test("Files tab keeps the RDP iframe mounted but disables hidden input", () => {
   assert.match(viewer, /role="group" aria-label="Zoom"/);
   assert.match(viewer, /color="error" startIcon=\{<LinkOffIcon \/>\}/);
 });
+
+
+test("native transport chip uses server-observed binary hops, not build-time config", () => {
+  assert.match(page, /msg\.type === "native_rdp_transport"/);
+  assert.match(page, /previous\?\.tunnel_id === msg\.tunnel_id/);
+  assert.match(page, /\["wss", "https"\]\.includes\(msg\.browser\)/);
+  assert.match(page, /\["wss", "https"\]\.includes\(msg\.agent\)/);
+  assert.match(page, /canControl && nativeDesktopWanted && !idleStopped && nativeTransport\?\.session_id === sessionId/);
+  assert.match(page, /Browser → Render:.*Render → ClientFlow:/);
+});
