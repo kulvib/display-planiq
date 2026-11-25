@@ -16,7 +16,7 @@ import { createNativeHttpsBridge } from "./nativeRdpHttpsBridge.mjs";
  * Removing the iframe destroys its WASM heap, sockets and threads.
  * RDP credentials never go through a PlanIQ HTTP endpoint or storage.
  */
-export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange, idleStopped = false, idleWarningOpen = false }) {
+export default function NativeRdpViewer({ clientId, sessionId, requestAutologin, autologinMessage, desired = true, onDesiredChange, idleStopped = false, idleWarningOpen = false, confirmedDisplay = null }) {
   const iframeRef = useRef(null);
   const httpsBridgeRef = useRef(null);
   const panelRef = useRef(null);
@@ -402,11 +402,12 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
           </Stack>
         )}
         {working && (
-          <Stack direction="row" useFlexGap flexWrap="wrap" gap={1} alignItems="center"
-            sx={{ p: 0.75, bgcolor: "rgba(15,23,42,0.65)", borderRadius: 1.5,
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr auto", lg: "minmax(0, 1fr) auto minmax(0, 1fr)" },
+              gap: 1, alignItems: "center", p: 0.75, bgcolor: "rgba(15,23,42,0.65)", borderRadius: 1.5,
               border: "1px solid rgba(148,163,184,0.14)",
               "& .MuiButton-root": { height: 36, textTransform: "none", fontWeight: 650 },
               "& .MuiIconButton-root": { width: 36, height: 36 } }}>
+            <Stack direction="row" useFlexGap flexWrap="wrap" gap={1} alignItems="center">
             <ButtonGroup size="small" variant="outlined" aria-label="Visning" sx={{ "& .MuiButton-root": { borderColor: "rgba(148,163,184,0.26)" } }}>
               <Button variant={displayMode === "fit" ? "contained" : "outlined"}
                 color={displayMode === "fit" ? "primary" : "inherit"} startIcon={<FitScreenIcon />}
@@ -433,23 +434,26 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
               <IconButton size="small" color="inherit" aria-label="Zoom ind" disabled={selectedZoom >= 200}
                 onClick={() => adjustZoom(25)}><AddIcon fontSize="small" /></IconButton>
             </Stack>
-            {resolution && (
-              <Tooltip title="Klientens faktiske skærmopløsning">
-                <Typography component="span" variant="body2" color="text.secondary"
-                  sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", px: 0.5 }}
-                  aria-label={`Skærmopløsning ${resolution.sourceWidth} gange ${resolution.sourceHeight}`}>
-                  {resolution.sourceWidth} × {resolution.sourceHeight}
-                </Typography>
-              </Tooltip>
-            )}
-            <Box sx={{ flex: 1 }} />
+            </Stack>
+            <Tooltip title="Klientens senest bekræftede fysiske skærmopløsning">
+              <Typography component="span" variant="body2"
+                sx={{ gridColumn: { xs: "1 / -1", lg: "2" }, gridRow: { xs: 2, lg: 1 },
+                  justifySelf: "center", alignSelf: "center", color: "#cbd5e1",
+                  whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
+                aria-label={confirmedDisplay ? `Skærmopløsning ${confirmedDisplay.width} gange ${confirmedDisplay.height}` : "Skærmopløsning ikke rapporteret"}>
+                {confirmedDisplay ? `${confirmedDisplay.width} × ${confirmedDisplay.height}` : "—"}
+              </Typography>
+            </Tooltip>
+            <Stack direction="row" gap={1} alignItems="center" justifyContent="flex-end"
+              sx={{ gridColumn: { xs: 2, lg: 3 }, gridRow: 1 }}>
             <Tooltip title={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}>
               <IconButton size="small" color="inherit" onClick={toggleFullscreen} aria-label={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"} sx={{ border: "1px solid rgba(148,163,184,0.26)", borderRadius: 1 }}>
                 {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
               </IconButton>
             </Tooltip>
             <Button size="small" variant="outlined" color="error" startIcon={<LinkOffIcon />} onClick={disconnect}>Afbryd</Button>
-          </Stack>
+            </Stack>
+          </Box>
         )}
         {working && fullscreenError && <Typography role="alert" variant="caption">{fullscreenError}</Typography>}
         {working && !resolution && (

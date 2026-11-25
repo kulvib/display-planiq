@@ -12,7 +12,7 @@ import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateCl
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { createLivestreamBrowserTiming, createHlsReserveController, latestManifestSegment, hlsHttpTransportLabel, livestreamLatencyStatus } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
-import { createPilotTransport, generationFromHeartbeat, pilotGenerationFromHeartbeat } from "./livestreamPilotTransport.mjs";
+import { createHlsGenerationObserver, createPilotTransport, generationFromHeartbeat, pilotGenerationFromHeartbeat } from "./livestreamPilotTransport.mjs";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
 const HEALTH_STARTUP_WARNING_MS = 15_000;
@@ -742,6 +742,7 @@ export default function ClientDetailsLivestreamSection({
   const lastStaleRestartAtRef = useRef(0);
   const lastDisplayRuntimeSignatureRef = useRef("");
   const lastObservedGenerationRef = useRef(null);
+  const manifestGenerationSeenRef = useRef(false);
 
   useEffect(() => {
     setViewerContactEstablished(false);
@@ -885,6 +886,9 @@ export default function ClientDetailsLivestreamSection({
     if (!clientId || clientOnline === false || !mobileViewerActive) return;
     const streamHasBeenActive = serverReady || manifestReady || lastSegNum !== null || Boolean(lastSegmentTimestamp);
     if (!streamHasBeenActive) return;
+    // A tagged HLS player waits for actual new media, not an earlier display
+    // acknowledgement. The previous path remains the native/legacy fallback.
+    if (manifestGenerationSeenRef.current) return;
     // Backend owns the new generation; reset only the local browser media.
     resetStreamState();
     setAutoStartStatus("Tilpasser livestream til ny skærmopløsning …");
@@ -907,6 +911,7 @@ export default function ClientDetailsLivestreamSection({
     }
     lastDisplayRuntimeSignatureRef.current = "";
     lastObservedGenerationRef.current = null;
+    manifestGenerationSeenRef.current = false;
     setInactivityStopped(false);
     setInactivityStopMessage("");
     setAutoStartStatus("");
@@ -1092,7 +1097,7 @@ export default function ClientDetailsLivestreamSection({
           setMediaCapabilityClientId(clientId);
         }
         const observedGeneration = generationFromHeartbeat(payload);
-        if (lastObservedGenerationRef.current && observedGeneration &&
+        if (!manifestGenerationSeenRef.current && lastObservedGenerationRef.current && observedGeneration &&
             lastObservedGenerationRef.current !== observedGeneration) {
           setLocalRefreshKey((key) => key + 1);
         }
@@ -1301,6 +1306,13 @@ export default function ClientDetailsLivestreamSection({
       } catch {}
     };
 
+    manifestGenerationSeenRef.current = false;
+    const observeManifestGeneration = createHlsGenerationObserver({
+      onObserved: () => { if (!disposed) manifestGenerationSeenRef.current = true; },
+      onChange: () => queueMicrotask(() => {
+        if (!disposed) setLocalRefreshKey((key) => key + 1);
+      }),
+    });
     let reportedPlayable = false;
     const reportPlayable = () => queueMicrotask(() => {
       if (disposed || reportedPlayable || video.paused || video.readyState < 2) return;
@@ -1357,6 +1369,9 @@ export default function ClientDetailsLivestreamSection({
               const token = mediaCapabilityRef.current;
               if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
               xhr.withCredentials = false;
+              xhr.addEventListener("load", () => {
+                if (!disposed) observeManifestGeneration(xhr);
+              }, { once: true });
             },
           });
 

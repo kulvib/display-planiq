@@ -774,8 +774,9 @@ export async function getClientPresence(id) {
  * rekonstruere liveness fra chrome-/network-felter. /presence bevares som et
  * selvstændigt API for andre callers, men detaljesiden behøver ikke dobbeltpoll.
  */
-export async function getChromeStatus(id, { fallbackToClient = false } = {}) {
+export async function getChromeStatus(id, { fallbackToClient = false, signal } = {}) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/chrome-status`, {
+    signal,
     headers: authHeaders({ Accept: "application/json" }),
     credentials: "include",
   });

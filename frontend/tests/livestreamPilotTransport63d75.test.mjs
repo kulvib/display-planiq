@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generationFromHeartbeat, pilotGenerationFromHeartbeat, pilotMediaEndpoints } from "../src/pages/clientdetailspage/livestreamPilotTransport.mjs";
+import { createHlsGenerationObserver, generationFromHeartbeat, pilotGenerationFromHeartbeat, pilotMediaEndpoints } from "../src/pages/clientdetailspage/livestreamPilotTransport.mjs";
 
 const id = "62b641a3-bdad-4454-a5fd-cfb8e6774582";
 
@@ -29,4 +29,16 @@ test("ordinary HLS observes valid backend generations without enabling WSS", () 
   assert.equal(pilotGenerationFromHeartbeat({generation:{id}}),null);
   assert.equal(generationFromHeartbeat({generation:{id:"../bad"}}),null);
   assert.equal(generationFromHeartbeat(null),null);
+});
+
+test("manifest generation change is bound to successful media and rebuilds only once", () => {
+  const seen = [], changes = [];
+  const observe = createHlsGenerationObserver({onObserved: value => seen.push(value), onChange: value => changes.push(value)});
+  const other = "11111111-1111-1111-1111-111111111111";
+  const xhr = (value, status=200) => ({ status, getResponseHeader: key => key === "X-ClientFlow-HLS-Generation" ? value : null });
+  observe(xhr(null)); observe(xhr("../bad")); observe(xhr(id)); observe(xhr(id));
+  observe(xhr(other, 404)); assert.deepEqual(changes, []);
+  observe(xhr(other)); observe(xhr(other)); observe(xhr(id));
+  assert.deepEqual(changes, [other]);
+  assert.deepEqual(seen, [id, id, other]);
 });

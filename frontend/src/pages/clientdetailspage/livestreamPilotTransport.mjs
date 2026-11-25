@@ -8,6 +8,23 @@ export function generationFromHeartbeat(payload) {
   const id = payload?.generation?.id;
   return typeof id === "string" && GENERATION.test(id) ? id : null;
 }
+// Observe the generation attached to the actual authenticated manifest.
+export function createHlsGenerationObserver({ onObserved = () => {}, onChange }) {
+  let previous = null;
+  let changed = false;
+  return (xhr) => {
+    if (changed || xhr.status < 200 || xhr.status >= 300) return;
+    const id = xhr.getResponseHeader?.("X-ClientFlow-HLS-Generation");
+    if (typeof id !== "string" || !GENERATION.test(id)) return;
+    onObserved(id);
+    if (previous && previous !== id) {
+      changed = true;
+      onChange(id);
+    } else {
+      previous = id;
+    }
+  };
+}
 export function pilotGenerationFromHeartbeat(payload) {
   return payload?.continuous_wss_pilot === true ? generationFromHeartbeat(payload) : null;
 }

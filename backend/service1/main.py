@@ -378,7 +378,7 @@ app.add_middleware(
     ],
     # Direct browser→API transport gør disse data cross-origin. Eksponér kun
     # dataminimeret request-id og Server-Timing; aldrig SQL/host/credentials.
-    expose_headers=[REQUEST_ID_HEADER, "Server-Timing", "X-ClientFlow-Sequence"],
+    expose_headers=[REQUEST_ID_HEADER, "Server-Timing", "X-ClientFlow-Sequence", "X-ClientFlow-HLS-Generation"],
 )
 
 
@@ -465,6 +465,7 @@ class HLSCORSMiddleware(BaseHTTPMiddleware):
             response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Access-Control-Allow-Methods"]     = "GET, OPTIONS, HEAD"
             response.headers["Access-Control-Allow-Headers"]     = "Authorization, Content-Type, Range"
+            response.headers["Access-Control-Expose-Headers"] = "X-ClientFlow-HLS-Generation"
 
             if request.url.path.endswith((".m3u8", ".ts", ".mp4")):
                 response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -649,6 +650,9 @@ class AuthenticatedHLSStaticFiles(StaticFiles):
             except (FileNotFoundError, IsADirectoryError, PermissionError):
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HLS stream ikke fundet")
             response = Response(content=payload, media_type="application/vnd.apple.mpegurl")
+            generation = livestream_media.manifest_generation(payload)
+            if generation:
+                response.headers["X-ClientFlow-HLS-Generation"] = generation
         else:
             response = await super().get_response(path, scope)
 

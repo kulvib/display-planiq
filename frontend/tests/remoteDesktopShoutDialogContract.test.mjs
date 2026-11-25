@@ -33,12 +33,15 @@ test("Shout out dialog preserves keyboard isolation and native viewer placement"
   assert.match(source, /inert=\{activeTab !== "desktop" \? true : undefined\}/);
 });
 
-test("native toolbar displays the actual source resolution, independent of zoom", () => {
+test("native toolbar centers confirmed physical resolution independently of canvas and zoom", () => {
   const viewer = readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
   const toolbar = viewer.slice(viewer.indexOf('aria-label="Zoom"'), viewer.indexOf('title={fullscreen'));
-  assert.match(toolbar, /\{resolution && \(/);
-  assert.match(toolbar, /\{resolution\.sourceWidth\} × \{resolution\.sourceHeight\}/);
-  assert.doesNotMatch(toolbar, /\{resolution\.displayWidth\} × \{resolution\.displayHeight\}/);
-  assert.match(viewer, /setResolution\(\{ sourceWidth, sourceHeight, displayWidth, displayHeight, mode \}\)/);
-  assert.match(viewer, /setResolution\(null\)/);
+  assert.match(toolbar, /confirmedDisplay\.width/);
+  assert.match(toolbar, /confirmedDisplay\.height/);
+  assert.match(toolbar, /justifySelf: "center", alignSelf: "center"/);
+  assert.doesNotMatch(toolbar, /resolution\.sourceWidth|resolution\.displayWidth/);
+  assert.match(source, /confirmedDisplay=\{confirmedDisplay\}/);
+  assert.match(source, /getChromeStatus\(clientId, \{ signal \}\)/);
+  assert.match(source, /waitForControlRoomRealtime\(capability, generation, 25, signal\)/);
+  assert.match(source, /scope\?\.cancel\(\)/);
 });
