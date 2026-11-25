@@ -737,7 +737,10 @@ export default function ClientDetailsLivestreamSection({
   const [healthInfo, setHealthInfo]             = useState(null);
   const [viewerContactEstablished, setViewerContactEstablished] = useState(false);
   const [viewerContactActiveViewers, setViewerContactActiveViewers] = useState(null);
-  const [mediaCapability, setMediaCapability] = useState("");
+  // Only readiness (not the rotating bearer value) owns player lifecycle.
+  // Health and HLS requests always read the newest capability from the ref.
+  const [mediaCapabilityClientId, setMediaCapabilityClientId] = useState(null);
+  const hasMediaCapability = mediaCapabilityClientId !== null && mediaCapabilityClientId === clientId;
   const [pageVisible, setPageVisible] = useState(() => document.visibilityState !== "hidden");
   const [inactivityStopped, setInactivityStopped] = useState(false);
   const [inactivityStopMessage, setInactivityStopMessage] = useState("");
@@ -772,7 +775,7 @@ export default function ClientDetailsLivestreamSection({
     setViewerContactEstablished(false);
     setViewerContactActiveViewers(null);
     mediaCapabilityRef.current = "";
-    setMediaCapability("");
+    setMediaCapabilityClientId(null);
   }, [clientId]);
 
   const theme    = useTheme();
@@ -1053,7 +1056,7 @@ export default function ClientDetailsLivestreamSection({
     // A stopped mobile viewer must not continue using a previously granted HLS token.
     resetStreamState();
     mediaCapabilityRef.current = "";
-    setMediaCapability("");
+    setMediaCapabilityClientId(null);
     setViewerContactEstablished(false);
   }, [isTouchHandset, mobileSession.isActive, resetStreamState]);
 
@@ -1170,7 +1173,7 @@ export default function ClientDetailsLivestreamSection({
         }
         if (payload?.media_capability) {
           mediaCapabilityRef.current = String(payload.media_capability);
-          setMediaCapability(String(payload.media_capability));
+          setMediaCapabilityClientId(clientId);
         }
         setViewerContactEstablished(true);
         if (Number.isFinite(Number(payload?.active_viewers))) {
@@ -1277,7 +1280,7 @@ export default function ClientDetailsLivestreamSection({
   // Poll /health
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || inactivityStopped || !pageVisible || !mediaCapability || !mobileViewerActive) return;
+    if (!clientId || inactivityStopped || !pageVisible || !hasMediaCapability || !mobileViewerActive) return;
     setServerReady(false);
     setStreamStale(false);
     let stop = false;
@@ -1329,13 +1332,13 @@ export default function ClientDetailsLivestreamSection({
 
     pollUntilReady();
     return () => { stop = true; };
-  }, [clientId, effectiveRefreshKey, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive]);
+  }, [clientId, effectiveRefreshKey, inactivityStopped, pageVisible, hasMediaCapability, mobileViewerActive]);
 
   // -------------------------------------------------------------------------
   // HLS.js lifecycle
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!clientId || !serverReady || inactivityStopped || !pageVisible || !mediaCapability || !mobileViewerActive) return undefined;
+    if (!clientId || !serverReady || inactivityStopped || !pageVisible || !hasMediaCapability || !mobileViewerActive) return undefined;
     setManifestReady(false);
     setNeedsTapToPlay(false);
     setBuffering(false);
@@ -1575,7 +1578,7 @@ export default function ClientDetailsLivestreamSection({
       setBufferStats(null);
       setMediaTransport(null);
     };
-  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive, hlsBrowserTiming]);
+  }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, hasMediaCapability, mobileViewerActive, hlsBrowserTiming]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
@@ -1623,7 +1626,7 @@ export default function ClientDetailsLivestreamSection({
     }
 
     const check = () => {
-      if (stopped || !manifestReady) return;
+      if (stopped || !manifestReady || document.visibilityState === "hidden") return;
 
       const age = lastHlsProgressAtRef.current
         ? (Date.now() - lastHlsProgressAtRef.current) / 1000
@@ -1658,6 +1661,7 @@ export default function ClientDetailsLivestreamSection({
     if (!clientId || !manifestReady || inactivityStopped || !mobileViewerActive) return undefined;
 
     const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       const video = videoRef.current;
       const hls = hlsRef.current;
       if (!video || !hls) return;
