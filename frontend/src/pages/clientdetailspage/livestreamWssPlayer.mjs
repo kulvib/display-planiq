@@ -182,6 +182,7 @@ export function createWssPlayer(video, {
         (announced && now - lastProgressAt > STALE_MS)) fail("media-timeout");
   }
   video.muted = true;
+  video.autoplay = false;
   video.playsInline = true;
   const timer = setInterval(tick, 500);
   documentRef.addEventListener("visibilitychange", visible);
