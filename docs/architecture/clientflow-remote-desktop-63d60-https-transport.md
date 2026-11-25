@@ -242,3 +242,19 @@ Deploy backend first; new browser requires the stable routes. Physical
 measurement must verify actual preflight reduction and CPU impact; browser
 cache behavior varies. This does not change agent admission, fleet policy,
 release approval or the four binary transport modes.
+
+
+### 63D-68C — canonical transition and source integrity
+
+Canonical release metadata is already 1.3.48 / sequence 1249. The
+release-owned lifecycle/sealer sockets and pinned root helper payload
+are already present. Verify root helper pin inventory and exact bytes at
+build time, and compare the four native RDP runtime modules in the freshly
+built wheel to canonical source before packaging. Keep existing runtime
+proof, reproducibility, signature and approval gates. Refuse canonical
+activation over leftover temporary privileged sources or shadow runtime,
+including dangling symlinks. A passive operator receipt is not an active
+override. No automatic deletion of pilot artifacts. Existing independent
+physical cleanup and watchdog protections remain. Viborg1-only admission
+remains in backend, root and runtime; fleet authorization is a separate
+cross-layer change. No deployment or release approval here.
