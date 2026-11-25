@@ -1,0 +1,30 @@
+# Source-only candidate. The ExecStart path MUST be root-SHA-verified
+# and installed via canonical ClientFlow release packaging before enabling.
+# Never grant ClientFlow agent access to root credentials or sudo.
+[Unit]
+Description=ClientFlow one-time ECDH sealed GNOME RDP credentials
+Requires=clientflow-rdp-autologin.socket
+After=clientflow-rdp-autologin.socket
+ConditionPathExists=/var/lib/clientflow/rdp-pilot-63d30/state.json
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I -B /usr/local/libexec/clientflow/clientflow_63d49_autologin_broker.py
+RuntimeMaxSec=360
+TimeoutStopSec=5
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+SystemCallArchitectures=native

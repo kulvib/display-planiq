@@ -7,6 +7,10 @@ import {
   CircularProgress,
   Container,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Paper,
   Stack,
   TextField,
@@ -14,6 +18,8 @@ import {
   Typography,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import MonitorIcon from "@mui/icons-material/Monitor";
+import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import KeyboardIcon from "@mui/icons-material/Keyboard";
 import MouseIcon from "@mui/icons-material/Mouse";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
@@ -32,6 +38,7 @@ import {
 } from "../../../api";
 import RemoteDesktopFileManager from "./RemoteDesktopFileManager";
 import NativeRdpViewer from "./NativeRdpViewer";
+import { installNativeRdpPageLifecycle } from "./nativeRdpPageLifecycle.mjs";
 import { createLatestRemoteFramePainter } from "./latestRemoteFramePainter.mjs";
 import { createRemoteDesktopTiming } from "./remoteDesktopTiming.mjs";
 import { createLatestPointerMoveScheduler } from "./latestPointerMoveScheduler.mjs";
@@ -198,8 +205,10 @@ export default function RemoteDesktop() {
   const [agentConnected, setAgentConnected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const nativeRdpPilotEnabled = import.meta.env.VITE_NATIVE_RDP_PILOT === "true" && Number(clientId) === 3;
-  const nativeRequested = nativeRdpPilotEnabled && new URLSearchParams(window.location.search).get("native_rdp") === "1";
-  const [nativeRdpMode, setNativeRdpMode] = useState(nativeRequested);
+  const nativeRequested = nativeRdpPilotEnabled;
+  const nativeRdpMode = nativeRequested;
+  // 63D-49: opaque, one-use ECDH ciphertext only. No RDP credentials here.
+  const [nativeRdpAutologinMessage, setNativeRdpAutologinMessage] = useState(null);
   const nativeRdpModeRef = useRef(nativeRequested);
   const [status, setStatus] = useState("Ikke forbundet");
   const [error, setError] = useState("");
@@ -231,6 +240,33 @@ export default function RemoteDesktop() {
   const [keyboardEnabled, setKeyboardEnabled] = useState(false);
   const [keyboardMode, setKeyboardMode] = useState(REMOTE_KEYBOARD_MODE_STANDARD);
   const [activeTab, setActiveTab] = useState("desktop");
+  const [nativeDesktopWanted, setNativeDesktopWanted] = useState(true);
+  const [idleWarning, setIdleWarning] = useState(null);
+  const [idleSeconds, setIdleSeconds] = useState(60);
+  const [idleStopped, setIdleStopped] = useState(false);
+  const idleStoppedRef = useRef(false);
+  const markIdleStopped = useCallback(() => {
+    idleStoppedRef.current = true;
+    setIdleStopped(true);
+    setIdleWarning(null);
+    setNativeDesktopWanted(false);
+  }, []);
+  useEffect(() => {
+    idleStoppedRef.current = false;
+    setIdleStopped(false);
+    setIdleWarning(null);
+    setNativeDesktopWanted(true);
+  }, [clientId]);
+  useEffect(() => {
+    if (!nativeDesktopWanted) setIdleWarning(null);
+  }, [nativeDesktopWanted]);
+  useEffect(() => {
+    if (!idleWarning) return undefined;
+    const tick = () => setIdleSeconds(Math.max(0, Math.ceil((idleWarning.deadline - Date.now()) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 250);
+    return () => window.clearInterval(timer);
+  }, [idleWarning]);
   const [dragOverUpload, setDragOverUpload] = useState(false);
   const [shoutText, setShoutText] = useState("");
   const [shoutSending, setShoutSending] = useState(false);
@@ -391,11 +427,15 @@ export default function RemoteDesktop() {
   }, [startStream]);
 
   const connect = useCallback(async () => {
-    if (!clientId) return;
+    if (!clientId || (nativeRequested && (!window.crossOriginIsolated || idleStoppedRef.current))) return;
     const attemptId = ++connectAttemptRef.current;
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     const scheduleReconnect = (reason = "") => {
-      if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current) return;
+      if (attemptId !== connectAttemptRef.current || reconnectTimerRef.current || idleStoppedRef.current) return;
       const baseDelay = Math.min(1000 * (2 ** Math.min(reconnectAttemptRef.current, 4)), 10_000);
       const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
       reconnectAttemptRef.current += 1;
@@ -416,9 +456,10 @@ export default function RemoteDesktop() {
     setStatus("Forbinder...");
     setConnected(false);
     setAgentConnected(false);
+    setSessionId(null);
+    setNativeRdpAutologinMessage(null);
     setKeyboardEnabled(false);
     nativeRdpModeRef.current = nativeRequested;
-    setNativeRdpMode(nativeRequested);
     setHasRemoteFrame(false);
     lastFrameStateChangeRef.current = 0;
     lastFrameGeometryRef.current = null;
@@ -465,7 +506,25 @@ export default function RemoteDesktop() {
 
     let ws;
     try {
-      ws = createWebSocketWithHttpsFallback({
+      if (nativeRequested && import.meta.env.VITE_NATIVE_RDP_TRANSPORT === "https") {
+        if (import.meta.env.VITE_NATIVE_BINARY_HTTPS_ENABLED !== "true") throw new Error("ClientFlow HTTPS er ikke godkendt");
+        const opened = await openRemoteDesktopBrowserHttpRelay(clientId);
+        const relayId = String(opened?.relay_id || "");
+        if (!relayId) throw new Error("ClientFlow-forbindelsen kunne ikke oprettes");
+        if (attemptId !== connectAttemptRef.current || idleStoppedRef.current) {
+          void closeRemoteDesktopBrowserHttpRelay(clientId, relayId).catch(() => {});
+          return;
+        }
+        ws = createHttpRelaySocket({
+          relayId,
+          sendPayload: payload => sendRemoteDesktopBrowserHttpRelay(clientId, relayId, payload),
+          pollMessages: () => pollRemoteDesktopBrowserHttpRelay(clientId, relayId, 25),
+          closeRelay: () => closeRemoteDesktopBrowserHttpRelay(clientId, relayId),
+        });
+        ws.transport = "https_long_poll";
+      } else ws = nativeRequested ? new WebSocket(
+        getRemoteDesktopBrowserWsUrl(clientId), getBrowserWsProtocols(ticket)
+      ) : createWebSocketWithHttpsFallback({
         openWebSocket: () => new WebSocket(
           getRemoteDesktopBrowserWsUrl(clientId),
           getBrowserWsProtocols(ticket)
@@ -485,11 +544,13 @@ export default function RemoteDesktop() {
     } catch (err) {
       setError(err?.message || "Kunne ikke åbne WebSocket-forbindelsen.");
       setStatus("WebSocket-fejl");
+      if (nativeRequested && import.meta.env.VITE_NATIVE_RDP_TRANSPORT !== "https") scheduleReconnect("Forbindelsen kunne ikke oprettes");
       return;
     }
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (attemptId !== connectAttemptRef.current) return;
       reconnectAttemptRef.current = 0;
       setError("");
       setConnected(true);
@@ -500,14 +561,27 @@ export default function RemoteDesktop() {
     ws.onclose = (event) => {
       if (attemptId !== connectAttemptRef.current) return;
       setConnected(false);
+      setSessionId(null);
+      setNativeRdpAutologinMessage(null);
       pointerMoves.clear();
       setTransportMode(null);
       setAgentConnected(false);
       setKeyboardEnabled(false);
+      setIdleWarning(null);
+      if (nativeRequested && event.code === 4408) {
+        markIdleStopped();
+        setStatus("ClientFlow-forbindelsen blev afsluttet på grund af inaktivitet.");
+        return;
+      }
+      if (nativeRequested && [4401, 4403, 1008].includes(event.code)) {
+        setStatus("Forbindelsen er ikke længere godkendt.");
+        return;
+      }
       scheduleReconnect(`Forbindelse lukket${event.reason ? `: ${event.reason}` : ""}`);
     };
 
     ws.onerror = () => {
+      if (attemptId !== connectAttemptRef.current) return;
       setError("WebSocket-fejl");
       setStatus("WebSocket-fejl");
     };
@@ -521,6 +595,25 @@ export default function RemoteDesktop() {
         return;
       }
 
+      if (msg.type === "native_rdp_idle") {
+        if (msg.phase === "warning" && Number.isInteger(msg.seconds) && msg.seconds >= 1 && msg.seconds <= 60 &&
+            typeof msg.request_id === "string") {
+          setIdleSeconds(msg.seconds);
+          setIdleWarning({ requestId: msg.request_id, deadline: Date.now() + msg.seconds * 1000 });
+        } else if (msg.phase === "reset") {
+          setIdleWarning(previous => previous?.requestId === msg.request_id ? null : previous);
+        } else if (msg.phase === "expired") {
+          markIdleStopped();
+        }
+        return;
+      }
+
+      if (msg.type === "native_rdp_autologin_envelope" ||
+          msg.type === "native_rdp_autologin_denied") {
+        setNativeRdpAutologinMessage(msg);
+        return;
+      }
+
       if (msg.type === "pong") {
         if (pingSentAtRef.current !== null) {
           setRoundTripMs(Math.round(Math.max(0, performance.now() - pingSentAtRef.current)));
@@ -530,6 +623,8 @@ export default function RemoteDesktop() {
       }
 
       if (msg.type === "hello") {
+        setIdleWarning(null);
+        setNativeRdpAutologinMessage(null);
         setSessionId(msg.session_id);
         setAgentConnected(!!msg.agent_connected);
         const geometry = getRemoteScreenGeometryFromMessage(msg, true);
@@ -777,6 +872,7 @@ export default function RemoteDesktop() {
     clientId,
     nativeRequested,
     framePainter,
+    markIdleStopped,
     markRemoteActivity,
     paintLatestFrame,
     pointerMoves,
@@ -791,9 +887,20 @@ export default function RemoteDesktop() {
   }, [connect]);
 
   useEffect(() => {
+    if (nativeRequested && !window.crossOriginIsolated) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("native_rdp") !== "1") {
+        url.searchParams.set("native_rdp", "1");
+        window.location.replace(url.href);
+        return undefined;
+      }
+      setError("Remote Desktop kunne ikke indlæses sikkert. Genindlæs siden.");
+      return undefined;
+    }
     connectRef.current = connect;
     void connect();
-    return () => {
+    const leave = () => {
+      // Invalidate pending tickets and callbacks before closing the old socket.
       connectAttemptRef.current += 1;
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
@@ -807,15 +914,35 @@ export default function RemoteDesktop() {
         window.clearTimeout(hiddenStopTimerRef.current);
         hiddenStopTimerRef.current = null;
       }
+      const socket = wsRef.current;
+      wsRef.current = null;
       try {
-        wsRef.current?.send(JSON.stringify({ type: "stop_stream" }));
-        wsRef.current?.close();
+        if (!nativeRequested && socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "stop_stream" }));
+        }
+      } catch {}
+      try {
+        socket?.close();
       } catch {}
     };
-  }, [connect]);
+    const detachPageLifecycle = nativeRequested ? installNativeRdpPageLifecycle(window, {
+      leave: () => {
+        leave();
+        setConnected(false);
+        setAgentConnected(false);
+        setSessionId(null);
+        setNativeRdpAutologinMessage(null);
+      },
+      restore: () => { void connectRef.current?.(); },
+    }) : () => {};
+    return () => {
+      detachPageLifecycle();
+      leave();
+    };
+  }, [connect, nativeRequested]);
 
   useEffect(() => {
-    if (!connected || !agentConnected) return undefined;
+    if (nativeRequested || !connected || !agentConnected) return undefined;
 
     const applyIdleMode = () => {
       if (!pageVisibleRef.current) return;
@@ -874,7 +1001,7 @@ export default function RemoteDesktop() {
       window.removeEventListener("pointerdown", handleActivity);
       window.removeEventListener("wheel", handleActivity);
     };
-  }, [connected, agentConnected, markRemoteActivity, startStream, stopStream]);
+  }, [nativeRequested, connected, agentConnected, markRemoteActivity, startStream, stopStream]);
 
   useEffect(() => {
     if (!lastFrameTs) return undefined;
@@ -1373,7 +1500,7 @@ export default function RemoteDesktop() {
 
   const requestFullscreen = useCallback(() => {
     const el = nativeRdpModeRef.current
-      ? document.querySelector('iframe[title="PlanIQ indbygget GNOME Remote Desktop"]')
+      ? document.querySelector('iframe[title="ClientFlow Remote Desktop"]')
       : containerRef.current;
     if (el?.requestFullscreen) el.requestFullscreen();
   }, []);
@@ -1399,14 +1526,15 @@ export default function RemoteDesktop() {
 
   const remoteScreenPanel = nativeRdpMode ? (
     <NativeRdpViewer
+      key={`${clientId}:${sessionId || "pending"}:${agentConnected ? "online" : "offline"}`}
       clientId={clientId}
-      sessionId={sessionId}
-      onFallback={() => {
-        nativeRdpModeRef.current = false;
-        setNativeRdpMode(false);
-        window.history.replaceState({}, "", window.location.pathname);
-        startStream("active", true);
-      }}
+      sessionId={connected && agentConnected ? sessionId : null}
+      requestAutologin={send}
+      autologinMessage={nativeRdpAutologinMessage}
+      desired={nativeDesktopWanted}
+      onDesiredChange={setNativeDesktopWanted}
+      idleStopped={idleStopped}
+      idleWarningOpen={Boolean(idleWarning)}
     />
   ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>
@@ -1607,8 +1735,35 @@ export default function RemoteDesktop() {
   const clientLocation = client?.locality || client?.location || client?.address || "Ikke angivet";
 
   return (
-    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 3 }, color: "#f8fafc" }}>
-      <Stack spacing={2}>
+    <Container maxWidth={nativeRequested ? false : "xl"} sx={{ py: { xs: 1.25, md: 2 }, color: "#f8fafc", ...(nativeRequested ? { bgcolor: "#020617", minHeight: "100vh" } : {}) }}>
+      <Stack spacing={1.5}>
+        {nativeRequested ? (
+          <Paper elevation={0} sx={{ px: { xs: 1.5, md: 2.5 }, py: { xs: 1.25, md: 1.6 }, bgcolor: "rgba(15,23,42,0.88)", border: "1px solid rgba(148,163,184,0.16)", borderRadius: 2 }}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} alignItems={{ xs: "stretch", md: "center" }}>
+              <Stack direction="row" spacing={1.2} sx={{ alignItems: "center", flex: 1, minWidth: 0 }}>
+                <Box sx={{ width: 42, height: 42, borderRadius: 1.5, bgcolor: "rgba(37,99,235,0.20)", border: "1px solid rgba(96,165,250,0.30)", display: "grid", placeItems: "center", flex: "0 0 auto" }}><MonitorIcon /></Box>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 950, lineHeight: 1.12 }}>Remote Desktop</Typography>
+                  <Typography variant="body2" sx={{ color: "rgba(226,232,240,0.72)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={String(clientName)}>{clientName}</Typography>
+                  <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap", mt: 0.8 }}>
+                    <Chip size="small" label={`Organisation: ${organizationName}`} variant="outlined" sx={compactDarkChipSx("neutral")} />
+                    <Chip size="small" label={`Klient ID: ${clientId || "Ukendt"}`} variant="outlined" sx={compactDarkChipSx("neutral")} />
+                    <Chip size="small" label={`Lokalitet: ${clientLocation}`} variant="outlined" sx={compactDarkChipSx("neutral")} />
+                  </Stack>
+                </Box>
+              </Stack>
+              <Stack direction="row" spacing={0.75} alignItems="center">
+                <Chip size="small" label={canControl ? "Klient tilgængelig" : "Venter på klient"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />
+                {(!canControl || idleStopped) && <Button size="small" variant="outlined" onClick={() => {
+                  idleStoppedRef.current = false;
+                  setIdleStopped(false);
+                  setNativeDesktopWanted(true);
+                  void connect();
+                }} disabled={!window.crossOriginIsolated}>{idleStopped ? "Forbind" : "Genforbind"}</Button>}
+              </Stack>
+            </Stack>
+          </Paper>
+        ) : <>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.2} sx={{
           alignItems: { xs: "stretch", md: "center" }
         }}>
@@ -1616,32 +1771,11 @@ export default function RemoteDesktop() {
             Remote Desktop
           </Typography>
 
-          <Chip label={connected ? "Browser forbundet" : "Browser ikke forbundet"} sx={compactDarkChipSx(connected ? "success" : "neutral")} />
-          <Chip label={agentConnected ? "Klient-agent forbundet" : "Venter på klient-agent"} sx={compactDarkChipSx(agentConnected ? "success" : "warning")} />
+          {!nativeRequested && <><Chip label={connected ? "Browser forbundet" : "Browser ikke forbundet"} sx={compactDarkChipSx(connected ? "success" : "neutral")} />
+          <Chip label={agentConnected ? "Klient-agent forbundet" : "Venter på klient-agent"} sx={compactDarkChipSx(agentConnected ? "success" : "warning")} /></>}
 
-          {nativeRdpPilotEnabled && (
-            <Button
-              disabled={!connected || !agentConnected || !sessionId}
-              variant={nativeRdpMode ? "contained" : "outlined"}
-              onClick={() => {
-                if (nativeRdpMode) {
-                  nativeRdpModeRef.current = false;
-                  setNativeRdpMode(false);
-                  window.history.replaceState({}, "", window.location.pathname);
-                  startStream("active", true);
-                } else if (!window.crossOriginIsolated) {
-                  window.location.assign(window.location.pathname + "?native_rdp=1");
-                } else {
-                  stopStream();
-                  nativeRdpModeRef.current = true;
-                  setNativeRdpMode(true);
-                  setKeyboardEnabled(false);
-                }
-              }}
-            >
-              {nativeRdpMode ? "GNOME RDP aktiv · skift til JPEG" : "GNOME RDP · ny pilot"}
-            </Button>
-          )}
+          {nativeRequested && <Chip label={canControl ? "Klar" : "Ikke forbundet"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />}
+          {!nativeRequested && <>
           <Button onClick={connect} startIcon={<RefreshIcon />} variant="outlined">Genforbind</Button>
           <Button onClick={requestFullscreen} startIcon={<FullscreenIcon />} variant="outlined">Fuld skærm</Button>
           <Button
@@ -1674,6 +1808,7 @@ export default function RemoteDesktop() {
                 : "Mac → Ubuntu: Fra"}
             </Button>
           </Tooltip>
+          </>}
         </Stack>
 
         <Paper
@@ -1695,11 +1830,12 @@ export default function RemoteDesktop() {
             </Box>
             <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
               <Chip label={`Organisation: ${organizationName}`} sx={compactDarkChipSx("neutral")} />
-              <Chip label={`ID: ${clientId || "Ukendt"}`} sx={compactDarkChipSx("neutral")} />
+              {!nativeRequested && <Chip label={`ID: ${clientId || "Ukendt"}`} sx={compactDarkChipSx("neutral")} />}
               <Chip label={`Lokation: ${clientLocation}`} sx={compactDarkChipSx("neutral")} />
             </Stack>
           </Stack>
         </Paper>
+        </>}
 
         <Paper
           elevation={0}
@@ -1717,6 +1853,9 @@ export default function RemoteDesktop() {
             variant={activeTab === "desktop" ? "contained" : "text"}
             color={activeTab === "desktop" ? "primary" : "inherit"}
             onClick={() => setActiveTab("desktop")}
+            startIcon={<MonitorIcon />}
+            aria-pressed={activeTab === "desktop"}
+            sx={{ minHeight: 36, textTransform: "none", fontWeight: 700, px: 2 }}
           >
             Remote Desktop
           </Button>
@@ -1724,11 +1863,37 @@ export default function RemoteDesktop() {
             variant={activeTab === "files" ? "contained" : "text"}
             color={activeTab === "files" ? "primary" : "inherit"}
             onClick={() => setActiveTab("files")}
+            startIcon={<FolderOutlinedIcon />}
+            aria-pressed={activeTab === "files"}
+            sx={{ minHeight: 36, textTransform: "none", fontWeight: 700, px: 2 }}
           >
             Filer
           </Button>
         </Paper>
 
+        {nativeRequested && idleStopped && (
+          <Typography variant="body2" role="status">ClientFlow-forbindelsen er afsluttet på grund af inaktivitet.</Typography>
+        )}
+        {nativeRequested && <Dialog open={Boolean(idleWarning)} disableEscapeKeyDown
+          container={() => document.fullscreenElement || document.body}
+          PaperProps={{ sx: { bgcolor: "#0f172a", color: "#f8fafc" } }}>
+          <DialogTitle>ClientFlow-forbindelsen udløber snart</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">Forbindelsen afsluttes automatisk på grund af inaktivitet.</Typography>
+            <Typography variant="h4" textAlign="center" sx={{ mt: 2, fontVariantNumeric: "tabular-nums" }}>
+              {String(Math.floor(idleSeconds / 60)).padStart(2, "0")}:{String(idleSeconds % 60).padStart(2, "0")}
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button color="inherit" onClick={() => {
+              markIdleStopped();
+              try { wsRef.current?.close(); } catch {}
+            }}>Afbryd</Button>
+            <Button variant="contained" onClick={() => {
+              if (idleWarning) send({ type: "native_rdp_user_activity", request_id: idleWarning.requestId });
+            }}>Fortsæt session</Button>
+          </DialogActions>
+        </Dialog>}
         <AppSnackbar
           open={Boolean(actionMessage)}
           message={actionMessage}
@@ -1742,12 +1907,24 @@ export default function RemoteDesktop() {
           onClose={() => setError("")}
         />
 
-        {activeTab === "desktop" ? (
-          <Stack spacing={2}>
-            {remoteScreenPanel}
-            {shoutPanel}
-          </Stack>
-        ) : (
+        <Box sx={{ position: "relative", minWidth: 0 }}>
+          {/* Preserve the native iframe and its session across local tab switches.
+              Keep its layout dimensions: display:none would collapse SDL's viewport.
+              Hidden controls must not receive focus or pointer input. */}
+          {(nativeRequested || activeTab === "desktop") && (
+            <Stack spacing={2}
+              aria-hidden={activeTab !== "desktop" ? true : undefined}
+              inert={activeTab !== "desktop" ? true : undefined}
+              sx={activeTab !== "desktop" ? {
+                position: "absolute", top: 0, left: 0, width: "100%",
+                visibility: "hidden", pointerEvents: "none",
+              } : { minWidth: 0 }}
+            >
+              {remoteScreenPanel}
+              {shoutPanel}
+            </Stack>
+          )}
+          {activeTab === "files" && (
           <RemoteDesktopFileManager
             canControl={canControl}
             fileInputRef={fileInputRef}
@@ -1797,7 +1974,8 @@ export default function RemoteDesktop() {
             onUploadDragOver={handleUploadDragOver}
             onUploadDragLeave={handleUploadDragLeave}
           />
-        )}
+          )}
+        </Box>
 
       </Stack>
     </Container>

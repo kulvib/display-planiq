@@ -1,15 +1,42 @@
 name: FreeRDP 3.33.1 browser WASM reproducible build
 
-# Manual rebuild only: verified compiled output is source-locked and checked
-# at EVERY frontend build; avoid 80-minute CMake rebuilds on unrelated PR pushes.
+# Reuse only the exact previously proven build inputs and checked-in WASM bytes.
+# Manual dispatch or changed inputs always performs the complete upstream build.
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/apply_freerdp_em_screen_fix.py
+      - scripts/plan_freerdp_wasm_build.py
+      - scripts/prove_freerdp_pinned_wasm_chromium.py
+      - frontend/public/native-rdp/**
+      - frontend/scripts/checkNativeRdpWasm.mjs
+      - .github/workflows/freerdp-wasm-pilot.yml
 
 permissions:
   contents: read
 
 jobs:
+  plan-build:
+    name: Verify exact previously proven WASM inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rebuild: ${{ steps.plan.outputs.rebuild }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Require rebuild on any input drift or manual dispatch
+        id: plan
+        env:
+          BUILD_EVENT: ${{ github.event_name }}
+        run: python3 scripts/plan_freerdp_wasm_build.py "$BUILD_EVENT" >> "$GITHUB_OUTPUT"
+
   compile-wasm:
+    needs: plan-build
+    if: needs.plan-build.outputs.rebuild == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container: emscripten/emsdk:6.0.12
@@ -29,13 +56,22 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Apply pinned Emscripten-only SDL3 display fix
+        run: |
+          set -euo pipefail
+          python3 scripts/apply_freerdp_em_screen_fix.py upstream-freerdp
+          git -C upstream-freerdp diff --check
+
       - name: Verify immutable upstream identity and tools
         run: |
           set -euo pipefail
           test "$(git -C upstream-freerdp rev-parse HEAD)" = "65bcca1913a28cbdd7eb913599f692bd2b707991"
-          apt-get update -q
-          apt-get install -y --no-install-recommends ninja-build cmake git ca-certificates
+          if ! command -v ninja >/dev/null || ! command -v cmake >/dev/null || ! command -v git >/dev/null; then
+            apt-get update -q
+            apt-get install -y --no-install-recommends ninja-build cmake git ca-certificates
+          fi
           emcc --version
+          cmake --version
           ninja --version
 
       - name: Build official Emscripten SDL3 client and run native-WASM unit suite
@@ -82,3 +118,118 @@ jobs:
           path: verified-native-rdp/
           if-no-files-found: error
           retention-days: 14
+
+  chromium-wasm-proof:
+    name: Proof of SDL3 screen + outgoing WebSocket in Chromium
+    needs: [plan-build, compile-wasm]
+    if: >-
+      always() && !cancelled() && needs.plan-build.result == 'success' &&
+      ((needs.plan-build.outputs.rebuild == 'true' && needs.compile-wasm.result == 'success') ||
+       (needs.plan-build.outputs.rebuild == 'false' && needs.compile-wasm.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout candidate probe source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Retrieve exact rebuilt FreeRDP WASM artifact
+        if: needs.plan-build.outputs.rebuild == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: planiq-freerdp-3.33.1-wasm
+          path: ${{ runner.temp }}/verified-native-rdp
+
+      - name: Use only exact pinned repository WASM assets
+        if: needs.plan-build.outputs.rebuild == 'false'
+        run: |
+          set -euo pipefail
+          test "$(python3 scripts/plan_freerdp_wasm_build.py pull_request)" = "rebuild=false"
+          mkdir -p "${{ runner.temp }}/verified-native-rdp"
+          cp frontend/public/native-rdp/{sdl-freerdp.js,sdl-freerdp.wasm,provenance.json} "${{ runner.temp }}/verified-native-rdp"
+
+      - name: Prove SDL3 display and real Chromium WebSocket Upgrade
+        shell: bash
+        env:
+          CF_FREERDP_ASSET_ROOT: ${{ runner.temp }}/verified-native-rdp
+        run: |
+          set -euo pipefail
+          python3 -m pip install 'playwright==1.57.0'
+          python3 -m py_compile scripts/prove_freerdp_pinned_wasm_chromium.py
+          command -v google-chrome || command -v chromium || command -v chromium-browser
+          python3 scripts/prove_freerdp_pinned_wasm_chromium.py
+
+  stage-verified-binary:
+    name: Stage verified WASM as a separate integration commit (never main)
+    needs: [compile-wasm, chromium-wasm-proof]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 411 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'diagnostic/63d-freerdp-actual-chromium-browser'
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout exact reviewed PR branch head (not main)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true
+      - name: Download passed browser-proof artifact from this same workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: planiq-freerdp-3.33.1-wasm
+          path: ${{ runner.temp }}/proven-wasm
+      - name: Integrate pinned binary only after successful browser test
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          python3 -m py_compile scripts/integrate_verified_freerdp_wasm.py
+          python3 scripts/integrate_verified_freerdp_wasm.py "${{ runner.temp }}/proven-wasm"
+          git diff --check
+          node --version
+      - name: Strict frontend WASM gate and existing contracts
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "24.21.0"
+      - name: Verify source-pinned FreeRDP integration and frontend build
+        shell: bash
+        working-directory: frontend
+        env:
+          VITE_NATIVE_RDP_PILOT: "true"
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/checkNativeRdpWasm.mjs
+          node --test tests/checkNativeRdpWasm.test.mjs tests/nativeRdpWasmPilot.test.mjs
+          npm run build
+      - name: Stage only the verified integration in an isolated branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          git diff --check
+          git config user.name "PlanIQ WASM staging"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            frontend/public/native-rdp/sdl-freerdp.js \
+            frontend/public/native-rdp/sdl-freerdp.wasm \
+            frontend/public/native-rdp/provenance.json \
+            frontend/scripts/checkNativeRdpWasm.mjs \
+            SHA256SUMS.txt
+          test "$(git diff --cached --name-only | wc -l)" -eq 5
+          git diff --cached --quiet && { echo "STOP: No binary changes staged"; exit 2; } || true
+          git commit -m "chore(native-rdp): stage Chromium-proven FreeRDP 3.33.1 WASM binary"
+          test "$(git rev-parse HEAD^)" = "${{ github.event.pull_request.head.sha }}"
+          STAGING_BRANCH="stage/63d-411-wasm-${{ github.run_id }}"
+          git push origin "HEAD:refs/heads/$STAGING_BRANCH"
+          echo "STAGING_BRANCH=$STAGING_BRANCH"
+          echo "STAGING_COMMIT_SHA=$(git rev-parse HEAD)"
+          echo "PR_HEAD_UNCHANGED=${{ github.event.pull_request.head.sha }}"

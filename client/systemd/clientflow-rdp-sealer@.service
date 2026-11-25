@@ -1,0 +1,28 @@
+# Release-owned native RDP unit.
+[Unit]
+Description=ClientFlow native RDP sealer
+
+[Service]
+Type=simple
+User=root
+Group=root
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/python3 -I -B /opt/clientflow/active/client-runtime/libexec/native-rdp/entrypoint.py sealer
+RuntimeMaxSec=15
+TimeoutStopSec=15
+UMask=0077
+Restart=no
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=yes
+SystemCallArchitectures=native

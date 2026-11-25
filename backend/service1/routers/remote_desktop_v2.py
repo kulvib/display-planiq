@@ -75,6 +75,7 @@ _SAFE_NAME = re.compile(r"^[^/\\\x00-\x1f\x7f]{1,255}$")
 REMOTE_DESKTOP_HOME_PATH = "/home/clientflow-kiosk"
 
 BROWSER_MESSAGE_TYPES = {
+    "native_rdp_autologin_request", "native_rdp_autologin_cancel", "native_rdp_user_activity",
     "start_stream", "stop_stream", "mouse", "key", "text", "shout",
     "request_frame", "file_list_request", "file_download_request",
     "file_multi_download_request", "file_delete_request",
@@ -94,6 +95,31 @@ class AgentChannel:
     ready_sessions: set[str] = field(default_factory=set)
 
 
+NATIVE_IDLE_SECONDS = 600
+NATIVE_IDLE_WARNING_SECONDS = 60
+NATIVE_IDLE_CLOSE_CODE = 4408
+
+
+@dataclass
+class NativeIdle:
+    request_id: str
+    deadline: float
+    warned: bool = False
+
+    def expired(self, now: float) -> bool:
+        return now >= self.deadline
+
+    def touch(self, request_id: str, now: float) -> bool:
+        if request_id != self.request_id or self.expired(now):
+            return False
+        self.deadline = now + NATIVE_IDLE_SECONDS
+        self.warned = False
+        return True
+
+    def next_check(self) -> float:
+        return self.deadline if self.warned else self.deadline - NATIVE_IDLE_WARNING_SECONDS
+
+
 @dataclass
 class BrowserSession:
     session_id: str
@@ -108,6 +134,15 @@ class BrowserSession:
     screen_width: Optional[int] = None
     screen_height: Optional[int] = None
     geometry_fallback_attempted: bool = False
+    # 63D-49 one-shot bootstrap challenge, never a password, private key,
+    # TLS certificate or a persisted credential.
+    native_rdp_autologin_pending: Optional[str] = None
+    native_rdp_autologin_expires_at: float = 0.0
+    native_rdp_managed_request_id: Optional[str] = None
+    native_rdp_managed_channel: Any = None
+    native_rdp_managed_ready: bool = False
+    native_rdp_managed_renewable: bool = False
+    native_idle: NativeIdle | None = None
     # One most-recent waiting video frame, not an unbounded outgoing JPEG FIFO.
     # Control and file events retain FIFO semantics and the same authentication.
     pending_frame: Optional[dict[str, Any]] = None
@@ -287,6 +322,9 @@ def _agent_ready(client_id: int) -> bool:
 
 def _remote_desktop_browser_auth_state(browser: BrowserSession) -> tuple[Optional[User], str]:
     """Revalidate login-session, superadmin role and persisted RD session lifetime."""
+    idle = getattr(browser, "native_idle", None)
+    if idle is not None and idle.expired(time.monotonic()):
+        return None, "idle_timeout"
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     with Session(engine) as session:
         user = validate_browser_auth_session_binding(
@@ -597,22 +635,20 @@ async def _close_session_on_available_channels(browser: BrowserSession) -> None:
     control = CONTROL_AGENTS.get(browser.client_id)
     files = FILE_AGENTS.get(browser.client_id)
     input_channel = INPUT_AGENTS.get(browser.client_id)
-    if control:
-        try:
-            await _send_agent(control, payload)
-        except Exception:
-            pass
-    if files:
-        try:
-            await _send_agent(files, payload)
-        except Exception:
-            pass
     if input_channel:
         input_channel.ready_sessions.discard(browser.session_id)
+
+    async def close_channel(channel):
         try:
-            await _send_agent(input_channel, payload)
+            await asyncio.wait_for(_send_agent(channel, payload), timeout=3.0)
         except Exception:
+            # Closing a stale channel is best effort; the local lease and
+            # independent watchdog do not rely on the close message arriving.
             pass
+
+    # A blocked file channel must not delay stopping the desktop.
+    await asyncio.gather(*(close_channel(channel) for channel in
+                           (control, files, input_channel) if channel is not None))
 
 
 @router.put("/remote-desktop-agent/clients/{client_id}/status")
@@ -761,7 +797,7 @@ async def _unregister_agent_channel(client_id: int, channel_name: str, websocket
 
 async def _handle_control_agent_message(
     client_id: int, credential_id: str, message: dict[str, Any], *,
-    input_websocket: Any = None,
+    input_websocket: Any = None, control_websocket: Any = None,
 ) -> None:
     session_id = str(message.get("session_id") or "")
     if not session_id:
@@ -777,6 +813,77 @@ async def _handle_control_agent_message(
                 channel = INPUT_AGENTS.get(client_id)
                 if channel and channel.websocket is input_websocket and browser.session_id in BROWSERS:
                     channel.ready_sessions.add(session_id)
+        return
+    if message_type in {"native_rdp_autologin_envelope", "native_rdp_autologin_denied"}:
+        # The agent is authenticated on this control channel and the browser
+        # must STILL have a valid superadmin login-session, role and RD lease.
+        # Neither Render nor Postgres should ever see a GNOME plaintext secret.
+        request_id = str(message.get("request_id") or "")
+        if (
+            input_websocket is not None or client_id != 3 or not re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                request_id,
+            ) or browser.native_rdp_autologin_pending != request_id
+            or time.monotonic() > browser.native_rdp_autologin_expires_at
+        ):
+            return
+        managed_channel = getattr(browser, "native_rdp_managed_channel", None)
+        if managed_channel is not None and (
+            CONTROL_AGENTS.get(client_id) is not managed_channel
+            or managed_channel.websocket is not control_websocket
+            or str(managed_channel.credential_id) != str(credential_id)
+        ):
+            return
+        current, state = _remote_desktop_browser_auth_state(browser)
+        if current is None or state != "ok" or not current.is_superadmin:
+            browser.native_rdp_autologin_pending = None
+            browser.native_rdp_autologin_expires_at = 0.0
+            return
+        browser.native_rdp_autologin_pending = None
+        browser.native_rdp_autologin_expires_at = 0.0
+        if message_type == "native_rdp_autologin_denied":
+            if managed_channel is not None:
+                browser.native_idle = None
+                browser.native_rdp_managed_request_id = None
+                browser.native_rdp_managed_channel = None
+                browser.native_rdp_managed_ready = False
+                browser.native_rdp_managed_renewable = False
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied", "request_id": request_id
+            })
+            return
+        envelope = message.get("envelope")
+        keys = {
+            "schema", "session_id", "request_id", "public_key", "salt",
+            "nonce", "ciphertext", "expires_unix",
+        }
+        if (
+            not isinstance(envelope, dict) or set(envelope) != keys
+            or type(envelope.get("schema")) is not int or envelope["schema"] != 1
+            or envelope.get("session_id") != session_id
+            or envelope.get("request_id") != request_id
+            or type(envelope.get("expires_unix")) is not int
+            or not 0 < envelope["expires_unix"] - int(time.time()) <= 60
+            or any(
+                not isinstance(envelope.get(key), str)
+                or not 1 <= len(envelope[key]) <= size
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", envelope[key])
+                for key, size in (
+                    ("public_key", 100), ("salt", 24),
+                    ("nonce", 20), ("ciphertext", 1024),
+                )
+            )
+        ):
+            return
+        if managed_channel is not None:
+            browser.native_rdp_managed_ready = True
+            browser.native_rdp_managed_renewable = message.get("renewable") is True
+        # One-time, scoped opaque envelope. NO JSON logging, database,
+        # status payload, audit.details or HTTPS response with credentials.
+        await _send_browser(session_id, client_id, {
+            "type": "native_rdp_autologin_envelope",
+            "request_id": request_id, "envelope": envelope,
+        })
         return
     if message_type == "agent_ready":
         with Session(engine) as session:
@@ -1114,7 +1221,8 @@ async def remote_desktop_agent_control_ws(websocket: WebSocket, client_id: int):
                     await _close_with_reason(websocket, exc.close_code, exc.message)
                     return
                 continue
-            await _handle_control_agent_message(client_id, credential.id, decoded.payload)
+            await _handle_control_agent_message(client_id, credential.id, decoded.payload,
+                                                control_websocket=websocket)
     except WebSocketDisconnect:
         pass
     finally:
@@ -1325,6 +1433,88 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
         await _send_browser(session_id, client_id, {"type": "error", "message": "Remote Desktop-controlkanalen er ikke forbundet"})
         return
     message_type = str(message.get("type") or "")
+    if message_type == "native_rdp_autologin_cancel":
+        browser = await _browser_for_session(session_id, client_id)
+        if browser is None or client_id != 3:
+            return
+        request_id = message.get("request_id")
+        if not request_id or request_id != getattr(browser, "native_rdp_managed_request_id", None):
+            return
+        bound = browser.native_rdp_managed_channel
+        browser.native_rdp_autologin_pending = None
+        browser.native_rdp_autologin_expires_at = 0.0
+        browser.native_idle = None
+        browser.native_rdp_managed_request_id = None
+        browser.native_rdp_managed_channel = None
+        browser.native_rdp_managed_ready = False
+        browser.native_rdp_managed_renewable = False
+        from .native_rdp_tunnel import close_native_rdp_session
+        await close_native_rdp_session(client_id, session_id)
+        if control is bound:
+            await _send_agent(control, {"type": "native_rdp_autologin_cancel",
+                                        "session_id": session_id, "request_id": request_id})
+        return
+    if message_type == "native_rdp_autologin_request":
+        if client_id != 3:
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        browser = await _browser_for_session(session_id, client_id)
+        if browser is None:
+            return
+        current, state = _remote_desktop_browser_auth_state(browser)
+        if current is None or state != "ok" or not current.is_superadmin:
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        request_id = message.get("request_id")
+        public_key = message.get("public_key")
+        request_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+        if (not isinstance(request_id, str)
+                or not re.fullmatch(request_pattern, request_id)
+                or not isinstance(public_key, str)
+                or not 80 <= len(public_key) <= 92
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", public_key)):
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        now = time.monotonic()
+        managed = message.get("managed") is True
+        if (getattr(browser, "native_rdp_managed_request_id", None) is not None
+                or (browser.native_rdp_autologin_pending is not None
+                    and now < browser.native_rdp_autologin_expires_at)):
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied"
+            })
+            return
+        browser.native_rdp_autologin_pending = request_id
+        browser.native_rdp_autologin_expires_at = now + (180 if managed else 20)
+        if managed:
+            browser.native_idle = NativeIdle(request_id, now + NATIVE_IDLE_SECONDS)
+            browser.native_rdp_managed_request_id = request_id
+            browser.native_rdp_managed_channel = control
+            browser.native_rdp_managed_ready = False
+            browser.native_rdp_managed_renewable = False
+        try:
+            await _send_agent(control, {
+                "type": "native_rdp_autologin_request",
+                "session_id": session_id, "request_id": request_id,
+                "public_key": public_key, **({"managed": True} if managed else {}),
+            })
+        except Exception:
+            browser.native_rdp_autologin_pending = None
+            browser.native_rdp_autologin_expires_at = 0.0
+            if managed:
+                browser.native_idle = None
+                browser.native_rdp_managed_request_id = None
+                browser.native_rdp_managed_channel = None
+                browser.native_rdp_managed_ready = False
+                browser.native_rdp_managed_renewable = False
+            raise
+        return
     if message_type in {"start_stream", "stop_stream", "request_frame"}:
         payload = dict(message)
         payload["session_id"] = session_id
@@ -1456,6 +1646,14 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     if not user:
         await _close_with_reason(websocket, 4401, "Ikke logget ind")
         return
+    relay_scope = getattr(websocket, "scope", {})
+    if relay_scope.get("kind") == "rd_browser" and (
+        relay_scope.get("user_id") != user.id
+        or relay_scope.get("user_token_version") != int(user.token_version or 0)
+        or relay_scope.get("auth_session_binding") != auth_session_binding
+    ):
+        await _close_with_reason(websocket, 4403, "ClientFlow-ticket matcher ikke relay-ejeren")
+        return
     if not getattr(user, "is_superadmin", False):
         await _close_with_reason(websocket, 4403, "Kun superadmin må åbne fjernskrivebord")
         return
@@ -1527,15 +1725,40 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     try:
         receive_task = asyncio.create_task(websocket.receive_text())
         while True:
-            timeout = max(0.0, next_auth_recheck - time.monotonic())
+            idle = browser.native_idle
+            due = min(next_auth_recheck, idle.next_check()) if idle else next_auth_recheck
+            timeout = max(0.0, due - time.monotonic())
             done, _ = await asyncio.wait(
                 {receive_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
             )
+            idle = browser.native_idle
+            now_mono = time.monotonic()
+            if idle and idle.expired(now_mono):
+                close_reason = "idle_timeout"
+                # Authorization fails before the notice and existing teardown.
+                try:
+                    await asyncio.wait_for(_send_browser_serialized(browser, {
+                        "type": "native_rdp_idle", "phase": "expired",
+                        "request_id": idle.request_id,
+                    }), timeout=1)
+                except (OSError, RuntimeError, asyncio.TimeoutError, WebSocketDisconnect):
+                    pass
+                await _close_with_reason(websocket, NATIVE_IDLE_CLOSE_CODE, "ClientFlow inaktivitet")
+                return
+            if idle and not idle.warned and now_mono >= idle.next_check():
+                idle.warned = True
+                await asyncio.wait_for(_send_browser_serialized(browser, {
+                    "type": "native_rdp_idle", "phase": "warning",
+                    "request_id": idle.request_id,
+                    "seconds": max(1, min(NATIVE_IDLE_WARNING_SECONDS, int(idle.deadline - now_mono + 0.999))),
+                }), timeout=3)
             if receive_task not in done:
+                if time.monotonic() < next_auth_recheck:
+                    continue
                 current_user, state = _remote_desktop_browser_auth_state(browser)
                 if current_user is None:
                     close_reason = state
-                    await _close_with_reason(websocket, 4401 if state == "login_session_invalid" else 4403, "Remote Desktop-sessionen er ikke længere gyldig")
+                    await _close_with_reason(websocket, NATIVE_IDLE_CLOSE_CODE if state == "idle_timeout" else 4401 if state == "login_session_invalid" else 4403, "ClientFlow-sessionen er ikke længere gyldig")
                     return
                 user = current_user
                 next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_BROWSER_AUTH_RECHECK_SECONDS
@@ -1547,7 +1770,7 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 current_user, state = _remote_desktop_browser_auth_state(browser)
                 if current_user is None:
                     close_reason = state
-                    await _close_with_reason(websocket, 4401 if state == "login_session_invalid" else 4403, "Remote Desktop-sessionen er ikke længere gyldig")
+                    await _close_with_reason(websocket, NATIVE_IDLE_CLOSE_CODE if state == "idle_timeout" else 4401 if state == "login_session_invalid" else 4403, "ClientFlow-sessionen er ikke længere gyldig")
                     return
                 user = current_user
                 next_auth_recheck = time.monotonic() + REMOTE_DESKTOP_BROWSER_AUTH_RECHECK_SECONDS
@@ -1566,6 +1789,17 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
             if decoded.type == "ping":
                 await _send_browser_serialized(browser, {"type": "pong", "ts": time.time()})
                 continue
+            if decoded.type == "native_rdp_user_activity":
+                idle = browser.native_idle
+                if (idle and set(decoded.payload) == {"type", "request_id"}
+                        and idle.request_id == browser.native_rdp_managed_request_id):
+                    warned = idle.warned
+                    if idle.touch(decoded.payload.get("request_id"), time.monotonic()) and warned:
+                        await asyncio.wait_for(_send_browser_serialized(browser, {
+                            "type": "native_rdp_idle", "phase": "reset",
+                            "request_id": idle.request_id,
+                        }), timeout=3)
+                continue
             message = dict(decoded.payload)
             message["session_id"] = session_id
             try:
@@ -1578,6 +1812,17 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
     except WebSocketDisconnect:
         pass
     finally:
+        # Invalidate the control-plane session before auxiliary cleanup or DB IO.
+        async with LOCK:
+            BROWSERS.pop(session_id, None)
+        browser.native_rdp_autologin_pending = None
+        browser.native_rdp_autologin_expires_at = 0.0
+        # Local import avoids the router's existing reverse module dependency.
+        from .native_rdp_tunnel import close_native_rdp_session
+        await close_native_rdp_session(client_id, session_id)
+        # Also stop a managed login that is still preparing and has not opened
+        # a native data tunnel yet. Do this before DB or transfer cleanup.
+        await _close_session_on_available_channels(browser)
         if receive_task is not None and not receive_task.done():
             receive_task.cancel()
             try:
@@ -1606,8 +1851,6 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
                 "remote_desktop_activity_lease_close_failed client_id=%s session_id=%s",
                 client_id, session_id, exc_info=True,
             )
-        async with LOCK:
-            BROWSERS.pop(session_id, None)
         browser.pending_frame = None
         if browser.frame_sender and not browser.frame_sender.done():
             browser.frame_sender.cancel()
@@ -1623,7 +1866,6 @@ async def remote_desktop_browser_ws(websocket: WebSocket, client_id: int):
         for transfer_id, transfer in list(TRANSFERS.items()):
             if transfer.session_id == session_id:
                 _release_transfer(transfer_id)
-        await _close_session_on_available_channels(browser)
         with Session(engine) as db:
             close_remote_desktop_session(
                 db,

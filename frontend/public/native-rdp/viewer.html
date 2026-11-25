@@ -4,16 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="referrer" content="no-referrer" />
-  <title>PlanIQ indbygget GNOME Remote Desktop</title>
+  <title>ClientFlow Remote Desktop</title>
   <style>
     html, body { margin:0; padding:0; width:100%; height:100%; background:#05070b; color:#f8fafc; font:14px system-ui, sans-serif; overflow:hidden; }
-    #desktop { width:100%; height:100vh; display:block; outline:none; }
+    #viewport { width:100%; height:100%; display:flex; overflow:auto; }
+    #canvas { display:block; flex:none; margin:auto; outline:none; width:var(--rdp-fit-width, auto) !important; height:var(--rdp-fit-height, auto) !important; image-rendering:auto; }
+    #status[hidden] { display:none; }
     #status { position:absolute; top:8px; left:8px; z-index:2; pointer-events:none; padding:5px 9px; border-radius:5px; background:#121b2dcc; }
   </style>
 </head>
 <body>
-  <div id="status" role="status" aria-live="polite">Indlæser RDP-klient …</div>
-  <canvas id="desktop" tabindex="0" aria-label="GNOME Remote Desktop"></canvas>
+  <div id="status" role="status" aria-live="polite">Forbinder …</div>
+  <div id="viewport"><canvas id="canvas" tabindex="0" aria-label="ClientFlow Remote Desktop"></canvas></div>
+  <script src="/native-rdp/https-port.js" defer></script>
+  <script src="/native-rdp/transport-probe.js" defer></script>
+  <script src="/native-rdp/viewport-fit.js" defer></script>
   <script src="/native-rdp/viewer.js" defer></script>
 </body>
 </html>

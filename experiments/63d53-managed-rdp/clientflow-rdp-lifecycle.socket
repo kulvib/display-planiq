@@ -1,0 +1,16 @@
+# SOURCE ONLY: do not enable before reviewed packaging and physical gate.
+[Unit]
+Description=ClientFlow protected native RDP lifecycle socket
+
+[Socket]
+ListenStream=/run/clientflow/rdp-lifecycle-v1.sock
+SocketUser=root
+SocketGroup=clientflow-remote-desktop-agent
+SocketMode=0660
+DirectoryMode=0755
+Accept=yes
+MaxConnections=2
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

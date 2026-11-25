@@ -507,6 +507,18 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
   const [connected, setConnected] = React.useState(false);
   const [agentConnected, setAgentConnected] = React.useState(false);
   const [ptyReady, setPtyReady] = React.useState(false);
+  const [idleWarning, setIdleWarning] = React.useState(null);
+  const [idleSeconds, setIdleSeconds] = React.useState(60);
+  const [sessionStopped, setSessionStopped] = React.useState(false);
+  const [connectionAttempt, setConnectionAttempt] = React.useState(0);
+  const stoppedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!idleWarning) return undefined;
+    const tick = () => setIdleSeconds(Math.max(0, Math.ceil((idleWarning.deadline - Date.now()) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 250);
+    return () => window.clearInterval(timer);
+  }, [idleWarning]);
   const [mode, setMode] = React.useState("user");
   const [adminPassword, setAdminPassword] = React.useState("");
   const [adminStepUpReady, setAdminStepUpReady] = React.useState(() => hasRecentAdminTerminalStepUp());
@@ -655,6 +667,9 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
   React.useEffect(() => {
     if (!open || !client?.id || !terminalHostEl) return undefined;
 
+    stoppedRef.current = false;
+    setSessionStopped(false);
+    setIdleWarning(null);
     setConnected(false);
     setAgentConnected(false);
     setPtyReady(false);
@@ -733,7 +748,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
     };
 
     const openPty = () => {
-      if (openedRef.current || !sessionIdRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (stoppedRef.current || openedRef.current || !sessionIdRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
       const password = String(adminPasswordRef.current || "");
       const stepUpToken = mode === "admin" ? getAdminTerminalStepUpToken() : "";
       if (mode === "admin" && !stepUpToken && !password) {
@@ -818,7 +833,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
     let reconnectAttempt = 0;
 
     const scheduleReconnect = () => {
-      if (closedByComponent || reconnectTimer) return;
+      if (closedByComponent || reconnectTimer || stoppedRef.current) return;
       const baseDelay = Math.min(1000 * (2 ** Math.min(reconnectAttempt, 4)), 10_000);
       const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
       reconnectAttempt += 1;
@@ -831,7 +846,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
     const connectWebSocket = async () => {
       try {
         const ticket = await createTerminalBrowserWsTicket(client.id, mode);
-        if (closedByComponent) return;
+        if (closedByComponent || stoppedRef.current) return;
         ws = createWebSocketWithHttpsFallback({
           openWebSocket: () => new WebSocket(
             getTerminalBrowserWsUrl(client.id, mode),
@@ -870,6 +885,24 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
         msg = JSON.parse(event.data);
       } catch {
         term.write(String(event.data || ""));
+        return;
+      }
+
+      if (msg.type === "terminal_idle") {
+        if (msg.phase === "warning" && Number.isInteger(msg.seconds) && msg.seconds >= 1 && msg.seconds <= 60 &&
+            typeof msg.session_id === "string" && ["idle", "limit"].includes(msg.reason)) {
+          setIdleSeconds(msg.seconds);
+          setIdleWarning({ sessionId: msg.session_id, reason: msg.reason, deadline: Date.now() + msg.seconds * 1000 });
+        } else if (msg.phase === "reset") {
+          setIdleWarning(previous => previous?.sessionId === msg.session_id ? null : previous);
+        } else if (msg.phase === "expired") {
+          stoppedRef.current = true;
+          setSessionStopped(true);
+          setIdleWarning(null);
+          ptyReadyRef.current = false;
+          setPtyReady(false);
+          writeSystemLine(term, "Terminalsessionen er afsluttet. Vælg Forbind for en ny session.", "33");
+        }
         return;
       }
 
@@ -936,6 +969,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
       }
 
       if (msg.type === "exit") {
+        setIdleWarning(null);
         openedRef.current = false;
         ptyReadyRef.current = false;
         setPtyReady(false);
@@ -961,7 +995,12 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
       setPtyReady(false);
       openedRef.current = false;
       ptyReadyRef.current = false;
-      if (!closedByComponent) {
+      setIdleWarning(null);
+      if ([4408, 4410, 4401, 4403, 1008].includes(event.code)) {
+        stoppedRef.current = true;
+        setSessionStopped(true);
+      }
+      if (!closedByComponent && !stoppedRef.current) {
         writeSystemLine(
           term,
           `Forbindelsen blev lukket (${event.code}${event.reason ? `: ${event.reason}` : ""}). Genopretter …`,
@@ -1022,6 +1061,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
     open,
     client?.id,
     mode,
+    connectionAttempt,
     terminalHostEl,
     sendTerminalInput,
     pasteText,
@@ -1526,7 +1566,37 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
             </AccordionDetails>
           </Accordion>
         </Stack>
+        {sessionStopped && (
+          <Stack direction="row" alignItems="center" spacing={2} sx={{ mt: 2 }}>
+            <Typography>Terminalsessionen er afsluttet.</Typography>
+            <Button variant="contained" onClick={() => setConnectionAttempt(value => value + 1)}>Forbind</Button>
+          </Stack>
+        )}
       </DialogContent>
+      <Dialog open={Boolean(idleWarning)} disableEscapeKeyDown
+        PaperProps={{ sx: { bgcolor: "#0f172a", color: "#f8fafc" } }}>
+        <DialogTitle>ClientFlow-forbindelsen udløber snart</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">{idleWarning?.reason === "limit"
+            ? "Terminalens sikkerhedsgodkendelse udløber. Opret en ny session efter afslutning."
+            : "Forbindelsen afsluttes automatisk på grund af inaktivitet."}</Typography>
+          <Typography variant="h4" textAlign="center" sx={{ mt: 2, fontVariantNumeric: "tabular-nums" }}>
+            {String(Math.floor(idleSeconds / 60)).padStart(2, "0")}:{String(idleSeconds % 60).padStart(2, "0")}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => {
+            stoppedRef.current = true;
+            setSessionStopped(true);
+            setIdleWarning(null);
+            try { wsRef.current?.send(JSON.stringify({ type: "close" })); } catch {}
+            try { wsRef.current?.close(); } catch {}
+          }}>Afbryd</Button>
+          {idleWarning?.reason === "idle" && <Button variant="contained" onClick={() => {
+            try { wsRef.current?.send(JSON.stringify({ type: "continue_session", session_id: idleWarning.sessionId })); } catch {}
+          }}>Fortsæt session</Button>}
+        </DialogActions>
+      </Dialog>
       {!defaultFullscreen && (
         <DialogActions
           sx={{

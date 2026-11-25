@@ -1,0 +1,16 @@
+# Source-only candidate. Do NOT enable before reviewed physical 63D-49 gates.
+[Unit]
+Description=ClientFlow guarded GNOME RDP auto-login broker Unix socket
+
+[Socket]
+ListenStream=/run/clientflow/rdp-autologin-v1.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=clientflow-remote-desktop-agent
+DirectoryMode=0755
+RemoveOnStop=yes
+Accept=no
+Backlog=4
+
+[Install]
+WantedBy=sockets.target

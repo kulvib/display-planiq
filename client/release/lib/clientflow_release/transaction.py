@@ -628,6 +628,41 @@ _BOOTSTRAP_ONLY_UNITS = frozenset({
 })
 
 
+# Independent physical containment must survive a failed release swap.
+_NATIVE_RDP_PHYSICAL_PATHS = (
+    "/var/lib/clientflow/rdp-pilot-63d30",
+    "/var/lib/clientflow/rdp-pilot-bundle-63d30",
+    "/run/clientflow/native-rdp-approved",
+    "/run/clientflow/rdp-session-proof-v1.json",
+    "/run/clientflow-rdp-63d30",
+    "/etc/clientflow/rdp-guard-63d29",
+    "/etc/systemd/system/clientflow-63d29-rdp-guard.service",
+    "/etc/systemd/system/clientflow-63d30-rdp-watchdog.service",
+    "/etc/systemd/system/clientflow-63d30-rdp-watchdog.timer",
+    "/etc/systemd/system/display-manager.service.d/clientflow-63d29-rdp-guard.conf",
+)
+_NATIVE_RDP_TEMPLATES = frozenset({
+    "clientflow-rdp-lifecycle@.service", "clientflow-rdp-sealer@.service",
+})
+_NATIVE_RDP_SOCKET_UNITS = ("clientflow-rdp-lifecycle.socket", "clientflow-rdp-sealer.socket")
+
+
+def _native_rdp_physical_pending(layout: Layout) -> bool:
+    return any(layout.path(name).exists() or layout.path(name).is_symlink()
+               for name in _NATIVE_RDP_PHYSICAL_PATHS)
+
+
+def _assert_no_temporary_rdp_override(layout: Layout) -> None:
+    for name in (*_NATIVE_RDP_SOCKET_UNITS, *_NATIVE_RDP_TEMPLATES):
+        path = layout.path("/run/systemd/system/" + name)
+        if path.exists() or path.is_symlink():
+            raise TransactionError("Temporary RDP unit must be rolled back before activation")
+    for base in ("/run/systemd/system", "/etc/systemd/system"):
+        folder = layout.path(base + "/clientflow-remote-desktop-agent.service.d")
+        if folder.is_symlink() or (folder.is_dir() and any(folder.glob("*native-rdp*.conf"))):
+            raise TransactionError("Temporary RDP agent override must be rolled back before activation")
+
+
 def _managed_unit_paths(layout: Layout) -> list[Path]:
     """Return release-owned ClientFlow units, never temporary bootstrap units.
 
@@ -647,6 +682,9 @@ def _managed_unit_paths(layout: Layout) -> list[Path]:
 
 
 def _remove_managed_units(layout: Layout) -> None:
+    _assert_no_temporary_rdp_override(layout)
+    if _native_rdp_physical_pending(layout):
+        raise TransactionError("RDP physical cleanup pending; preserve guard and watchdog")
     for path in _managed_unit_paths(layout):
         metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
@@ -832,13 +870,49 @@ _UPDATE_CONTROL_PLANE_UNITS = frozenset({
 
 def _runtime_unit_names(layout: Layout) -> list[str]:
     names = {path.name for path in _managed_unit_paths(layout)}
-    excluded = _UPDATE_CONTROL_PLANE_UNITS | _BOOTSTRAP_ONLY_UNITS
+    excluded = _UPDATE_CONTROL_PLANE_UNITS | _BOOTSTRAP_ONLY_UNITS | _NATIVE_RDP_TEMPLATES
     return sorted(name for name in names if name not in excluded)
+
+
+def _native_rdp_active_instances() -> bool:
+    result = _run(["/usr/bin/systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
+                   "clientflow-rdp-lifecycle@*.service", "clientflow-rdp-sealer@*.service"], timeout=10)
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) < 4 or not re.fullmatch(r"clientflow-rdp-(?:lifecycle|sealer)@.+\.service", fields[0]):
+            raise TransactionError("Unknown native RDP instance state")
+        if fields[2] not in {"inactive", "failed"}:
+            return True
+    return False
+
+
+def _quiesce_native_rdp(layout: Layout) -> None:
+    """Close admission, then agent; never kill a physical recovery owner."""
+    _assert_no_temporary_rdp_override(layout)
+    admission = layout.unit_root / _NATIVE_RDP_SOCKET_UNITS[0]
+    if not admission.is_file():
+        if _native_rdp_physical_pending(layout):
+            raise TransactionError("Previous RDP pilot must be safely stopped before activation")
+        return
+    _run(["/usr/bin/systemctl", "stop", _NATIVE_RDP_SOCKET_UNITS[0]], timeout=30)
+    _run(["/usr/bin/systemctl", "stop", "clientflow-remote-desktop-agent.service"], timeout=45)
+    for name in (_NATIVE_RDP_SOCKET_UNITS[0], "clientflow-remote-desktop-agent.service"):
+        result = _run(["/usr/bin/systemctl", "show", name, "-p", "ActiveState", "--value"], timeout=10, check=False)
+        if result.returncode != 0 or result.stdout.strip() not in {"inactive", "failed"}:
+            raise TransactionError("RDP admission or agent did not stop")
+    deadline = time.monotonic() + 150
+    while _native_rdp_active_instances() or _native_rdp_physical_pending(layout):
+        if time.monotonic() >= deadline:
+            raise TransactionError("RDP physical cleanup pending; preserve guard and watchdog")
+        time.sleep(1)
 
 
 def _quiesce_runtime(layout: Layout, *, require_target: bool = True) -> None:
     if layout.root != Path("/"):
         return
+    _quiesce_native_rdp(layout)
     units = _runtime_unit_names(layout)
     if require_target and "clientflow.target" not in units:
         raise TransactionError("Canonical clientflow.target mangler før runtime-quiesce")
