@@ -552,6 +552,32 @@ def request_restart(session: Session, client_id: int, *, source: str | None = No
     return _new_generation(session, client_id=client_id, action="restart", supersede_current=True, source=source)
 
 
+def restart_after_display_geometry_change(session: Session, client_id: int) -> bool:
+    """Continue only an already requested stream after confirmed geometry change.
+
+    The authenticated Display completion and generation change share a transaction.
+    Never create viewers, start an inactive stream, or clear an explicit stop.
+    """
+    client = _lock_client(session, client_id)
+    if client.status != "approved" or client.deleted_at is not None:
+        return False
+    if client.livestream_desired_state != "running" or explicit_stop_latched(session, client_id):
+        return False
+    state = str(client.state or "").strip().lower()
+    if (state.startswith("sleep") or client.pending_os_update
+            or client.pending_shutdown or client.pending_reboot):
+        return False
+    try:
+        _require_livestream_start_allowed(client)
+    except HTTPException:
+        return False
+    generation = current_generation(session, client_id)
+    if generation is None or generation.state not in {"starting", "running"}:
+        return False
+    request_restart(session, client_id, source="display_resolution_confirmed")
+    return True
+
+
 def request_reset_generation(session: Session, client_id: int) -> tuple[LivestreamV2Generation, LivestreamV2Command]:
     return _new_generation(session, client_id=client_id, action="reset_generation", supersede_current=True, source="watchdog")
 

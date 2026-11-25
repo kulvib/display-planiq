@@ -535,8 +535,16 @@ def apply_display_command_completion(session: Session, *, client_id: int, comman
         return
     if command.command_type not in {"detect_resolution", "apply_resolution"}:
         return
-    if client is None:
+    if client is None or command.status != "succeeded":
         return
+    # Serialize confirmed geometry with the existing client lifecycle lock.
+    lock_display_client(session, client_id)
+    session.refresh(client)
+    previous_geometry = (
+        client.display_resolution_current_output,
+        client.display_resolution_current_width,
+        client.display_resolution_current_height,
+    )
     result = command.result if isinstance(command.result, dict) else {}
     if not result.get("ok"):
         client.display_resolution_status = "error"
@@ -567,6 +575,18 @@ def apply_display_command_completion(session: Session, *, client_id: int, comman
     if command.command_type == "apply_resolution":
         client.display_resolution_last_applied_at = utcnow()
     session.add(client)
+    geometry = (
+        client.display_resolution_current_output,
+        client.display_resolution_current_width,
+        client.display_resolution_current_height,
+    )
+    known = all(isinstance(value, int) and value > 0 for value in geometry[1:])
+    previous_known = all(isinstance(value, int) and value > 0 for value in previous_geometry[1:])
+    if known and geometry != previous_geometry and (
+        previous_known or command.command_type == "apply_resolution"
+    ):
+        from .livestream_v2 import restart_after_display_geometry_change
+        restart_after_display_geometry_change(session, client_id)
 
 
 def apply_display_command_failure(

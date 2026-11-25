@@ -25,7 +25,7 @@ import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } fro
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 import { createHlsReserveController, hlsHttpTransportLabel, livestreamLatencyStatus } from "../clientdetailspage/livestreamBrowserTiming.mjs";
-import { createPilotTransport, pilotGenerationFromHeartbeat } from "../clientdetailspage/livestreamPilotTransport.mjs";
+import { createPilotTransport, generationFromHeartbeat, pilotGenerationFromHeartbeat } from "../clientdetailspage/livestreamPilotTransport.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -198,6 +198,7 @@ function LivestreamTile({ client, pageMediaActive }) {
     let mediaReady = false;
     let startupWarned = false;
     let generation = null;
+    let observedGeneration = null;
     let healthInFlight = false;
     const startupWarning = window.setTimeout(() => {
       if (!cancelled && !mediaReady) {
@@ -429,8 +430,10 @@ function LivestreamTile({ client, pageMediaActive }) {
           setActiveViewers(Number(payload.active_viewers));
         }
         const nextGeneration = pilotGenerationFromHeartbeat(payload);
-        if (generation !== nextGeneration) {
+        const nextObservedGeneration = generationFromHeartbeat(payload);
+        if (generation !== nextGeneration || observedGeneration !== nextObservedGeneration) {
           generation = nextGeneration;
+          observedGeneration = nextObservedGeneration;
           destroyPlayer();
           mediaReady = false;
           setState("starting");

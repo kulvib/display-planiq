@@ -73,16 +73,18 @@ test("livestream UI uses the dedicated v2 control plane", () => {
   assert.doesNotMatch(api, /\/api\/livestream\/(?:status|start|stop)\//);
 });
 
-test("display changes request a fresh Livestream-v2 generation without direct HLS reset", () => {
+test("display changes refresh only the browser while backend owns the generation", () => {
   assert.doesNotMatch(source, /resetHlsFiles/);
-  assert.doesNotMatch(source, /\/api\/hls\/[^`]+\/reset/);
-  const displayRestartStart = source.indexOf("const restartStreamAfterDisplayChange");
-  const displayRestartEnd = source.indexOf("\n  useEffect(() => {", displayRestartStart);
-  const displayRestart = source.slice(displayRestartStart, displayRestartEnd);
-  assert.match(displayRestart, /livestream_restart/);
-  assert.match(displayRestart, /streamHasBeenActive/);
-  assert.doesNotMatch(displayRestart, /ensureStreamStarted/);
-  assert.doesNotMatch(displayRestart, /\/reset/);
+  const start = source.indexOf("const refreshPlayerAfterDisplayChange");
+  const end = source.indexOf("\n  useEffect(() => {", start);
+  const callback = source.slice(start, end);
+  assert.match(callback, /streamHasBeenActive/);
+  assert.match(callback, /resetStreamState\(\)/);
+  assert.match(callback, /setLocalRefreshKey/);
+  assert.doesNotMatch(callback, /sendLivestreamCommand|ensureStreamStarted|livestream_restart/);
+  assert.match(source, /lastObservedGenerationRef.current !== observedGeneration/);
+  const wall = read("src/pages/adminpages/LivestreamOverview.jsx");
+  assert.match(wall, /observedGeneration !== nextObservedGeneration/);
 });
 
 test("livestream stop reason remains authoritative after refresh", () => {

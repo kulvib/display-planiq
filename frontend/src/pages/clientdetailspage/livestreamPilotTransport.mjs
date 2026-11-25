@@ -4,10 +4,12 @@ import { createLivestreamTransportController } from "./livestreamTransportContro
 import { createWssPlayer } from "./livestreamWssPlayer.mjs";
 
 const GENERATION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-export function pilotGenerationFromHeartbeat(payload) {
+export function generationFromHeartbeat(payload) {
   const id = payload?.generation?.id;
-  return payload?.continuous_wss_pilot === true && typeof id === "string" && GENERATION.test(id)
-    ? id : null;
+  return typeof id === "string" && GENERATION.test(id) ? id : null;
+}
+export function pilotGenerationFromHeartbeat(payload) {
+  return payload?.continuous_wss_pilot === true ? generationFromHeartbeat(payload) : null;
 }
 
 export function pilotMediaEndpoints(apiUrl, clientId, generation, base = globalThis.location?.href) {

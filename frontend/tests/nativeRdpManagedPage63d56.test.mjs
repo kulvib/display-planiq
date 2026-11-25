@@ -15,10 +15,13 @@ test("enabled physical pilot defaults to native WSS, no JPEG fallback", () => {
 });
 
 
-test("Terminal-style header keeps Shout out directly below desktop and files on their existing tab", () => {
+test("Terminal-style header keeps Shout out on the toolbar and files on their existing tab", () => {
   assert.match(page, /<MonitorIcon\s*\/>/);
   assert.match(page, /Klient ID:/);
-  assert.match(page, /\{remoteScreenPanel\}\s*\{shoutPanel\}/);
+  assert.match(page, /\{remoteScreenPanel\}\s*<\/Stack>/);
+  assert.match(page, /aria-haspopup="dialog"/);
+  assert.match(page, /<Dialog\s+open=\{shoutOpen\}/);
+  assert.doesNotMatch(page, /shoutPanel/);
   assert.match(page, /<RemoteDesktopFileManager/);
   assert.doesNotMatch(page, /setActiveTab\("shout"\)/);
 });
