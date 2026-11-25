@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+import zipfile
 
 import pytest
 
@@ -84,3 +85,72 @@ def test_previous_pilot_blocks_swap_before_mutation(tmp_path, monkeypatch):
     monkeypatch.setattr(transaction, "_run", lambda *a, **k: pytest.fail("unsafe mutation"))
     with pytest.raises(transaction.TransactionError, match="Previous RDP pilot"):
         transaction._quiesce_native_rdp(layout)
+
+
+@pytest.mark.parametrize("name", transaction._NATIVE_RDP_TEMPORARY_PATHS)
+@pytest.mark.parametrize("dangling", [False, True])
+def test_orphaned_temporary_sources_block_activation_without_mutation(tmp_path, monkeypatch, name, dangling):
+    layout = transaction.Layout(tmp_path)
+    path = layout.path(name)
+    path.parent.mkdir(parents=True)
+    if dangling:
+        path.symlink_to(tmp_path / "missing")
+    else:
+        path.mkdir()
+    monkeypatch.setattr(transaction, "_run", lambda *a, **k: pytest.fail("unsafe mutation"))
+    with pytest.raises(transaction.TransactionError, match="Temporary RDP source"):
+        transaction._quiesce_native_rdp(layout)
+    assert path.is_symlink() if dangling else path.is_dir()
+
+
+def test_passive_operator_receipt_does_not_block_canonical_activation(tmp_path):
+    layout = transaction.Layout(tmp_path)
+    receipt = layout.path("/run/clientflow-63d54-operator/operator.py")
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("passive rollback receipt")
+    transaction._assert_no_temporary_rdp_override(layout)
+
+
+def test_rebuilt_runtime_contains_exact_native_rdp_modules(tmp_path):
+    wheel = tmp_path / "clientflow_runtime-test.whl"
+    modules = builder.NATIVE_RDP_RUNTIME_MODULES
+
+    def write_wheel(*, missing=None, changed=None, duplicate=None):
+        with zipfile.ZipFile(wheel, "w") as archive:
+            for name in modules:
+                if name == missing:
+                    continue
+                source = ROOT / "client/runtime/clientflow_runtime" / name
+                data = source.read_bytes()
+                if name == changed:
+                    data = bytes([data[0] ^ 1]) + data[1:]
+                member = "clientflow_runtime/" + name
+                archive.writestr(member, data)
+                if name == duplicate:
+                    with pytest.warns(UserWarning, match="Duplicate name"):
+                        archive.writestr(member, data)
+
+    write_wheel()
+    builder.validate_native_rdp_wheel(ROOT, wheel)
+    for scenario in ("missing", "changed", "duplicate"):
+        write_wheel(**{scenario: modules[-1]})
+        with pytest.raises(ValueError, match="Native RDP runtime wheel"):
+            builder.validate_native_rdp_wheel(ROOT, wheel)
+
+
+def test_build_rejects_mismatched_root_helper_before_packaging(tmp_path):
+    import shutil
+    repo = tmp_path / "repo"
+    for name in builder.NATIVE_RDP_ROOT_SOURCES:
+        target = repo / "scripts" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "scripts" / name, target)
+    for name in ("entrypoint.py", "scripts/__init__.py"):
+        target = repo / "client/libexec/native-rdp" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "client/libexec/native-rdp" / name, target)
+    builder._validate_native_rdp_root_pins(repo)
+    helper = repo / "scripts" / builder.NATIVE_RDP_ROOT_SOURCES[0]
+    helper.write_bytes(helper.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="root helper pin mismatch"):
+        builder._validate_native_rdp_root_pins(repo)
