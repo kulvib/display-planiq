@@ -159,3 +159,44 @@ The persistent and proxy HTTP adapters reject a response whose advertised
 length exceeds the actual bytes received; a syntactically valid prefix of
 an interrupted binary response is not sufficient to accept delivery.
 The real TLS regression includes a deliberately truncated response.
+
+
+## 63D-67–70 — release-readiness entry gate (2026-11-25)
+
+Immutable physical pilot candidate: `10036e0f3b157fb97789584873424c1240a5ab0e`.
+All four workflows passed. Operator confirmed 9/9 physical HTTPS checks on
+Viborg1 ID 3, 11:22–11:25 CET: markedly faster than prior HTTPS, slightly
+slower than WSS. Render service-wide minute sample: 1591 HTTP 200/204,
+0.2564858 vCPU maximum observed, 147–152 MB after startup. Prior: 1003,
+0.252 vCPU, 139–156 MB. The deployment overlaps this window; workload and
+active duration were not controlled, and counts include other API requests.
+No cost saving or fleet concurrency has been proved.
+
+The release builder already packages pinned root helpers and permanent
+lifecycle/sealer units. Do not remove the independent physical firewall,
+boot/expiry guard or rollback protections. The remaining pilot-specific
+client ID and hostname checks span backend tunnel/admission, browser,
+agent, root helper, lifecycle and proof; replacing a single hard-coded
+value would not establish an authorized fleet policy. Keep Viborg1-only
+admission until the entire chain is reviewed. WSS is default, HTTPS
+explicit opt-in; no automatic downgrade on authentication/TLS errors.
+The 16-peer limit and 32 MiB framed queue budget are not proof of
+100 simultaneous remote desktops. Idle fleet size and concurrent support
+sessions are distinct metrics.
+
+Add bounded per-peer HTTPS counters to the HTTP boundary: accepted upload
+batches and framed bytes, empty/nonempty polls and prepared download bytes,
+observed ASGI response errors. One content-free summary per retired peer,
+no identifiers or credentials, no DB calls, no new dependency. Prepared
+responses are not proof of remote receipt. A response error racing peer
+retirement can occur after the summary, so the observed error count is
+not an exhaustive network loss metric. Keep full authorization before
+acceptance/delivery; no auth caching or transport behavior change.
+
+Next release gate: compare matched stable WSS/mixed HTTPS runs using
+agent request/connection counters, server summary and Render metrics;
+review root lifecycle and signed per-client policy as a single security
+boundary; verify release source integrity, install/upgrade/rollback and
+100-idle-client load separately from bounded active-session load.
+No new release approval, catalog update, deployment, or fleet enablement
+from this change. No automatic deletion of historical pilot tools.
