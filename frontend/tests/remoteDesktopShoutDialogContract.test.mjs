@@ -32,3 +32,13 @@ test("Shout out dialog preserves keyboard isolation and native viewer placement"
   assert.match(source, /\{remoteScreenPanel\}\s*<\/Stack>/);
   assert.match(source, /inert=\{activeTab !== "desktop" \? true : undefined\}/);
 });
+
+test("native toolbar displays the actual source resolution, independent of zoom", () => {
+  const viewer = readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
+  const toolbar = viewer.slice(viewer.indexOf('aria-label="Zoom"'), viewer.indexOf('title={fullscreen'));
+  assert.match(toolbar, /\{resolution && \(/);
+  assert.match(toolbar, /\{resolution\.sourceWidth\} × \{resolution\.sourceHeight\}/);
+  assert.doesNotMatch(toolbar, /\{resolution\.displayWidth\} × \{resolution\.displayHeight\}/);
+  assert.match(viewer, /setResolution\(\{ sourceWidth, sourceHeight, displayWidth, displayHeight, mode \}\)/);
+  assert.match(viewer, /setResolution\(null\)/);
+});
