@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import logging
-import os
 import re
 import time
 from datetime import datetime, timezone
@@ -23,7 +22,7 @@ from starlette.requests import ClientDisconnect
 
 from ..db import engine
 from ..native_rdp_https_core import BinaryHttpsPeer, BinaryPeerFault, MAX_BATCH, QueueBudget
-from ..remote_desktop_v2 import verify_remote_desktop_agent_token
+from ..remote_desktop_v2 import native_rdp_transport_allowed, verify_remote_desktop_agent_token
 from . import native_rdp_tunnel as native
 from . import remote_desktop_v2 as control
 
@@ -38,9 +37,8 @@ _TICKET = re.compile(r"[A-Za-z0-9_-]{32,256}", re.ASCII)
 _SEQUENCE = re.compile(r"0|[1-9][0-9]{0,15}", re.ASCII)
 
 
-def _gate(client_id: int) -> None:
-    if (os.environ.get("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED") != "true"
-            or client_id != native.VIBORG1_PILOT_CLIENT_ID):
+def _gate(client_id: int, role: str = "browser") -> None:
+    if not native_rdp_transport_allowed(client_id, role, "https"):
         raise HTTPException(404, "ClientFlow-transport ikke tilgængelig")
 
 
@@ -217,7 +215,7 @@ def _tunnel(entry: Entry):
 
 async def _live(entry: Entry, *, database: bool = True) -> None:
     try:
-        _gate(entry.owner.client_id)
+        _gate(entry.owner.client_id, entry.owner.role)
         validate = _active_context if database else _identity_context
         active, channel, request_id = validate(entry.owner, entry.session_id)
         if (active is not entry.active or channel is not entry.channel
@@ -406,18 +404,18 @@ async def _poll(entry: Entry, sequence: str) -> Response:
 
 @router.post("/remote-desktop/browser/{client_id}/native-https/{session_id}/open")
 async def browser_open(client_id: int, session_id: str, request: Request):
-    _gate(client_id)
+    _gate(client_id, "browser")
     return await _open(request, _browser_owner(request, client_id), session_id)
 
 
 @router.post("/remote-desktop-agent/clients/{client_id}/native-https/{session_id}/{tunnel_id}/open")
 async def agent_open(client_id: int, session_id: str, tunnel_id: str, request: Request):
-    _gate(client_id)
+    _gate(client_id, "agent")
     return await _open(request, _agent_owner(request, client_id), session_id, tunnel_id)
 
 
 def _request_entry(request: Request, client_id: int, role: str, peer_id: str) -> Entry:
-    _gate(client_id)
+    _gate(client_id, role)
     if role == "browser":
         owner = _browser_owner(request, client_id)
     elif role == "agent":
