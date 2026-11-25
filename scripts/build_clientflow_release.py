@@ -12,7 +12,7 @@ import tempfile
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "backend"))
 sys.path.insert(0, str(REPO / "client" / "release" / "lib"))
-from clientflow_release.builder import build  # noqa: E402
+from clientflow_release.builder import build, validate_native_rdp_wheel  # noqa: E402
 from verify_release_build_toolchain import validate_toolchain  # noqa: E402
 
 
@@ -58,7 +58,11 @@ def main() -> int:
             ],
             check=True,
         )
-        wheel = next(build_dir.glob("clientflow_runtime-*.whl"))
+        wheels = sorted(build_dir.glob("clientflow_runtime-*.whl"))
+        if len(wheels) != 1:
+            raise ValueError("Expected exactly one rebuilt ClientFlow runtime wheel")
+        wheel = wheels[0]
+        validate_native_rdp_wheel(repo, wheel)
         shutil.copy2(wheel, wheelhouse / wheel.name)
         result = build(
             repo,
