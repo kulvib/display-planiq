@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_pins_match_immutable_renewable_source_tree():
-    assert pilot.COMMIT == "e5f955a7f1604405327bca3131b68eaf1f4189d2"
+    assert pilot.COMMIT == "4e840bcbfa57abfe89765e95a6bbc66c6e1d5d8c"
     assert len(pilot.PINS) == 16
     for path, expected in pilot.PINS.items():
         raw = (ROOT / path).read_bytes()
