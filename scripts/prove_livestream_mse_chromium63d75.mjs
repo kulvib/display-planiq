@@ -12,7 +12,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const folder = await mkdtemp(join(tmpdir(), "cf-mse-63d75-"));
-let server, chrome, cdp;
+let server, chrome, cdp, primaryError;
+let chromeExited;
 const binaries = ["google-chrome", "chromium", "chromium-browser"];
 const browser = binaries.find(name => spawnSync("which", [name], { encoding: "utf8" }).status === 0);
 const moduleNames = ["livestreamWssPlayer.mjs", "livestreamWssWire.mjs", "livestreamFmp4Codec.mjs"];
@@ -76,7 +77,14 @@ try {
     const fragments = await Promise.all(Array.from({ length: 18 }, (_, i) => get("/fragment-" + (i + 1) + ".bin")));
     const visibility = new EventTarget();
     visibility.visibilityState = "visible";
-    let socket, ready = 0, failure = null, resumedFrames = null;
+    let socket, ready = 0, failure = null, resumedFrames = 0;
+    const stages = [];
+    let frameCallback = null;
+    const recordFrame = (_now, metadata) => {
+      if (visibility.visibilityState === "visible" && metadata.mediaTime >= 9) resumedFrames++;
+      frameCallback = video.requestVideoFrameCallback(recordFrame);
+    };
+    frameCallback = video.requestVideoFrameCallback(recordFrame);
     class InjectedSocket {
       constructor(_url, protocols) {
         socket = this;
@@ -94,7 +102,11 @@ try {
       onPlayable: () => { ready++; },
       onFailure: reason => { failure = reason; },
     });
-    const check = (condition, label) => { if (!condition) throw Error(label + " failure=" + failure + " ready=" + ready + " time=" + video.currentTime); };
+    const check = (condition, label) => {
+      if (!condition) throw Error(JSON.stringify({ label, failure, ready, time: video.currentTime,
+        decoded: video.getVideoPlaybackQuality().totalVideoFrames, resumedFrames,
+        videoReadyState: video.readyState, paused: video.paused, stages }));
+    };
     try {
       for (let i = 0; !socket && i < 50; i++) await wait(20);
       check(socket, "socket created");
@@ -105,6 +117,7 @@ try {
         if (i === 4) {
           check(!failure && ready >= 1 && video.videoWidth === 320 && video.videoHeight === 180 &&
             video.currentTime > 1 && video.getVideoPlaybackQuality().totalVideoFrames > 0, "initial real MSE playback");
+          stages.push("initial-real-playback");
           visibility.visibilityState = "hidden";
           visibility.dispatchEvent(new Event("visibilitychange"));
         }
@@ -112,19 +125,25 @@ try {
           check(!failure, "hidden media bounded");
           visibility.visibilityState = "visible";
           visibility.dispatchEvent(new Event("visibilitychange"));
-          resumedFrames = video.getVideoPlaybackQuality().totalVideoFrames;
+          resumedFrames = 0;
+          stages.push("hidden-interval-bounded");
         }
         if (i === 15) {
           check(!failure && ready >= 2 && video.currentTime > 11 &&
-            video.getVideoPlaybackQuality().totalVideoFrames > resumedFrames, "fresh MSE playback after hidden interval");
+            resumedFrames > 0, "fresh MSE playback after hidden interval");
+          stages.push("fresh-decoded-frames-after-resume");
         }
         check(!failure, "continuous playback");
       }
       socket.deliver(new Uint8Array([1, 2, 3]).buffer);
       await wait(50);
       check(failure === "wire-error" && socket.closed, "malformed wire closes player");
-      return { pass: true, ready, failure };
-    } finally { player.dispose(); }
+      stages.push("malformed-wire-rejected");
+      return { pass: true, ready, failure, resumedFrames, stages };
+    } finally {
+      if (frameCallback !== null) video.cancelVideoFrameCallback(frameCallback);
+      player.dispose();
+    }
   };
 
   // A real module loaded from the document has a well-defined module base.
@@ -155,7 +174,11 @@ try {
     "--disable-background-networking", "--no-first-run", "--no-default-browser-check",
     "--autoplay-policy=no-user-gesture-required", "--remote-debugging-address=127.0.0.1",
     "--remote-debugging-port=0", "--user-data-dir=" + profile, pageUrl,
-  ], { stdio: "ignore" });
+  ], { stdio: "ignore", detached: true });
+  chromeExited = new Promise(resolve => {
+    chrome.once("exit", resolve);
+    chrome.once("error", resolve);
+  });
   let port;
   for (let i = 0; i < 100; i++) {
     try { port = Number((await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); if (port) break; } catch {}
@@ -193,16 +216,46 @@ try {
       awaitPromise: true, returnByValue: true,
     } }));
   });
+  console.log("CHROMIUM_PROOF_RESULT", JSON.stringify(result));
   assert.ok(!result?.error, result?.error);
   assert.equal(result?.value?.pass, true);
   console.log("CHROMIUM_REAL_MSE=PASS", JSON.stringify(result.value));
+} catch (error) {
+  // Preserve the primary exception even if profile cleanup also fails.
+  primaryError = error;
+  console.error("CHROMIUM_PRIMARY_FAILURE", error?.stack || error);
 } finally {
-  cdp?.close();
-  if (chrome && chrome.exitCode === null) {
-    chrome.kill("SIGTERM");
-    await Promise.race([new Promise(ok => chrome.once("exit", ok)), sleep(2000)]);
-    if (chrome.exitCode === null) chrome.kill("SIGKILL");
+  const cleanupErrors = [];
+  try { cdp?.close(); } catch (error) { cleanupErrors.push(error); }
+  if (chrome?.pid) {
+    try {
+      // A dedicated detached process group contains this test's browser
+      // children. A terminated parent alone does not stop cache writers.
+      function signalGroup(signal) {
+        try { process.kill(-chrome.pid, signal); }
+        catch (error) { if (error.code !== "ESRCH") throw error; }
+      }
+      signalGroup("SIGTERM");
+      await Promise.race([chromeExited, sleep(2000)]);
+      signalGroup("SIGKILL");
+      await Promise.race([chromeExited, sleep(2000)]);
+      if (chrome.exitCode === null && chrome.signalCode === null) throw Error("Chrome did not exit");
+    } catch (error) { cleanupErrors.push(error); }
   }
-  if (server) await new Promise(ok => server.close(ok));
-  await rm(folder, { recursive: true, force: true });
+  try {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise((ok, bad) => server.close(error => error ? bad(error) : ok()));
+    }
+  } catch (error) { cleanupErrors.push(error); }
+  try {
+    await rm(folder, { recursive: true, force: true, maxRetries: 12, retryDelay: 150 });
+  } catch (error) { cleanupErrors.push(error); }
+  if (cleanupErrors.length) {
+    console.error("CHROMIUM_CLEANUP_FAILURE", ...cleanupErrors);
+    if (primaryError) throw new AggregateError([primaryError, ...cleanupErrors], "Playback proof and cleanup failed");
+    throw new AggregateError(cleanupErrors, "Chromium cleanup failed");
+  }
+  console.log("CHROMIUM_CLEANUP=PASS");
 }
+if (primaryError) throw primaryError;
