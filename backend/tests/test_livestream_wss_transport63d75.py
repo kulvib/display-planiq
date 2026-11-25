@@ -4,10 +4,14 @@ import socket
 
 import pytest
 import uvicorn
+from uvicorn.protocols.http.auto import AutoHTTPProtocol
+from uvicorn.protocols.http.h11_impl import H11Protocol
+from uvicorn.protocols.websockets.auto import AutoWebSocketsProtocol
 from websockets.exceptions import ConnectionClosed
 from websockets.legacy.client import connect
 
-from service1.livestream_pilot_server import media_receive_limit, protocol_for_pilot
+from service1.livestream_pilot_server import (LivestreamPilotProtocol, http_protocol_for_pilot,
+                                              media_receive_limit)
 from service1.livestream_wss_core import HEADER, MAX_FRAGMENT
 
 PUBLISH = "/api/livestream-agent/clients/3/generations/test/media/ws"
@@ -24,7 +28,8 @@ def test_only_livestream_paths_are_limited():
         assert media_receive_limit(path) is None
 
 
-def test_real_transport_limits_and_unchanged_other_socket():
+@pytest.mark.parametrize("http_base", [H11Protocol, AutoHTTPProtocol])
+def test_real_transport_limits_and_unchanged_other_socket(http_base):
     async def scenario():
         observed = []
 
@@ -44,7 +49,7 @@ def test_real_transport_limits_and_unchanged_other_socket():
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         host, port = listener.getsockname()
-        config = uvicorn.Config(app, ws=protocol_for_pilot(), http="h11",
+        config = uvicorn.Config(app, ws="auto", http=http_protocol_for_pilot(http_base),
                                 lifespan="off", log_level="warning")
         server = uvicorn.Server(config)
         task = asyncio.create_task(server.serve(sockets=[listener]))
@@ -59,6 +64,7 @@ def test_real_transport_limits_and_unchanged_other_socket():
                 async with connect(root + PUBLISH, compression="deflate", close_timeout=1) as peer:
                     assert not peer.extensions
                     proto = next(p for p in server.server_state.connections if p.scope["path"] == PUBLISH)
+                    assert type(proto) is LivestreamPilotProtocol
                     assert proto.max_size == MAX_WIRE and proto.max_queue == 1
                     await peer.send(b"x" * MAX_WIRE)
                     assert await peer.recv() == str(MAX_WIRE)
@@ -73,8 +79,8 @@ def test_real_transport_limits_and_unchanged_other_socket():
                     assert exc.value.rcvd is not None and exc.value.rcvd.code == 1009
                 async with connect(root + NORMAL, compression="deflate", close_timeout=1) as peer:
                     proto = next(p for p in server.server_state.connections if p.scope["path"] == NORMAL)
-                    assert proto.max_size == config.ws_max_size
-                    assert proto.max_queue == config.ws_max_queue
+                    assert type(proto) is AutoWebSocketsProtocol
+                    assert config.ws_protocol_class is AutoWebSocketsProtocol
                     assert peer.extensions
                     await peer.send(b"x" * (MAX_WIRE + 1))
                     assert await peer.recv() == str(MAX_WIRE + 1)

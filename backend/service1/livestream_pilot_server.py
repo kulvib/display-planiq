@@ -1,9 +1,8 @@
 """Pilot-only WebSocket transport limits, before ASGI message allocation.
 
-The installed server must use the same legacy protocol as Uvicorn's auto
-selection. Never switch the protocol implementation for existing RDP,
-terminal or other sockets silently. The locked-dependency real-socket test
-is a release gate for this adapter.
+Only media upgrades select the bounded legacy receive protocol. Other
+connections retain the installed Uvicorn auto HTTP and WebSocket protocols.
+The locked-dependency real-socket test is a release gate for this adapter.
 """
 from __future__ import annotations
 
@@ -12,7 +11,7 @@ import re
 from urllib.parse import unquote
 
 import uvicorn
-from uvicorn.protocols.websockets.auto import AutoWebSocketsProtocol
+from uvicorn.protocols.http.auto import AutoHTTPProtocol
 from uvicorn.protocols.websockets.websockets_impl import WebSocketProtocol
 
 from .livestream_wss_admission import PILOT_CLIENT_ID
@@ -54,17 +53,36 @@ class LivestreamPilotProtocol(WebSocketProtocol):
         )
 
 
-def protocol_for_pilot():
-    if AutoWebSocketsProtocol is not WebSocketProtocol:
-        raise RuntimeError("Livestream pilot requires verified Uvicorn WebSocket auto protocol")
-    return LivestreamPilotProtocol
+def http_protocol_for_pilot(base=None):
+    """Select media protocol per HTTP upgrade, never mutate shared Config."""
+    base = AutoHTTPProtocol if base is None else base
+    if not isinstance(base, type) or not callable(getattr(base, "handle_websocket_upgrade", None)):
+        raise RuntimeError("Unsupported Uvicorn HTTP upgrade protocol")
+
+    class PilotHTTPProtocol(base):
+        def handle_websocket_upgrade(self, *args, **kwargs):
+            # H11 receives the original Request event. httptools receives no
+            # argument and keeps the raw URL on the connection instance.
+            target = args[0].target if args else self.url
+            raw = target.decode("ascii") if isinstance(target, bytes) else target
+            if not isinstance(raw, str):
+                raise RuntimeError("Unsupported HTTP upgrade target")
+            normal = self.ws_protocol_class
+            if media_receive_limit(self.root_path + raw) is not None:
+                self.ws_protocol_class = LivestreamPilotProtocol
+            try:
+                return super().handle_websocket_upgrade(*args, **kwargs)
+            finally:
+                self.ws_protocol_class = normal
+
+    return PilotHTTPProtocol
 
 
 def main():
-    ws = protocol_for_pilot() if PILOT_CLIENT_ID is not None else "auto"
+    http = http_protocol_for_pilot() if PILOT_CLIENT_ID is not None else "auto"
     uvicorn.run("service1.main:app", host="0.0.0.0",
                 port=int(os.environ.get("PORT") or "10000"), workers=1,
-                log_level="info", ws=ws)
+                log_level="info", http=http, ws="auto")
 
 
 if __name__ == "__main__":
