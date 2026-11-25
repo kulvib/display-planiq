@@ -30,6 +30,11 @@ import {
   createBrowserWsTicket,
   getBrowserWsProtocols,
   getClient,
+  getChromeStatus,
+  createScopedControlRoomRealtimeCapability,
+  waitForControlRoomRealtime,
+  getAuthSessionSignal,
+  assertActiveAuthSession,
   getOrganizations,
   getRemoteDesktopBrowserWsUrl,
   openRemoteDesktopBrowserHttpRelay,
@@ -55,6 +60,7 @@ import {
   formatDisplayResolution,
 } from "../../../utils/displayResolution";
 import { compactDarkChipSx } from "../../../utils/chipStyles";
+import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../../../utils/controlRoomRealtimeLifecycle.mjs";
 import {
   getRemoteKeyboardAction,
   REMOTE_KEYBOARD_MODE_MAC,
@@ -178,6 +184,7 @@ export default function RemoteDesktop() {
   const { clientId } = useParams();
 
   const [client, setClient] = useState(null);
+  const [confirmedDisplay, setConfirmedDisplay] = useState(null);
   const [organizations, setOrganizations] = useState([]);
 
   const wsRef = useRef(null);
@@ -361,6 +368,70 @@ export default function RemoteDesktop() {
       cancelled = true;
     };
   }, [clientId]);
+
+  // Existing scoped UI wake channel; no interval-based geometry polling.
+  useEffect(() => {
+    setConfirmedDisplay(null);
+    if (!nativeRequested || !clientId) return undefined;
+    let scope = null;
+    const syncVisibility = () => {
+      scope?.cancel();
+      scope = null;
+      if (document.visibilityState === "hidden") return;
+      const current = createRealtimeRequestScope(getAuthSessionSignal());
+      scope = current;
+      const { signal } = current;
+      const run = async () => {
+        let capability = null;
+        let generation = 0;
+        let failures = 0;
+        let refresh = true;
+        while (!signal.aborted) {
+          try {
+            assertActiveAuthSession(signal);
+            if (!capability) {
+              const issued = await createScopedControlRoomRealtimeCapability(clientId, signal);
+              signal.throwIfAborted();
+              capability = issued?.capability;
+              generation = Number(issued?.generation || 0);
+              if (!capability) throw new Error("Realtime capability missing");
+              refresh = true;
+            }
+            if (refresh) {
+              const snapshot = await getChromeStatus(clientId, { signal });
+              signal.throwIfAborted();
+              const width = snapshot?.display_resolution_current_width;
+              const height = snapshot?.display_resolution_current_height;
+              if ([width, height].every(value => Number.isSafeInteger(value) && value > 0 && value <= 32768)) {
+                setConfirmedDisplay(previous => previous?.width === width && previous?.height === height
+                  ? previous : { width, height });
+              } else {
+                setConfirmedDisplay(null);
+              }
+              refresh = false;
+            }
+            const wake = await waitForControlRoomRealtime(capability, generation, 25, signal);
+            signal.throwIfAborted();
+            const next = Number(wake?.generation || generation);
+            refresh = wake?.changed === true || next > generation;
+            generation = Math.max(generation, next);
+            failures = 0;
+          } catch (error) {
+            capability = null;
+            if (signal.aborted || error?.name === "AbortError" || error?.status === 403) break;
+            await waitForRealtimeRetry(realtimeRetryDelayMs(++failures, error), signal);
+          }
+        }
+      };
+      void run();
+    };
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", syncVisibility);
+      scope?.cancel();
+    };
+  }, [clientId, nativeRequested]);
 
   const send = useCallback((payload) => {
     const ws = wsRef.current;
@@ -1570,6 +1641,7 @@ export default function RemoteDesktop() {
       onDesiredChange={setNativeDesktopWanted}
       idleStopped={idleStopped}
       idleWarningOpen={Boolean(idleWarning)}
+      confirmedDisplay={confirmedDisplay}
     />
   ) : (
     <Stack spacing={1.2} sx={{ minWidth: 0 }}>

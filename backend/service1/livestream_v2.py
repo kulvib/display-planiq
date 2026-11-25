@@ -42,7 +42,7 @@ from .livestream_v2_models import (
     LivestreamV2Viewer,
     utcnow,
 )
-from .routers.livestream_media import HLS_DIR, safe_client_dir
+from .routers.livestream_media import HLS_DIR, safe_client_dir, bind_manifest_generation
 
 DOMAIN = "livestream"
 ACTIVE_GENERATION_STATES = {"starting", "running", "stopping"}
@@ -1352,6 +1352,7 @@ def write_hls_file(
     safe_name = safe_hls_filename(filename)
     if safe_name == "index.m3u8":
         validate_manifest(payload)
+        payload = bind_manifest_generation(payload, generation_id)
     directory = Path(safe_client_dir(str(client_id)))
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / safe_name

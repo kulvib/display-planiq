@@ -25,7 +25,7 @@ import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } fro
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 import { createHlsReserveController, hlsHttpTransportLabel, livestreamLatencyStatus } from "../clientdetailspage/livestreamBrowserTiming.mjs";
-import { createPilotTransport, generationFromHeartbeat, pilotGenerationFromHeartbeat } from "../clientdetailspage/livestreamPilotTransport.mjs";
+import { createHlsGenerationObserver, createPilotTransport, generationFromHeartbeat, pilotGenerationFromHeartbeat } from "../clientdetailspage/livestreamPilotTransport.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -199,6 +199,7 @@ function LivestreamTile({ client, pageMediaActive }) {
     let startupWarned = false;
     let generation = null;
     let observedGeneration = null;
+    let manifestGenerationSeen = false;
     let healthInFlight = false;
     const startupWarning = window.setTimeout(() => {
       if (!cancelled && !mediaReady) {
@@ -221,6 +222,18 @@ function LivestreamTile({ client, pageMediaActive }) {
       let activeHls = null;
       let reserve = null;
       let httpTransport = null;
+      manifestGenerationSeen = false;
+      const observeManifestGeneration = createHlsGenerationObserver({
+        onObserved: () => { if (!cancelled) manifestGenerationSeen = true; },
+        onChange: () => queueMicrotask(() => {
+          if (cancelled || generation) return;
+          destroyPlayer();
+          mediaReady = false;
+          setState("starting");
+          setMessage("Tilpasser livestream …");
+          startPlayer();
+        }),
+      });
       let reportedPlayable = false;
       const reportPlayable = () => queueMicrotask(() => {
         if (cancelled || reportedPlayable || video.paused || video.readyState < 2) return;
@@ -249,6 +262,9 @@ function LivestreamTile({ client, pageMediaActive }) {
             xhrSetup: (xhr) => {
               const token = mediaCapabilityRef.current;
               if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+              xhr.addEventListener("load", () => {
+                if (!cancelled) observeManifestGeneration(xhr);
+              }, { once: true });
             },
           });
           activeHls = hls;
@@ -431,9 +447,11 @@ function LivestreamTile({ client, pageMediaActive }) {
         }
         const nextGeneration = pilotGenerationFromHeartbeat(payload);
         const nextObservedGeneration = generationFromHeartbeat(payload);
-        if (generation !== nextGeneration || observedGeneration !== nextObservedGeneration) {
+        const generationChanged = generation !== nextGeneration ||
+          (!manifestGenerationSeen && observedGeneration !== nextObservedGeneration);
+        observedGeneration = nextObservedGeneration;
+        if (generationChanged) {
           generation = nextGeneration;
-          observedGeneration = nextObservedGeneration;
           destroyPlayer();
           mediaReady = false;
           setState("starting");

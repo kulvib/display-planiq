@@ -33,6 +33,27 @@ os.makedirs(HLS_DIR, exist_ok=True)
 MANIFEST_STALE_SECONDS = int(os.getenv("HLS_STALE_SECONDS", "60"))
 
 
+_GENERATION_TAG = b"#PLANIQ-GENERATION:"
+_GENERATION_ID = re.compile(rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def bind_manifest_generation(payload: bytes, generation_id: str) -> bytes:
+    """Bind the validated generation to the same atomic playlist bytes."""
+    value = generation_id.encode("ascii")
+    if not _GENERATION_ID.fullmatch(value):
+        raise ValueError("Invalid HLS generation")
+    lines = [line for line in payload.splitlines() if not line.strip().startswith(_GENERATION_TAG)]
+    return b"\n".join([lines[0], _GENERATION_TAG + value, *lines[1:]]) + b"\n"
+
+
+def manifest_generation(payload: bytes) -> str | None:
+    lines = payload.splitlines()
+    if len(lines) < 2 or lines[0] != b"#EXTM3U" or not lines[1].startswith(_GENERATION_TAG):
+        return None
+    value = lines[1][len(_GENERATION_TAG):]
+    return value.decode("ascii") if _GENERATION_ID.fullmatch(value) else None
+
+
 def _apply_hls_no_cache(response: Response) -> None:
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
