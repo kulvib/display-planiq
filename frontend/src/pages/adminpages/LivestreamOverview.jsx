@@ -24,7 +24,7 @@ import AdminRefreshButton from "../../components/AdminRefreshButton";
 import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
-import { createHlsReserveController, hlsHttpTransportLabel } from "../clientdetailspage/livestreamBrowserTiming.mjs";
+import { createHlsReserveController, hlsHttpTransportLabel, livestreamLatencyStatus } from "../clientdetailspage/livestreamBrowserTiming.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -36,7 +36,7 @@ function isRequestTimeout(error) {
 }
 
 function formatLatency(seconds) {
-  const value = Number(seconds);
+  const value = seconds;
   if (!Number.isFinite(value) || value < 0) return "måler …";
   return `${value.toFixed(1).replace(".", ",")} sek.`;
 }
@@ -95,7 +95,7 @@ function LivestreamTile({ client, pageMediaActive }) {
 
   const updateLatency = useCallback(() => {
     const video = videoRef.current;
-    let measured = Number(hlsRef.current?.latency);
+    let measured = hlsRef.current?.latency;
     if ((!Number.isFinite(measured) || measured < 0) && video?.seekable?.length) {
       try {
         measured = Math.max(0, Number(video.seekable.end(video.seekable.length - 1)) - Number(video.currentTime));
@@ -103,7 +103,7 @@ function LivestreamTile({ client, pageMediaActive }) {
         measured = Number.NaN;
       }
     }
-    if (Number.isFinite(measured) && measured >= 0) setLatencySeconds(measured);
+    setLatencySeconds(Number.isFinite(measured) && measured >= 0 ? measured : null);
   }, []);
 
   const handleFullscreen = useCallback(async () => {
@@ -379,7 +379,11 @@ function LivestreamTile({ client, pageMediaActive }) {
 
   useEffect(() => () => stopLocalWork(true), [stopLocalWork]);
 
-  const tone = state === "live" ? "success" : state === "error" ? "error" : state === "offline" ? "neutral" : "info";
+  const latencyStatus = livestreamLatencyStatus(state === "live" && shouldRun ? latencySeconds : null);
+  const tone = state === "live" ? latencyStatus.severity : state === "error" ? "error" : state === "offline" ? "neutral" : "info";
+  const statusChipSx = tone === "elevated"
+    ? compactDarkChipSx("neutral", { color: "#fb923c", bgcolor: "rgba(249,115,22,0.14)", borderColor: "rgba(251,146,60,0.45)" })
+    : compactDarkChipSx(tone);
 
   return (
     <Paper
@@ -511,8 +515,8 @@ function LivestreamTile({ client, pageMediaActive }) {
             {mediaTransport && shouldRun && <Chip size="small" label={`HLS · ${mediaTransport}`} sx={compactDarkChipSx("neutral")} />}
             <Chip
               size="small"
-              label={state === "live" ? "Live" : state === "offline" ? "Offline" : state === "error" ? "Fejl" : "Klargør"}
-              sx={compactDarkChipSx(tone)}
+              label={state === "live" ? latencyStatus.text : state === "offline" ? "Offline" : state === "error" ? "Fejl" : "Klargør"}
+              sx={statusChipSx}
             />
           </Stack>
         </Stack>
@@ -520,7 +524,7 @@ function LivestreamTile({ client, pageMediaActive }) {
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
             {[
               activeViewers == null ? "" : `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}`,
-              `Forsinkelse: ${formatLatency(latencySeconds)}`,
+              `Forsinkelse: ${formatLatency(state === "live" && shouldRun ? latencySeconds : null)}`,
             ].filter(Boolean).join(" · ")}
           </Typography>
           <Button
