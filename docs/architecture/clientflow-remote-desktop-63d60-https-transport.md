@@ -200,3 +200,27 @@ boundary; verify release source integrity, install/upgrade/rollback and
 100-idle-client load separately from bounded active-session load.
 No new release approval, catalog update, deployment, or fleet enablement
 from this change. No automatic deletion of historical pilot tools.
+
+
+### 63D-67D / 68A — physical matrix and transport chip
+
+Operator passed all four physical binary transport combinations on Viborg1,
+including browser HTTPS/agent WSS and browser HTTPS/agent HTTPS on
+`1b70b5cf0971835a8ce3b85dab83e80711ca69aa`. Render request logs confirm
+both relevant HTTPS route families. Service-wide peak minute samples:
+395, 1591, 2984 HTTP 200/204 for scenarios 2/3/4 respectively; CPU maxima
+0.080, 0.256, 0.468 vCPU (limit 0.5). Nonmatched workload; deployment
+overlap in earlier scenarios; session summaries not found. No cost or fleet
+capacity conclusion. Physical matrix is closed for the tested candidate,
+not a real restrictive network or canonical release approval.
+
+Expose a neutral read-only chip below client availability. The existing
+authenticated control channel reports the two attached binary peers, based
+on the server-created HTTP adapter rather than browser claims or environment
+settings. Emit only ready/closed events for the exact tunnel generation,
+with bounded best-effort delivery and no additional database reads or
+polling. The chip is hidden without a matching active control session or
+when the operator disconnects. A missing status event leaves it absent.
+This is binary tunnel attachment, not proof of pixel rendering, nor the
+transport of unrelated JSON control/file/terminal channels. CI matrix and
+physical UI verification remain required. No fleet gate change.
