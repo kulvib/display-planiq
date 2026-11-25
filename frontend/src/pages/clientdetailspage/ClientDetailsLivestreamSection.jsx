@@ -2369,12 +2369,14 @@ export default function ClientDetailsLivestreamSection({
                 Skærmindstillinger
               </Button>
             )}
-            {manifestReady && mediaTransport && (
+          </Stack>
+          {manifestReady && mediaTransport && (
+            <Box data-testid="livestream-transport" sx={{ display: "flex", justifyContent: "flex-end", alignSelf: { xs: "flex-end", md: "center" }, ml: { md: "auto" }, flexShrink: 0 }}>
               <Tooltip title="Livestream: HLS via HTTP(S). WSS-medietransport er ikke implementeret.">
                 <Chip size="small" variant="outlined" label={`HLS · ${mediaTransport}`} sx={{ borderRadius: 999, fontWeight: 850 }} />
               </Tooltip>
-            )}
-          </Stack>
+            </Box>
+          )}
         </Stack>
 
         {isTouchHandset && (
@@ -2437,7 +2439,7 @@ export default function ClientDetailsLivestreamSection({
             width: "100%",
             maxWidth: "100%",
             justifySelf: "stretch",
-            height: { xs: "auto", md: "var(--stream-panel-height)" },
+            height: "auto",
             minHeight: { xs: 180, md: "var(--stream-panel-height)" },
             mx: 0,
             borderRadius: 2,
@@ -2469,13 +2471,18 @@ export default function ClientDetailsLivestreamSection({
             <Box
               ref={videoContainerRef}
               sx={{
-                position: "relative",
+                position: { xs: "relative", md: "absolute" },
+                inset: { md: 0 },
                 width: "100%",
                 aspectRatio: livestreamAspectRatio,
                 minHeight: { xs: 180, md: "100%" },
                 height: { xs: "auto", md: "100%" },
                 maxHeight: { xs: 280, md: "none" },
                 "@media (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
+                  position: "relative",
+                  inset: "auto",
+                  height: "auto",
+                  minHeight: 180,
                   maxHeight: "min(56dvh, 420px)",
                 },
                 "@media (orientation: landscape) and (hover: none) and (pointer: coarse) and (max-width: 1023.95px)": {
@@ -2485,6 +2492,8 @@ export default function ClientDetailsLivestreamSection({
                 bgcolor: "#000",
                 display: "flex",
                 "&:fullscreen": {
+                  position: "fixed",
+                  inset: 0,
                   width: "100vw",
                   height: "100vh",
                   maxHeight: "100vh",
@@ -2492,6 +2501,8 @@ export default function ClientDetailsLivestreamSection({
                   background: "#000",
                 },
                 "&:-webkit-full-screen": {
+                  position: "fixed",
+                  inset: 0,
                   width: "100vw",
                   height: "100vh",
                   maxHeight: "100vh",
@@ -2686,10 +2697,10 @@ export default function ClientDetailsLivestreamSection({
         </Box>
 
         <Box
+          data-testid="livestream-diagnostics"
           sx={{
-            height: { xs: "auto", md: "var(--stream-panel-height)" },
-            minHeight: { xs: "auto", md: "var(--stream-panel-height)" },
-            maxHeight: { xs: "none", md: "var(--stream-panel-height)" },
+            height: "auto",
+            minHeight: { xs: 0, md: "var(--stream-panel-height)" },
             width: "100%",
             maxWidth: "none",
             ml: 0,
@@ -2700,12 +2711,11 @@ export default function ClientDetailsLivestreamSection({
             background: "rgba(15,23,42,0.46)",
             border: "1px solid rgba(148,163,184,0.16)",
             display: isSuperadmin || isViewer ? "grid" : "none",
-            flexDirection: "column",
             gap: 1.05,
             minWidth: 0,
-            overflow: "hidden",
             textAlign: "left",
-            gridTemplateRows: { xs: "none", md: "repeat(5, minmax(0, 1fr))" },
+            gridAutoRows: "minmax(min-content, 1fr)",
+            boxSizing: "border-box",
           }}
         >
           {[
@@ -2732,12 +2742,10 @@ export default function ClientDetailsLivestreamSection({
               sx={{
                 p: { xs: 1.15, sm: 1.25, md: 0.95, lg: 1.05 },
                 borderRadius: 2,
-                flex: { xs: "0 0 auto", md: "unset" },
                 alignSelf: "stretch",
                 justifySelf: "stretch",
                 width: "100%",
-                minHeight: 0,
-                overflow: "hidden",
+                boxSizing: "border-box",
                 display: "flex",
                 flexDirection: "column",
                 justifyContent: "center",
@@ -2756,7 +2764,9 @@ export default function ClientDetailsLivestreamSection({
                   textTransform: "uppercase",
                   letterSpacing: 0.5,
                   fontSize: { md: 10.5, lg: 11 },
-                  lineHeight: 1.05,
+                  lineHeight: 1.25,
+                  flexShrink: 0,
+                  overflowWrap: "anywhere",
                 }}
               >
                 {item.label}
@@ -2766,13 +2776,9 @@ export default function ClientDetailsLivestreamSection({
                   color: item.color || "#f8fafc",
                   fontWeight: 900,
                   fontSize: { xs: 14, md: 13, lg: 14 },
-                  lineHeight: 1.16,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
-                  wordBreak: "break-word",
+                  lineHeight: 1.3,
+                  flexShrink: 0,
+                  overflowWrap: "anywhere",
                 }}
               >
                 {item.value}
@@ -2781,13 +2787,13 @@ export default function ClientDetailsLivestreamSection({
                 <Typography
                   variant="caption"
                   sx={{
-                    color: item.detailColor,
+                    color: item.detailColor || "rgba(203,213,225,0.72)",
                     display: "block",
-                    mt: 0.15,
-                    lineHeight: 1.1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    mt: 0.3,
+                    lineHeight: 1.35,
+                    flexShrink: 0,
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {item.detail}
