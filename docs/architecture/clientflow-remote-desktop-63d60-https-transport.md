@@ -258,3 +258,25 @@ override. No automatic deletion of pilot artifacts. Existing independent
 physical cleanup and watchdog protections remain. Viborg1-only admission
 remains in backend, root and runtime; fleet authorization is a separate
 cross-layer change. No deployment or release approval here.
+
+
+### 63D-69A — central admission contract, no fleet enablement
+
+The backend shares a reviewed, default-deny native client admission table
+with independently allowed browser and agent binary transport modes.
+The initial table contains only client 3 and retains the global HTTPS
+opt-in. This is not a dynamic fleet enrollment mechanism. The control
+handshake, binary tunnel admission, tunnel authorization and HTTPS request
+gate use the central policy. Cancellation for the exact existing managed
+request remains available after denial. No new DB reads or automatic
+fallback. Browser authorization, agent credentials and the local physical
+guard remain independently mandatory.
+
+Fleet expansion requires a root-verifiable policy bound to root-owned
+identity, approved installed release, boot and bounded session generation;
+an independently reviewed trust/signature and revocation model; and
+cleanup even after denial. Audit guard, proof, lifecycle, autologin,
+runtime and browser consumers together. Never treat the backend table,
+hostname, unsigned control message or frontend flag alone as root
+authorization. First verify canonical 1249 on Viborg1. No other client
+IDs are admitted and no physical gate is removed in this change.
