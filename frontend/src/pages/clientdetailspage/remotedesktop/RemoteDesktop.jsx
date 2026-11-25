@@ -20,6 +20,7 @@ import {
 import RefreshIcon from "@mui/icons-material/Refresh";
 import MonitorIcon from "@mui/icons-material/Monitor";
 import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
+import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
 import KeyboardIcon from "@mui/icons-material/Keyboard";
 import MouseIcon from "@mui/icons-material/Mouse";
 import FullscreenIcon from "@mui/icons-material/Fullscreen";
@@ -274,6 +275,12 @@ export default function RemoteDesktop() {
   const [dragOverUpload, setDragOverUpload] = useState(false);
   const [shoutText, setShoutText] = useState("");
   const [shoutSending, setShoutSending] = useState(false);
+  const [shoutOpen, setShoutOpen] = useState(false);
+  useEffect(() => {
+    setShoutOpen(false);
+    setShoutText("");
+    setShoutSending(false);
+  }, [clientId]);
   const [transferFiles, setTransferFiles] = useState([]);
   const [transferUploading, setTransferUploading] = useState(false);
   const [transferStatus, setTransferStatus] = useState("");
@@ -574,6 +581,12 @@ export default function RemoteDesktop() {
       setAgentConnected(false);
       setKeyboardEnabled(false);
       setIdleWarning(null);
+      if (shoutAckTimerRef.current) {
+        window.clearTimeout(shoutAckTimerRef.current);
+        shoutAckTimerRef.current = null;
+        setShoutSending(false);
+        setError("Forbindelsen blev afbrudt, før Shout out blev bekræftet.");
+      }
       if (nativeRequested && event.code === 4408) {
         markIdleStopped();
         setStatus("ClientFlow-forbindelsen blev afsluttet på grund af inaktivitet.");
@@ -727,16 +740,17 @@ export default function RemoteDesktop() {
       }
 
       if (msg.type === "shout_result") {
-        if (shoutAckTimerRef.current) {
-          window.clearTimeout(shoutAckTimerRef.current);
-          shoutAckTimerRef.current = null;
-        }
-
+        // Ignore unsolicited or expired acknowledgements for dialog state.
+        if (!shoutAckTimerRef.current) return;
+        window.clearTimeout(shoutAckTimerRef.current);
+        shoutAckTimerRef.current = null;
         setShoutSending(false);
 
         if (msg.ok === false) {
           setError(msg.message || "Shout out fejlede på klienten.");
         } else {
+          setShoutText("");
+          setShoutOpen(false);
           setError("");
           showActionMessage(msg.message || "Shout out vist på klienten");
         }
@@ -885,6 +899,10 @@ export default function RemoteDesktop() {
       if (msg.type === "remote_error" || msg.type === "error") {
         setError(msg.message || "Ukendt fejl");
         if (String(msg.message || "").toLowerCase().includes("shout")) {
+          if (shoutAckTimerRef.current) {
+            window.clearTimeout(shoutAckTimerRef.current);
+            shoutAckTimerRef.current = null;
+          }
           setShoutSending(false);
         }
         return;
@@ -1160,7 +1178,7 @@ export default function RemoteDesktop() {
 
   const sendShout = useCallback(() => {
     const message = shoutText.trim();
-    if (!message || shoutSending) return;
+    if (!message || shoutSending || shoutAckTimerRef.current) return;
 
     if (!canControl) {
       setError("Shout out kan ikke sendes endnu: remote desktop er ikke klar.");
@@ -1182,19 +1200,13 @@ export default function RemoteDesktop() {
       return;
     }
 
-    showActionMessage("Shout out sendt til klient-agenten");
-    setShoutText("");
-
-    if (shoutAckTimerRef.current) {
-      window.clearTimeout(shoutAckTimerRef.current);
-    }
-
+    // Preserve the draft until the existing agent acknowledgement arrives.
     shoutAckTimerRef.current = window.setTimeout(() => {
       setShoutSending(false);
       setError("Shout out blev sendt, men klient-agenten kvitterede ikke. Tjek klientloggen.");
       shoutAckTimerRef.current = null;
     }, 6000);
-  }, [canControl, send, shoutSending, shoutText, showActionMessage]);
+  }, [canControl, send, shoutSending, shoutText]);
 
 
   const getTransferFileKey = useCallback((file) => {
@@ -1694,55 +1706,6 @@ export default function RemoteDesktop() {
     </Stack>
   );
 
-  const shoutPanel = (
-    <Paper
-      elevation={0}
-      sx={{
-        p: { xs: 1.5, md: 2 },
-        borderRadius: 2,
-        bgcolor: "rgba(15,23,42,0.74)",
-        border: "1px solid rgba(148,163,184,0.16)",
-        boxShadow: "0 18px 60px rgba(0,0,0,0.20)",
-      }}
-    >
-      <Stack spacing={1.5}>
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>
-            Shout out
-          </Typography>
-          <Typography variant="body2" sx={{
-            color: "text.secondary"
-          }}>
-            Sender en midlertidig besked direkte til klientens skærm.
-          </Typography>
-        </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-          <TextField
-            label="Shout out besked"
-            value={shoutText}
-            onChange={(e) => setShoutText(e.target.value)}
-            size="small"
-            fullWidth
-            disabled={!canControl}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") {
-                e.preventDefault();
-                sendShout();
-              }
-            }}
-            slotProps={{
-              htmlInput: { maxLength: 120 }
-            }}
-          />
-          <Button disabled={!canControl || !shoutText.trim() || shoutSending} variant="contained" color="warning" onClick={sendShout}>
-            {shoutSending ? <CircularProgress size={18} color="inherit" /> : "Send"}
-          </Button>
-        </Stack>
-      </Stack>
-    </Paper>
-  );
-
   const clientName = client?.name || client?.client_name || client?.hostname || client?.display_name || `Klient ${clientId || ""}`.trim();
   const clientOrganizationId = client?.organization_id ?? client?.organizationId ?? client?.organization?.id ?? null;
   const organizationFromList = Array.isArray(organizations)
@@ -1899,7 +1862,65 @@ export default function RemoteDesktop() {
           >
             Filer
           </Button>
+          <Button
+            variant="outlined"
+            color="warning"
+            startIcon={<CampaignOutlinedIcon />}
+            disabled={!canControl || shoutSending}
+            onClick={() => setShoutOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={shoutOpen}
+            sx={{ ml: "auto", minHeight: 36, textTransform: "none", fontWeight: 700, px: 2 }}
+          >
+            Shout out
+          </Button>
         </Paper>
+
+        <Dialog
+          open={shoutOpen}
+          onClose={() => { if (!shoutSending) { setShoutOpen(false); setShoutText(""); } }}
+          disableEscapeKeyDown={shoutSending}
+          container={() => document.fullscreenElement || document.body}
+          aria-labelledby="remote-shout-title"
+          fullWidth
+          maxWidth="sm"
+        >
+          <DialogTitle id="remote-shout-title">Shout out</DialogTitle>
+          <DialogContent>
+            <TextField
+              autoFocus
+              label="Besked"
+              value={shoutText}
+              onChange={(e) => setShoutText(e.target.value)}
+              disabled={!canControl || shoutSending}
+              fullWidth
+              margin="dense"
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  sendShout();
+                }
+              }}
+              slotProps={{ htmlInput: { maxLength: 120 } }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button
+              color="inherit"
+              disabled={shoutSending}
+              onClick={() => { setShoutOpen(false); setShoutText(""); }}
+            >Annuller</Button>
+            <Button
+              variant="contained"
+              color="warning"
+              disabled={!canControl || !shoutText.trim() || shoutSending}
+              onClick={sendShout}
+            >
+              {shoutSending ? <CircularProgress size={18} color="inherit" aria-label="Sender" /> : "Send"}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {nativeRequested && idleStopped && (
           <Typography variant="body2" role="status">ClientFlow-forbindelsen er afsluttet på grund af inaktivitet.</Typography>
@@ -1951,7 +1972,6 @@ export default function RemoteDesktop() {
               } : { minWidth: 0 }}
             >
               {remoteScreenPanel}
-              {shoutPanel}
             </Stack>
           )}
           {activeTab === "files" && (
