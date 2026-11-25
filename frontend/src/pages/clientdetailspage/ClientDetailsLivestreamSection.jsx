@@ -10,7 +10,7 @@ import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateClient } from "../../api";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
-import { createLivestreamBrowserTiming, createHlsReserveController, latestManifestSegment, hlsHttpTransportLabel } from "./livestreamBrowserTiming.mjs";
+import { createLivestreamBrowserTiming, createHlsReserveController, latestManifestSegment, hlsHttpTransportLabel, livestreamLatencyStatus } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
@@ -657,28 +657,6 @@ function formatDateTimeWithDay(date) {
   const min   = d.getMinutes().toString().padStart(2,"0");
   const sec   = d.getSeconds().toString().padStart(2,"0");
   return `${dayName} ${day}.${month} ${year}, kl. ${hour}:${min}:${sec}`;
-}
-
-function getLagStatus(lag) {
-  if (lag == null) {
-    return { text: "Beregner forsinkelse …", color: "#888" };
-  }
-
-  const rounded = Math.round(lag);
-
-  if (lag < 3) {
-    return { text: "Live", color: "#43a047" };
-  }
-
-  if (lag < 20) {
-    return { text: `Stream er ${rounded} sekunder forsinket`, color: "#43a047" };
-  }
-
-  if (lag < 30) {
-    return { text: `Stream er ${rounded} sekunder forsinket`, color: "#f90" };
-  }
-
-  return { text: `Stream er ${rounded} sekunder forsinket`, color: "#e53935" };
 }
 
 function formatLagValue(val) {
@@ -1690,7 +1668,7 @@ export default function ClientDetailsLivestreamSection({
   // Forsinkelsesberegning
   // -------------------------------------------------------------------------
   // hls.latency already measures playhead-to-live-edge; do not count it twice.
-  const computedLag = lastSegmentLag === null ? null : Math.round(lastSegmentLag);
+  const computedLag = lastSegmentLag;
 
   // -------------------------------------------------------------------------
   // Handlers
@@ -1761,7 +1739,7 @@ export default function ClientDetailsLivestreamSection({
   function handleVideoPlaying() { if (!hlsReserveRef.current) { setBuffering(false); setNeedsTapToPlay(false); } }
   function handleVideoCanPlay() { if (!hlsReserveRef.current) setBuffering(false); }
 
-  const lagStatus       = getLagStatus(manifestReady ? computedLag : null);
+  const lagStatus       = livestreamLatencyStatus(manifestReady ? computedLag : null);
   const disabledOverlay = livestreamVisuallyOffline ? { opacity: 0.65 } : {};
 
   const loadingText = inactivityStopped
@@ -1924,9 +1902,8 @@ export default function ClientDetailsLivestreamSection({
       ? currentDisplayDescription
       : null;
 
-    const lagText = manifestReady && computedLag !== null
-      ? (computedLag <= 3 ? "Live" : `${Math.round(computedLag)} sek. forsinkelse`)
-      : null;
+    const latencyStatus = livestreamLatencyStatus(manifestReady ? computedLag : null);
+    const lagText = manifestReady ? latencyStatus.text : null;
 
     const segmentText = currentSegNum !== null
       ? `afspiller segment ${currentSegNum}`
@@ -2023,9 +2000,9 @@ export default function ClientDetailsLivestreamSection({
     }
 
     return {
-      severity: "success",
-      title: "Stream live",
-      detail: [displayText && `Skærm: ${displayText}`, lagText, segmentText].filter(Boolean).join(" · "),
+      severity: latencyStatus.severity,
+      title: latencyStatus.text,
+      detail: [displayText && `Skærm: ${displayText}`, segmentText].filter(Boolean).join(" · "),
       persistent: false,
     };
   }, [
@@ -2056,7 +2033,9 @@ export default function ClientDetailsLivestreamSection({
     const palette = {
       success: { bg: "rgba(6,78,59,0.72)", border: "rgba(52,211,153,0.42)", dot: "#22c55e" },
       info:    { bg: "rgba(15,23,42,0.78)", border: "rgba(125,211,252,0.38)", dot: "#38bdf8" },
-      warning: { bg: "rgba(113,63,18,0.78)", border: "rgba(251,191,36,0.45)", dot: "#f59e0b" },
+      neutral: { bg: "rgba(30,41,59,0.78)", border: "rgba(148,163,184,0.38)", dot: "#94a3b8" },
+      warning: { bg: "rgba(113,63,18,0.78)", border: "rgba(251,191,36,0.45)", dot: "#facc15" },
+      elevated: { bg: "rgba(124,45,18,0.78)", border: "rgba(251,146,60,0.48)", dot: "#fb923c" },
       error:   { bg: "rgba(127,29,29,0.78)", border: "rgba(248,113,113,0.48)", dot: "#ef4444" },
     };
     return palette[severity] || palette.info;
