@@ -176,3 +176,18 @@ def test_https_counters_are_per_peer():
     second = http.TransportCounters()
     first.uploads += 1
     assert second.uploads == 0
+
+
+def test_stable_browser_sequence_header_requires_one_canonical_value():
+    from starlette.requests import Request
+
+    def request(values):
+        return Request({"type": "http", "headers": [
+            (b"x-clientflow-sequence", value) for value in values
+        ]})
+
+    assert http._header_sequence(request([b"0"])) == "0"
+    assert http._sequence(http._header_sequence(request([b"17"]))) == 17
+    for values in ([], [b"0", b"1"], [b"0, 1"], [b"01"], [b"-1"], [b"9007199254740991"]):
+        with pytest.raises(HTTPException):
+            http._sequence(http._header_sequence(request(values)))
