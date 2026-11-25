@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { createLivestreamBrowserTiming, createHlsReserveController, contiguousVideoBuffer } from "../src/pages/clientdetailspage/livestreamBrowserTiming.mjs";
+import { createLivestreamBrowserTiming, createHlsReserveController, contiguousVideoBuffer, latestManifestSegment, hlsHttpTransportLabel } from "../src/pages/clientdetailspage/livestreamBrowserTiming.mjs";
 
 test("63D-33 HLS live-edge samples are bounded, local and independently labeled", () => {
   const timing = createLivestreamBrowserTiming(3);
@@ -137,4 +137,60 @@ test("63D-73A both HLS.js views use the reserve and keep native Safari fallback"
     assert.match(source, /video\.canPlayType\("application\/vnd\.apple\.mpegurl"\)/);
     assert.doesNotMatch(source, /video\.currentTime = Math\.max\(0, livePos/);
   }
+});
+
+test("63D-73C manifest edge and transport are independent of playhead", () => {
+  assert.equal(latestManifestSegment({ fragments: [{ sn: 57 }, { sn: 58 }, { sn: 59 }] }), 59);
+  assert.equal(latestManifestSegment({ fragments: [] }), null);
+  assert.equal(latestManifestSegment({ fragments: [{ sn: "59" }] }), null);
+  assert.equal(hlsHttpTransportLabel("https://api.example.test/hls/3/index.m3u8"), "HTTPS");
+  assert.equal(hlsHttpTransportLabel("/hls/3/index.m3u8", "http://localhost:8080"), "HTTP");
+  assert.equal(hlsHttpTransportLabel("wss://api.example.test/video"), null);
+  const source = readFileSync(new URL("../src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /setLastSegNum\(data\.frag\.sn\)/);
+  assert.match(source, /setLastSegNum\(published\)/);
+  assert.doesNotMatch(source, /segsBehind/);
+  assert.match(source, /bufferStats\.aheadSeconds/);
+  assert.match(source, /HLS · \$\{mediaTransport\}/);
+});
+
+test("63D-73C slows before depletion, counts one waiting episode and measures duration", async () => {
+  const video = fakeVideo();
+  let clock = 0;
+  const observations = [];
+  const gate = createHlsReserveController(video, { now: () => clock, onSnapshot: (s) => observations.push(s) });
+  video.ranges = [[0, 6]];
+  gate.pump();
+  await Promise.resolve();
+  assert.equal(video.playbackRate, 1);
+  video.currentTime = 4;
+  clock = 1000;
+  video.emit("timeupdate");
+  assert.equal(video.playbackRate, 0.95);
+  assert.equal(gate.snapshot().stalls, 0);
+  video.ranges = [[0, 9]];
+  clock = 2000;
+  video.emit("timeupdate");
+  assert.equal(video.playbackRate, 1);
+  video.currentTime = 6;
+  clock = 3000;
+  video.emit("waiting");
+  video.emit("waiting");
+  assert.equal(gate.snapshot().stalls, 1);
+  clock = 3500;
+  video.emit("playing");
+  assert.equal(gate.snapshot().stalledSeconds, 0.5);
+  video.currentTime = 8.5;
+  clock = 4000;
+  video.emit("waiting");
+  assert.equal(gate.snapshot().stalls, 2);
+  assert.equal(gate.snapshot().refills, 1);
+  video.ranges = [[0, 14]];
+  clock = 5000;
+  video.emit("progress");
+  await Promise.resolve();
+  assert.equal(gate.snapshot().stalledSeconds, 1.5);
+  assert.ok(observations.length > 0);
+  gate.dispose();
+  assert.equal(video.playbackRate, 1);
 });

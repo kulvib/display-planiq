@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import {
   Box, Card, Typography, CircularProgress, Alert, IconButton,
-  Tooltip, Grid, Stack, Divider, useMediaQuery, Button, Dialog, DialogTitle,
+  Tooltip, Grid, Stack, Divider, useMediaQuery, Button, Chip, Dialog, DialogTitle,
   DialogContent, DialogActions, TextField, MenuItem
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -10,7 +10,7 @@ import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateClient } from "../../api";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
-import { createLivestreamBrowserTiming, createHlsReserveController } from "./livestreamBrowserTiming.mjs";
+import { createLivestreamBrowserTiming, createHlsReserveController, latestManifestSegment, hlsHttpTransportLabel } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
@@ -709,6 +709,8 @@ export default function ClientDetailsLivestreamSection({
   const hlsBrowserTiming = useMemo(() => createLivestreamBrowserTiming(), []);
   const [hlsLatencyStats, setHlsLatencyStats] = useState(null);
   const hlsReserveRef = useRef(null);
+  const [bufferStats, setBufferStats] = useState(null);
+  const [mediaTransport, setMediaTransport] = useState(null);
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const viewerLeaveSentRef = useRef(false);
   const hiddenInactivityTimerRef = useRef(null);
@@ -721,7 +723,6 @@ export default function ClientDetailsLivestreamSection({
   const [error, setError]                       = useState("");
   const [buffering, setBuffering]               = useState(false);
   const [currentSegNum, setCurrentSegNum]       = useState(null);
-  const [fragDuration, setFragDuration]         = useState(2);
   const [lastSegNum, setLastSegNum]             = useState(null);
   const [lastSegmentLag, setLastSegmentLag]     = useState(null);
   const [lastSegmentTimestamp, setLastSegmentTimestamp] = useState(null);
@@ -830,6 +831,8 @@ export default function ClientDetailsLivestreamSection({
   const resetStreamState = useCallback(() => {
     hlsReserveRef.current?.dispose();
     hlsReserveRef.current = null;
+    setBufferStats(null);
+    setMediaTransport(null);
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
@@ -849,7 +852,6 @@ export default function ClientDetailsLivestreamSection({
     setError("");
     setBuffering(false);
     setCurrentSegNum(null);
-    setFragDuration(2);
     setLastSegNum(null);
     setLastSegmentLag(null);
     setLastSegmentTimestamp(null);
@@ -1340,6 +1342,10 @@ export default function ClientDetailsLivestreamSection({
     setError("");
     setCurrentSegNum(null);
     setLastSegNum(null);
+    setLastSegmentLag(null);
+    setLastSegmentTimestamp(null);
+    setBufferStats(null);
+    setMediaTransport(null);
     hlsBrowserTiming.reset();
     setHlsLatencyStats(null);
 
@@ -1354,6 +1360,8 @@ export default function ClientDetailsLivestreamSection({
     let disposed = false;
     let activeHls = null;
     let reserve = null;
+    let lastObservedManifestSn = null;
+    const httpTransport = hlsHttpTransportLabel(hlsUrl, window.location.href);
     let fatalErrorTimeout = null;
     let playTimeout = null;
     let nativeLoadedHandler = null;
@@ -1423,8 +1431,10 @@ export default function ClientDetailsLivestreamSection({
             onReady: () => {
               if (disposed) return;
               setManifestReady(true);
+              setMediaTransport(httpTransport);
               setError("");
             },
+            onSnapshot: (value) => { if (!disposed) setBufferStats(value); },
             onBuffering: (value) => { if (!disposed) setBuffering(value); },
             onTapRequired: (value) => { if (!disposed) setNeedsTapToPlay(value); },
           });
@@ -1451,6 +1461,13 @@ export default function ClientDetailsLivestreamSection({
           });
 
           hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+            if (disposed) return;
+            const published = latestManifestSegment(data?.details);
+            if (published !== null && published !== lastObservedManifestSn) {
+              lastObservedManifestSn = published;
+              setLastSegNum(published);
+              setLastSegmentTimestamp(new Date().toISOString());
+            }
             reserve.setTargetDuration(data?.details?.targetduration);
           });
 
@@ -1503,11 +1520,7 @@ export default function ClientDetailsLivestreamSection({
             lastHlsProgressAtRef.current = Date.now();
             if (data?.frag && typeof data.frag.sn === "number") {
               setCurrentSegNum(data.frag.sn);
-              setLastSegNum(data.frag.sn);
-              if (data.frag.duration > 0) setFragDuration(data.frag.duration);
-              const observedAt = new Date();
-              setLastFetched(observedAt);
-              setLastSegmentTimestamp(observedAt.toISOString());
+              setLastFetched(new Date());
               const measuredLatency = typeof hls.latency === "number" ? hls.latency : Number.NaN;
               setLastSegmentLag(Number.isFinite(measuredLatency) && measuredLatency >= 0 ? measuredLatency : null);
               if (hlsBrowserTiming.observe(measuredLatency)) {
@@ -1529,6 +1542,7 @@ export default function ClientDetailsLivestreamSection({
             if (disposed) return;
             lastHlsProgressAtRef.current = Date.now();
             setManifestReady(true);
+            setMediaTransport(httpTransport);
             playTimeout = window.setTimeout(() => {
               video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
             }, 100);
@@ -1558,6 +1572,8 @@ export default function ClientDetailsLivestreamSection({
       }
       resetVideo();
       setManifestReady(false);
+      setBufferStats(null);
+      setMediaTransport(null);
     };
   }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, mediaCapability, mobileViewerActive, hlsBrowserTiming]);
 
@@ -1666,17 +1682,8 @@ export default function ClientDetailsLivestreamSection({
   // -------------------------------------------------------------------------
   // Forsinkelsesberegning
   // -------------------------------------------------------------------------
-  const computedLag = useMemo(() => {
-    if (lastSegNum != null && currentSegNum != null && lastSegmentLag != null) {
-      const segsBehind = lastSegNum - currentSegNum;
-      const lag = segsBehind * fragDuration + lastSegmentLag;
-      return lag >= 0 ? Math.round(lag) : null;
-    }
-    if (lastSegmentLag != null) {
-      return Math.round(lastSegmentLag);
-    }
-    return null;
-  }, [lastSegNum, currentSegNum, fragDuration, lastSegmentLag]);
+  // hls.latency already measures playhead-to-live-edge; do not count it twice.
+  const computedLag = lastSegmentLag === null ? null : Math.round(lastSegmentLag);
 
   // -------------------------------------------------------------------------
   // Handlers
@@ -1914,8 +1921,8 @@ export default function ClientDetailsLivestreamSection({
       ? (computedLag <= 3 ? "Live" : `${Math.round(computedLag)} sek. forsinkelse`)
       : null;
 
-    const segmentText = lastSegNum !== null
-      ? `segment ${lastSegNum}`
+    const segmentText = currentSegNum !== null
+      ? `afspiller segment ${currentSegNum}`
       : healthInfo?.latest_segment
       ? String(healthInfo.latest_segment).replace(/^segment[-_]/, "seg. ").replace(/\.(ts|m4s|mp4)$/i, "")
       : null;
@@ -2028,7 +2035,7 @@ export default function ClientDetailsLivestreamSection({
     healthInfo,
     inactivityStopMessage,
     inactivityStopped,
-    lastSegNum,
+    currentSegNum,
     manifestReady,
     serverReady,
     streamStale,
@@ -2357,6 +2364,11 @@ export default function ClientDetailsLivestreamSection({
               >
                 Skærmindstillinger
               </Button>
+            )}
+            {manifestReady && mediaTransport && (
+              <Tooltip title="Livestream: HLS via HTTP(S). WSS-medietransport er ikke implementeret.">
+                <Chip size="small" variant="outlined" label={`HLS · ${mediaTransport}`} sx={{ borderRadius: 999, fontWeight: 850 }} />
+              </Tooltip>
             )}
           </Stack>
         </Stack>
@@ -2693,17 +2705,18 @@ export default function ClientDetailsLivestreamSection({
           }}
         >
           {[
+            { label: "Afspilles / manifest", value: `${currentSegNum ?? "-"} / ${lastSegNum ?? "-"}`, detail: "Aktuelt / senest observeret i manifest" },
             {
-              label: "Sidste segment",
-              value: lastSegmentTimestamp && clientOnline !== false
-                ? formatDateTimeWithDay(new Date(lastSegmentTimestamp))
-                : "Ikke modtaget",
+              label: "Videobuffer",
+              value: bufferStats ? formatLagValue(bufferStats.aheadSeconds) : "—",
+              color: bufferStats ? (bufferStats.aheadSeconds >= bufferStats.reserveTargetSeconds ? "#86efac" : "#fbbf24") : "#cbd5e1",
+              detail: bufferStats ? `Mål ≥ ${bufferStats.reserveTargetSeconds.toFixed(1)}s · ${bufferStats.playbackRate.toFixed(2)}×` : "HLS.js-måling ikke tilgængelig",
             },
-            { label: "Segmenter", value: `${currentSegNum ?? "-"} / ${lastSegNum ?? "-"}` },
-            { label: "Total lag", value: formatLagValue(computedLag), color: manifestReady ? lagStatus.color : "#cbd5e1" },
+            { label: "Bufferpauser", value: bufferStats ? String(bufferStats.stalls) : "—", detail: bufferStats ? `${bufferStats.stalledSeconds.toFixed(1)}s samlet · ${bufferStats.refills} genopfyldninger` : null },
             {
               label: "HLS livekant",
               value: formatLagValue(lastSegmentLag),
+              color: manifestReady ? lagStatus.color : "#cbd5e1",
               detail: hlsLatencyStats?.samples >= 3
                 ? `Browser p50 ${hlsLatencyStats.p50Seconds}s · p95 ${hlsLatencyStats.p95Seconds}s`
                 : "Afspillerestimat, ikke kamera-til-skærm",

@@ -24,7 +24,7 @@ import AdminRefreshButton from "../../components/AdminRefreshButton";
 import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
-import { createHlsReserveController } from "../clientdetailspage/livestreamBrowserTiming.mjs";
+import { createHlsReserveController, hlsHttpTransportLabel } from "../clientdetailspage/livestreamBrowserTiming.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -87,6 +87,7 @@ function LivestreamTile({ client, pageMediaActive }) {
   const [message, setMessage] = useState("");
   const [activeViewers, setActiveViewers] = useState(null);
   const [latencySeconds, setLatencySeconds] = useState(null);
+  const [mediaTransport, setMediaTransport] = useState(null);
   const [needsTapToPlay, setNeedsTapToPlay] = useState(false);
 
   const clientOnline = client?.presence?.is_online === true;
@@ -135,6 +136,7 @@ function LivestreamTile({ client, pageMediaActive }) {
       hlsRef.current = null;
     }
     setLatencySeconds(null);
+    setMediaTransport(null);
     setNeedsTapToPlay(false);
     const video = videoRef.current;
     if (video) {
@@ -208,6 +210,7 @@ function LivestreamTile({ client, pageMediaActive }) {
         const { default: Hls } = await import("hls.js");
         if (cancelled) return;
         const hlsUrl = `${apiUrl}/hls/${client.id}/index.m3u8?_wall=${Date.now()}`;
+        const httpTransport = hlsHttpTransportLabel(hlsUrl, window.location.href);
         if (Hls.isSupported()) {
           const hls = new Hls({
             enableWorker: true,
@@ -230,6 +233,7 @@ function LivestreamTile({ client, pageMediaActive }) {
               mediaReady = true;
               window.clearTimeout(startupWarning);
               setState("live");
+              setMediaTransport(httpTransport);
               setMessage("");
             },
             onBuffering: (value) => {
@@ -277,6 +281,7 @@ function LivestreamTile({ client, pageMediaActive }) {
           mediaReady = true;
           window.clearTimeout(startupWarning);
           setState("live");
+          setMediaTransport(httpTransport);
           setMessage("");
           video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
           return;
@@ -499,11 +504,14 @@ function LivestreamTile({ client, pageMediaActive }) {
               {client.locality || "Ingen lokalitet"}
             </Typography>
           </Box>
-          <Chip
-            size="small"
-            label={state === "live" ? "Live" : state === "offline" ? "Offline" : state === "error" ? "Fejl" : "Klargør"}
-            sx={compactDarkChipSx(tone)}
-          />
+          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" justifyContent="flex-end">
+            {mediaTransport && shouldRun && <Chip size="small" label={`HLS · ${mediaTransport}`} sx={compactDarkChipSx("neutral")} />}
+            <Chip
+              size="small"
+              label={state === "live" ? "Live" : state === "offline" ? "Offline" : state === "error" ? "Fejl" : "Klargør"}
+              sx={compactDarkChipSx(tone)}
+            />
+          </Stack>
         </Stack>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between", minWidth: 0, flexWrap: "wrap" }}>
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
