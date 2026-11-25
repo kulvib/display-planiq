@@ -652,7 +652,19 @@ def _native_rdp_physical_pending(layout: Layout) -> bool:
                for name in _NATIVE_RDP_PHYSICAL_PATHS)
 
 
+_NATIVE_RDP_TEMPORARY_PATHS = (
+    "/usr/local/libexec/clientflow/native-rdp-pilot",
+    "/run/clientflow-63d54-operator/shadow",
+)
+
+
 def _assert_no_temporary_rdp_override(layout: Layout) -> None:
+    # An interrupted pilot can leave privileged sources without unit files.
+    # The passive operator receipt left after rollback is not an override.
+    for name in _NATIVE_RDP_TEMPORARY_PATHS:
+        path = layout.path(name)
+        if path.exists() or path.is_symlink():
+            raise TransactionError("Temporary RDP source must be rolled back before activation")
     for name in (*_NATIVE_RDP_SOCKET_UNITS, *_NATIVE_RDP_TEMPLATES):
         path = layout.path("/run/systemd/system/" + name)
         if path.exists() or path.is_symlink():
