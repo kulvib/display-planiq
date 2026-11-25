@@ -139,6 +139,11 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
         async def send_agent(_channel, packet):
             await opened.put(packet)
         monkeypatch.setattr(native, "_send_agent", send_agent)
+        status = []
+        async def send_browser(session, client_id, payload):
+            assert session == SESSION and client_id == 3
+            status.append(payload)
+        monkeypatch.setattr(native, "_send_browser", send_browser)
         app = FastAPI()
         app.include_router(http.router, prefix="/api")
         bh = {"origin": ORIGIN, "authorization": "Bearer test", "x-clientflow-ticket": "A" * 43}
@@ -198,6 +203,10 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
             try:
                 await transfer(browser, agent, bh, ah, [b"\x00\xff", bytes(range(256)) * 256, b"end"])
                 await transfer(agent, browser, ah, bh, [b"\x03\x00", b"reply"])
+                assert status == [{"type": "native_rdp_transport", "session_id": SESSION,
+                                   "tunnel_id": tunnel_id, "phase": "ready",
+                                   "browser": "https" if browser_https else "wss",
+                                   "agent": "https" if agent_https else "wss"}]
                 if browser_https:
                     denied = await client.post(browser + "/send/1", content=encode_batch([b"denied"]),
                                                headers={**bh, "origin": "https://other.invalid",
@@ -222,6 +231,9 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
             finally:
                 await native.close_native_rdp_session(3, SESSION)
                 await asyncio.gather(*tasks)
+            assert status[-1] == {"type": "native_rdp_transport", "session_id": SESSION,
+                                  "tunnel_id": tunnel_id, "phase": "closed"}
+            assert len(status) == 2
             assert native._TUNNELS == {} and native._CLIENT_TUNNELS == {}
             assert http._PEERS == {} and http._BUDGET.used == 0
 
