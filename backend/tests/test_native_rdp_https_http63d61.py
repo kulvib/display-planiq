@@ -120,3 +120,59 @@ def test_handshake_removes_secrets_and_bad_sequence_rejected():
     for value in ("-1", "01", "1.0", "9007199254740991", "a"):
         with pytest.raises(HTTPException):
             http._sequence(value)
+
+
+def test_https_counters_count_accepted_work_without_secrets(monkeypatch, caplog):
+    import logging
+
+    async def exercise():
+        async def live(_entry, **_kwargs):
+            pass
+        monkeypatch.setattr(http, "_live", live)
+        peer = http.HttpPeer({}, None)
+        entry = http.Entry("secret-peer", http.Owner("agent", 3, "secret-owner", 1),
+                           "secret-session", "secret-request", object(), object(), peer)
+        body = encode_batch([b"secret-payload"])
+        response = await http._send(_request([body]), entry, "0")
+        async def deliver(_message):
+            pass
+        await response({"type": "http"}, None, deliver)
+        assert entry.counters.uploads == 1
+        assert entry.counters.upload_bytes == len(body)
+        await peer.receive()
+
+        original_poll = peer.poll
+        async def fast_poll(sequence):
+            return await original_poll(sequence, timeout=0.001)
+        monkeypatch.setattr(peer, "poll", fast_poll)
+        response = await http._poll(entry, "0")
+        assert response.body == b""
+        await response({"type": "http"}, None, deliver)
+        assert entry.counters.empty_polls == 1
+
+        await peer.send_bytes(b"output")
+        response = await http._poll(entry, "0")
+        assert entry.counters.nonempty_polls == 1
+        assert entry.counters.download_bytes == len(encode_batch([b"output"]))
+        async def lost(_message):
+            raise OSError("secret-error")
+        with pytest.raises(OSError):
+            await response({"type": "http"}, None, lost)
+        assert entry.counters.delivery_errors == 1
+        assert peer.closed.is_set()
+
+        with caplog.at_level(logging.INFO, logger=http.logger.name):
+            entry.counters.report(entry.owner.role)
+        assert "uploads=1" in caplog.text
+        assert "nonempty_polls=1 empty_polls=1" in caplog.text
+        assert "response_delivery_errors_observed=1" in caplog.text
+        assert "secret-" not in caplog.text
+
+    asyncio.run(exercise())
+
+
+def test_https_counters_are_per_peer():
+    first = http.TransportCounters()
+    second = http.TransportCounters()
+    first.uploads += 1
+    assert second.uploads == 0
