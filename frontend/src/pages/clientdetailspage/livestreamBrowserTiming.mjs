@@ -85,6 +85,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
   let liveRecoveryHeld = false;
   let visibilityDocument = null;
   let detachVisibility = () => {};
+  let observeVisibleProgress = () => {};
   const hidden = () => visibilityDocument?.visibilityState === "hidden";
   const minimum = () => duration * segments;
   const buffer = () => contiguousVideoBuffer(video);
@@ -198,6 +199,7 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     } else {
       pump();
     }
+    observeVisibleProgress();
   }
   function onPlaying() {
     if (disposed) return;
@@ -225,19 +227,59 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     let hiddenAt = null;
     let hiddenPosition = null;
     let timer = null;
+    let stage = null;
+    let progressFrom = null;
+    let interrupted = false;
+
     const clear = () => {
       if (timer !== null) cancel(timer);
       timer = null;
     };
-    const fail = () => {
+    const resetWatch = () => {
       clear();
-      if (disposed || hidden() || !liveRecoveryHeld) return;
+      stage = null;
+      progressFrom = null;
+    };
+    const arm = (fn, ms) => {
+      clear();
+      timer = schedule(() => {
+        timer = null;
+        if (!disposed && !hidden()) fn();
+      }, ms);
+    };
+    const fail = () => {
+      if (disposed || hidden() || stage === null) return;
+      resetWatch();
       liveRecoveryHeld = false;
+      // An explicit autoplay refusal needs the existing user gesture, not
+      // repeated player replacement.
+      if (blocked) return;
       rearm();
       onFailure();
     };
+    const beginRecovery = () => {
+      if (disposed || hidden()) return;
+      if (blocked) { resetWatch(); return; }
+      stage = "playlist";
+      progressFrom = null;
+      liveRecoveryHeld = true;
+      rearm();
+      arm(fail, 8_000);
+      try {
+        hls.stopLoad();
+        hls.startLoad(-1);
+      } catch { fail(); }
+    };
+    observeVisibleProgress = () => {
+      if ((stage !== "warm" && stage !== "playback") ||
+          hidden() || video.paused || video.seeking || video.readyState < 2 ||
+          phase !== "playing" || !Number.isFinite(progressFrom)) return;
+      // A playlist update, a seek, and a resolved play() promise are not
+      // proof that the media clock actually resumed.
+      if (video.currentTime > progressFrom + 0.15) resetWatch();
+    };
     const onLevel = (_event, data) => {
-      if (disposed || hidden() || !liveRecoveryHeld) return;
+      if (disposed || hidden() || stage !== "playlist" || !liveRecoveryHeld) return;
       const details = data?.details;
       const fragments = details?.fragments;
       if (!details?.live || !Array.isArray(fragments) || !fragments.length) return;
@@ -250,8 +292,12 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
       if (!Number.isFinite(target) || target < 0) return;
       try { if (Math.abs(video.currentTime - target) > 0.05) video.currentTime = target; }
       catch { return; }
-      clear();
+      stage = "playback";
+      progressFrom = target;
       liveRecoveryHeld = false;
+      // Keep a bounded recovery deadline until actual playback advances.
+      // Do not clear it merely because a live playlist arrived.
+      arm(fail, 5_000);
       pump();
     };
     const onVisibility = () => {
@@ -259,7 +305,8 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
       if (hidden()) {
         hiddenAt = now();
         hiddenPosition = video.currentTime;
-        clear();
+        interrupted = stage === "playlist" || stage === "playback";
+        resetWatch();
         finishStall();
         return;
       }
@@ -271,27 +318,32 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
       const latency = hls.latency;
       const behind = Number.isFinite(latency) && latency > Math.max(6, duration * 3) + duration;
       const stalledInBackground = elapsed >= duration && elapsed - advanced >= duration;
-      if (!liveRecoveryHeld && !behind && !stalledInBackground && !video.paused) {
-        pump();
-        return;
-      }
+      const needsRecovery = interrupted || liveRecoveryHeld || behind || stalledInBackground ||
+        video.paused || video.seeking || video.readyState < 2 ||
+        phase !== "playing" || (buffer()?.ahead ?? 0) < 0.2;
+      interrupted = false;
+      if (blocked) return;
       if (!ready && !liveRecoveryHeld) { pump(); return; }
-      liveRecoveryHeld = true;
-      rearm();
-      clear();
-      timer = schedule(fail, 12_000);
-      try {
-        hls.stopLoad();
-        hls.startLoad(-1);
-      } catch { fail(); }
+      if (needsRecovery) {
+        beginRecovery();
+      } else {
+        // A healthy-looking warm switch can still stall immediately after
+        // becoming visible. Verify progress without restarting a healthy
+        // player or spending its reserve.
+        stage = "warm";
+        progressFrom = video.currentTime;
+        arm(beginRecovery, 3_000);
+        pump();
+      }
     };
     doc.addEventListener("visibilitychange", onVisibility);
     hls.on(levelUpdatedEvent, onLevel);
     if (hidden()) onVisibility();
     detachVisibility = () => {
-      clear();
+      resetWatch();
       doc.removeEventListener("visibilitychange", onVisibility);
       hls.off(levelUpdatedEvent, onLevel);
+      observeVisibleProgress = () => {};
       visibilityDocument = null;
       liveRecoveryHeld = false;
     };
