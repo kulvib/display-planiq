@@ -2,7 +2,7 @@
 """63D-54: time-bounded physical pilot installer, not a release installer.
 
 Root, Viborg1 ID 3, release 1248 only. Pin the entire candidate source set to
-the immutable integrated 63D-61D source snapshot. No GNOME start at installation time; no
+the immutable optimized 63D-65 source snapshot. No GNOME start at installation time; no
 database, release-store, firewall policy, kiosk display, or Render mutations.
 A runtime timer restores the original agent independently of the browser.
 The original GNOME watchdog remains responsible for firewall-first protection
@@ -24,7 +24,7 @@ import sys
 import time
 import urllib.request
 
-COMMIT = "fb2e7ba677d478b4c466a4c916955d7f17175237"
+COMMIT = "e5f955a7f1604405327bca3131b68eaf1f4189d2"
 HOST = "viborg1-NUC14MNK-B2"
 RELEASE = "clientflow-1.3.47-seq-1248"
 ROOT = Path("/run/clientflow-63d54-operator")
@@ -61,9 +61,9 @@ PINS = {
     "scripts/clientflow_63d53_rdp_lifecycle.py": "5ee6afc5d8bf5a3d4401f77d8f36bb8eda47e1fcaea210466af0755bc9a8e2bb",
     "scripts/clientflow_63d53_rdp_proof.py": "daec30c30191f3dd6d9b0b4b12b773023bf5287ff34379150ef1b14f0df2e4f6",
     "client/runtime/clientflow_runtime/remote_desktop_agent.py": "1fbcfb5667b29c55140d082bc7ec1e65ba81f5b2f407bd5186546597dca4311a",
-    "client/runtime/clientflow_runtime/native_rdp_forwarder.py": "1aa5946c8d34ceb1a07082b512e856e532732ab5f417e99372e7cd23d455dcfc",
+    "client/runtime/clientflow_runtime/native_rdp_forwarder.py": "f1b60ac9ee1829c26532076b5eca09df4959e30ac82e1148028fd3b56b888077",
     "client/runtime/clientflow_runtime/native_rdp_autologin.py": "087822cd2b0928b7d0406be0aa8b646a4b32690105e9f3094bff074cacb0726f",
-    "client/runtime/clientflow_runtime/native_rdp_https_peer.py": "a0d3c2bb284967b76860217ec3d38c13b1dc744ef1d620df0888d109bfe90fb0",
+    "client/runtime/clientflow_runtime/native_rdp_https_peer.py": "bcb8cd90eb39414ad72273ed47d1e2ea4620a246994c5b1b979118be052b1e5b",
     "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle.socket": "9664b1e7c2b2c3627644d200a599018e7e64ebd32ce30b723024c9d91aa289a3",
     "experiments/63d53-managed-rdp/clientflow-rdp-lifecycle@.service": "35f49b92ce587c2496676ce92d9fc011511fabaa3c67e11c65634bfda899cbfc",
     "experiments/63d53-managed-rdp/clientflow-rdp-sealer.socket": "061ed3d0f426445e3b824fc4ab87a389ac10a333737a7e1b08217d7f4afca825",
