@@ -209,6 +209,7 @@ export default function RemoteDesktop() {
   const nativeRdpMode = nativeRequested;
   // 63D-49: opaque, one-use ECDH ciphertext only. No RDP credentials here.
   const [nativeRdpAutologinMessage, setNativeRdpAutologinMessage] = useState(null);
+  const [nativeTransport, setNativeTransport] = useState(null);
   const nativeRdpModeRef = useRef(nativeRequested);
   const [status, setStatus] = useState("Ikke forbundet");
   const [error, setError] = useState("");
@@ -258,7 +259,10 @@ export default function RemoteDesktop() {
     setNativeDesktopWanted(true);
   }, [clientId]);
   useEffect(() => {
-    if (!nativeDesktopWanted) setIdleWarning(null);
+    if (!nativeDesktopWanted) {
+      setIdleWarning(null);
+      setNativeTransport(null);
+    }
   }, [nativeDesktopWanted]);
   useEffect(() => {
     if (!idleWarning) return undefined;
@@ -458,6 +462,7 @@ export default function RemoteDesktop() {
     setAgentConnected(false);
     setSessionId(null);
     setNativeRdpAutologinMessage(null);
+    setNativeTransport(null);
     setKeyboardEnabled(false);
     nativeRdpModeRef.current = nativeRequested;
     setHasRemoteFrame(false);
@@ -563,6 +568,7 @@ export default function RemoteDesktop() {
       setConnected(false);
       setSessionId(null);
       setNativeRdpAutologinMessage(null);
+      setNativeTransport(null);
       pointerMoves.clear();
       setTransportMode(null);
       setAgentConnected(false);
@@ -592,6 +598,20 @@ export default function RemoteDesktop() {
       try {
         msg = JSON.parse(event.data);
       } catch {
+        return;
+      }
+
+      if (msg.type === "native_rdp_transport") {
+        if (!nativeRequested || typeof msg.session_id !== "string" ||
+            typeof msg.tunnel_id !== "string") return;
+        if (msg.phase === "closed") {
+          setNativeTransport(previous => previous?.session_id === msg.session_id &&
+            previous?.tunnel_id === msg.tunnel_id ? null : previous);
+        } else if (msg.phase === "ready" && ["wss", "https"].includes(msg.browser) &&
+                   ["wss", "https"].includes(msg.agent)) {
+          setNativeTransport({ session_id: msg.session_id, tunnel_id: msg.tunnel_id,
+            browser: msg.browser, agent: msg.agent });
+        }
         return;
       }
 
@@ -625,6 +645,7 @@ export default function RemoteDesktop() {
       if (msg.type === "hello") {
         setIdleWarning(null);
         setNativeRdpAutologinMessage(null);
+        setNativeTransport(null);
         setSessionId(msg.session_id);
         setAgentConnected(!!msg.agent_connected);
         const geometry = getRemoteScreenGeometryFromMessage(msg, true);
@@ -646,6 +667,7 @@ export default function RemoteDesktop() {
 
       if (msg.type === "agent_status") {
         setAgentConnected(!!msg.agent_connected);
+        if (!msg.agent_connected) setNativeTransport(null);
         const geometry = getRemoteScreenGeometryFromMessage(msg, true);
         if (geometry) {
           setScreenSize(geometry);
@@ -932,6 +954,7 @@ export default function RemoteDesktop() {
         setAgentConnected(false);
         setSessionId(null);
         setNativeRdpAutologinMessage(null);
+        setNativeTransport(null);
       },
       restore: () => { void connectRef.current?.(); },
     }) : () => {};
@@ -1753,7 +1776,14 @@ export default function RemoteDesktop() {
                 </Box>
               </Stack>
               <Stack direction="row" spacing={0.75} alignItems="center">
-                <Chip size="small" label={canControl ? "Klient tilgængelig" : "Venter på klient"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />
+                <Stack spacing={0.5} alignItems="flex-start">
+                  <Chip size="small" label={canControl ? "Klient tilgængelig" : "Venter på klient"} sx={compactDarkChipSx(canControl ? "success" : "neutral")} />
+                  {canControl && nativeDesktopWanted && !idleStopped && nativeTransport?.session_id === sessionId && (
+                    <Tooltip title={`Browser → Render: ${nativeTransport.browser.toUpperCase()} · Render → ClientFlow: ${nativeTransport.agent.toUpperCase()}`}>
+                      <Chip size="small" variant="outlined" label={`${nativeTransport.browser.toUpperCase()} / ${nativeTransport.agent.toUpperCase()}`} sx={compactDarkChipSx("neutral")} />
+                    </Tooltip>
+                  )}
+                </Stack>
                 {(!canControl || idleStopped) && <Button size="small" variant="outlined" onClick={() => {
                   idleStoppedRef.current = false;
                   setIdleStopped(false);
