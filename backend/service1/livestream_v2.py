@@ -803,9 +803,14 @@ def generation_stopped(
     generation_id: str,
     error_code: str | None,
 ) -> LivestreamV2Generation:
+    _lock_client(session, client_id)
     generation = session.get(LivestreamV2Generation, generation_id)
     if generation is None or generation.client_id != client_id:
         raise HTTPException(status_code=404, detail="Livestream-generation ikke fundet")
+    # A delayed acknowledgement for a final generation must not overwrite
+    # the current client state, stop marker or media of a newer generation.
+    if generation.state in FINAL_GENERATION_STATES:
+        return generation
     generation.state = "failed" if error_code else "stopped"
     generation.error_code = str(error_code or "")[:128] or None
     generation.stopped_at = _now()
@@ -842,19 +847,63 @@ def reconcile_stopping_generation_from_agent_status(
     if generation is None or generation.state != "stopping":
         return False
 
+    # Serialize exceptional stop transitions with viewer/manual commands.
+    # Healthy/idle status reports do not acquire this extra lock.
+    _lock_client(session, client_id)
+    generation = current_generation(session, client_id)
+    if generation is None or generation.state != "stopping":
+        return False
+
     payload = status_payload if isinstance(status_payload, dict) else {}
     producer = payload.get("producer")
     uploader = payload.get("uploader")
     if not isinstance(producer, dict) or not isinstance(uploader, dict):
         return False
 
-    # The producer intentionally clears its in-memory generation_id after it has
-    # published the final stopped status. Therefore a physically quiesced
-    # producer may report generation_id=null here. A *different non-empty*
-    # generation is still unsafe and must never reconcile this stop.
+    # A cancelled, never-claimed start can leave the previous stopped
+    # generation on the physical producer. Only accept that mismatch with
+    # independent durable proof of a completed stop for the intended target.
     producer_generation = str(producer.get("generation_id") or "")
     if producer_generation and producer_generation != generation.id:
-        return False
+        previous_producer = session.get(LivestreamV2Generation, producer_generation)
+        if (
+            previous_producer is None
+            or previous_producer.client_id != client_id
+            or previous_producer.state != "stopped"
+            or previous_producer.created_at >= generation.created_at
+        ):
+            return False
+        completed_stop = session.exec(
+            select(LivestreamV2Command).where(
+                LivestreamV2Command.client_id == client_id,
+                LivestreamV2Command.command_type == "stop",
+                LivestreamV2Command.state == "completed",
+                LivestreamV2Command.payload["generation_id"].as_string() == generation.id,
+            ).order_by(LivestreamV2Command.created_at.desc()).limit(1)
+        ).first()
+        if completed_stop is None or (completed_stop.result or {}).get("stopped") is not True:
+            return False
+        cancelled_start = session.exec(
+            select(LivestreamV2Command).where(
+                LivestreamV2Command.client_id == client_id,
+                LivestreamV2Command.command_type.in_({"start", "restart", "reset_generation"}),
+                LivestreamV2Command.payload["generation_id"].as_string() == generation.id,
+                LivestreamV2Command.state == "cancelled",
+                LivestreamV2Command.attempts == 0,
+                LivestreamV2Command.error_code == "superseded_intent",
+            ).limit(1)
+        ).first()
+        if cancelled_start is None:
+            return False
+        pending = session.exec(
+            select(LivestreamV2Command.id).where(
+                LivestreamV2Command.client_id == client_id,
+                LivestreamV2Command.state.in_({"queued", "leased"}),
+                LivestreamV2Command.command_type.in_({"start", "restart", "reset_generation"}),
+            ).limit(1)
+        ).first()
+        if pending is not None:
+            return False
 
     # The uploader can legitimately still name the last generation it actually
     # processed when a newer generation never reached the agent (for example, a
