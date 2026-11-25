@@ -24,6 +24,7 @@ import AdminRefreshButton from "../../components/AdminRefreshButton";
 import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
+import { createHlsReserveController } from "../clientdetailspage/livestreamBrowserTiming.mjs";
 
 const VIEWER_HEARTBEAT_MS = 25_000;
 const PAGE_HIDDEN_WARM_GRACE_MS = 30_000;
@@ -71,6 +72,7 @@ function LivestreamTile({ client, pageMediaActive }) {
   const previewRef = useRef(null);
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
+  const hlsReserveRef = useRef(null);
   const heartbeatTimerRef = useRef(null);
   const healthTimerRef = useRef(null);
   const viewerIdRef = useRef(makeViewerId(client.id));
@@ -126,6 +128,8 @@ function LivestreamTile({ client, pageMediaActive }) {
   }, []);
 
   const destroyPlayer = useCallback(() => {
+    hlsReserveRef.current?.dispose();
+    hlsReserveRef.current = null;
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
@@ -208,10 +212,11 @@ function LivestreamTile({ client, pageMediaActive }) {
           const hls = new Hls({
             enableWorker: true,
             lowLatencyMode: false,
-            liveSyncDuration: 4,
-            liveMaxLatencyDuration: 9,
-            maxBufferLength: 6,
-            maxMaxBufferLength: 12,
+            liveSyncDurationCount: 3,
+            initialLiveManifestSize: 3,
+            maxLiveSyncPlaybackRate: 1,
+            maxBufferLength: 12,
+            maxMaxBufferLength: 32,
             backBufferLength: 8,
             xhrSetup: (xhr) => {
               const token = mediaCapabilityRef.current;
@@ -219,16 +224,30 @@ function LivestreamTile({ client, pageMediaActive }) {
             },
           });
           hlsRef.current = hls;
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(hlsUrl));
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            if (cancelled) return;
-            mediaReady = true;
-            window.clearTimeout(startupWarning);
-            setState("live");
-            setMessage("");
-            video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
+          const reserve = createHlsReserveController(video, {
+            onReady: () => {
+              if (cancelled) return;
+              mediaReady = true;
+              window.clearTimeout(startupWarning);
+              setState("live");
+              setMessage("");
+            },
+            onBuffering: (value) => {
+              if (cancelled) return;
+              setState(value ? "starting" : "live");
+              setMessage(value ? "Genopbygger videobuffer …" : "");
+            },
+            onTapRequired: (value) => { if (!cancelled) setNeedsTapToPlay(value); },
           });
+          hlsReserveRef.current = reserve;
+          hls.on(Hls.Events.BUFFER_APPENDED, () => reserve.pump());
+          hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(hlsUrl));
+          hls.on(Hls.Events.MANIFEST_PARSED, () => reserve.pump());
+          hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+            reserve.setTargetDuration(data?.details?.targetduration);
+            reserve.catchUp(hls.liveSyncPosition);
+          });
+          hls.attachMedia(video);
           hls.on(Hls.Events.FRAG_CHANGED, () => {
             if (!cancelled) updateLatency();
           });
@@ -238,7 +257,7 @@ function LivestreamTile({ client, pageMediaActive }) {
           hls.on(Hls.Events.ERROR, (_event, data) => {
             if (!data?.fatal || cancelled) return;
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              try { hls.recoverMediaError(); } catch {}
+              try { reserve.rearm(); hls.recoverMediaError(); } catch {}
               return;
             }
             setState("starting");
@@ -411,7 +430,6 @@ function LivestreamTile({ client, pageMediaActive }) {
         <video
           ref={videoRef}
           muted
-          autoPlay
           playsInline
           onPlaying={() => setNeedsTapToPlay(false)}
           onTimeUpdate={updateLatency}
@@ -422,7 +440,8 @@ function LivestreamTile({ client, pageMediaActive }) {
             variant="contained"
             onClick={() => {
               const video = videoRef.current;
-              if (video) void video.play().then(() => setNeedsTapToPlay(false)).catch(() => {});
+              if (hlsReserveRef.current) hlsReserveRef.current.playFromGesture();
+              else if (video) void video.play().then(() => setNeedsTapToPlay(false)).catch(() => {});
             }}
             sx={{
               position: "absolute", top: "50%", left: "50%", zIndex: 5,

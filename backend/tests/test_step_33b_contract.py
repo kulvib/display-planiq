@@ -99,7 +99,7 @@ class Step33BContractTests(unittest.TestCase):
             self.assertNotIn("browser=True", source)
             self.assertNotIn("browser=False", source)
 
-    def test_livestream_contract_is_three_minutes_and_two_segments(self) -> None:
+    def test_livestream_contract_preserves_inactivity_and_buffer_reserve(self) -> None:
         frontend_source = (
             REPO_ROOT / "frontend/src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx"
         ).read_text(encoding="utf-8")
@@ -107,7 +107,16 @@ class Step33BContractTests(unittest.TestCase):
 
         self.assertIn("HIDDEN_INACTIVITY_STOP_MS = 3 * 60 * 1000", frontend_source)
         self.assertIn("Siden har ikke været besøgt i 3 min.", frontend_source)
-        self.assertIn("HLS_INITIAL_MANIFEST_SEGMENTS = 2", frontend_source)
+        self.assertIn("HIDDEN_MEDIA_WARM_GRACE_MS = 30_000", frontend_source)
+        # 63D-73A: three published segments permit the browser to download
+        # two contiguous segment durations before playback. The executable
+        # frontend tests verify actual reserve, refill and catch-up behavior.
+        self.assertIn("HLS_INITIAL_MANIFEST_SEGMENTS = 3", frontend_source)
+        self.assertIn("HLS_LIVE_SYNC_SEGMENTS = 3", frontend_source)
+        self.assertIn("initialLiveManifestSize: HLS_INITIAL_MANIFEST_SEGMENTS", frontend_source)
+        self.assertIn("createHlsReserveController(video", frontend_source)
+        self.assertIn("Hls.Events.BUFFER_APPENDED", frontend_source)
+        self.assertIn("maxLiveSyncPlaybackRate: 1", frontend_source)
         # Heartbeat traffic is deliberately reduced while retaining a lease
         # window of three heartbeat periods and the same 30-second stop grace.
         self.assertIn('LIVESTREAM_V2_VIEWER_HEARTBEAT_SECONDS", "25"', backend_source)

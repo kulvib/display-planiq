@@ -10,7 +10,7 @@ import { useTheme, alpha } from "@mui/material/styles";
 import { useAuth } from "../../auth/AuthProvider";
 import { apiUrl, authenticatedFetch, authHeaders, getAuthSessionSignal, updateClient } from "../../api";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
-import { createLivestreamBrowserTiming } from "./livestreamBrowserTiming.mjs";
+import { createLivestreamBrowserTiming, createHlsReserveController } from "./livestreamBrowserTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 
 const HEALTH_STARTUP_POLL_MS = 1000;
@@ -30,12 +30,10 @@ function isRequestTimeout(error) {
   return error?.name === "TimeoutError" || /signal.*timed out|timeout/i.test(String(error?.message || ""));
 }
 
-// Low-latency regular HLS target. Med 2s segmenter starter vi efter 2 manifest-segmenter
-// og holder browseren tættere på live edge uden at bruge 1-segment-start.
-const HLS_INITIAL_MANIFEST_SEGMENTS = 2;
-const HLS_LIVE_SYNC_SECONDS = 4;
-const HLS_MAX_LATENCY_SECONDS = 9;
-const HLS_CATCH_UP_SEEK_SECONDS = 6;
+// Three published segments provide room to download two contiguous segments
+// before play. The reserve controller gates playback using MediaSource ranges.
+const HLS_INITIAL_MANIFEST_SEGMENTS = 3;
+const HLS_LIVE_SYNC_SEGMENTS = 3;
 
 
 const DISPLAY_AUTO_OPTION = {
@@ -710,7 +708,7 @@ export default function ClientDetailsLivestreamSection({
   const lastHlsProgressAtRef = useRef(0);
   const hlsBrowserTiming = useMemo(() => createLivestreamBrowserTiming(), []);
   const [hlsLatencyStats, setHlsLatencyStats] = useState(null);
-  const lastVideoTimeRef = useRef(0);
+  const hlsReserveRef = useRef(null);
   const viewerIdRef = useRef(`viewer-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const viewerLeaveSentRef = useRef(false);
   const hiddenInactivityTimerRef = useRef(null);
@@ -830,6 +828,8 @@ export default function ClientDetailsLivestreamSection({
   );
 
   const resetStreamState = useCallback(() => {
+    hlsReserveRef.current?.dispose();
+    hlsReserveRef.current = null;
     if (hlsRef.current) {
       try { hlsRef.current.destroy(); } catch {}
       hlsRef.current = null;
@@ -1335,6 +1335,8 @@ export default function ClientDetailsLivestreamSection({
   useEffect(() => {
     if (!clientId || !serverReady || inactivityStopped || !pageVisible || !mediaCapability || !mobileViewerActive) return undefined;
     setManifestReady(false);
+    setNeedsTapToPlay(false);
+    setBuffering(false);
     setError("");
     setCurrentSegNum(null);
     setLastSegNum(null);
@@ -1351,6 +1353,7 @@ export default function ClientDetailsLivestreamSection({
 
     let disposed = false;
     let activeHls = null;
+    let reserve = null;
     let fatalErrorTimeout = null;
     let playTimeout = null;
     let nativeLoadedHandler = null;
@@ -1371,14 +1374,13 @@ export default function ClientDetailsLivestreamSection({
         if (Hls.isSupported()) {
           const hls = new Hls({
             // Vi bruger almindelig HLS med korte segmenter, ikke LL-HLS.
-            // liveSyncDuration holder browseren tættere på live edge end den gamle 3x8s-buffer.
-            liveSyncDuration: HLS_LIVE_SYNC_SECONDS,
-            liveMaxLatencyDuration: HLS_MAX_LATENCY_SECONDS,
+            // No automatic speed-up or latency-limit seek that spends the reserve.
+            liveSyncDurationCount: HLS_LIVE_SYNC_SEGMENTS,
             initialLiveManifestSize: HLS_INITIAL_MANIFEST_SEGMENTS,
-            maxBufferLength: 8,
-            maxMaxBufferLength: 16,
+            maxBufferLength: 12,
+            maxMaxBufferLength: 32,
             backBufferLength: 12,
-            maxLiveSyncPlaybackRate: 1.25,
+            maxLiveSyncPlaybackRate: 1,
             enableWorker: true,
             startLevel: -1,
             lowLatencyMode: false,
@@ -1416,8 +1418,18 @@ export default function ClientDetailsLivestreamSection({
           activeHls = hls;
           hlsRef.current = hls;
           video.muted = true;
-          video.autoplay = true;
           video.playsInline = true;
+          reserve = createHlsReserveController(video, {
+            onReady: () => {
+              if (disposed) return;
+              setManifestReady(true);
+              setError("");
+            },
+            onBuffering: (value) => { if (!disposed) setBuffering(value); },
+            onTapRequired: (value) => { if (!disposed) setNeedsTapToPlay(value); },
+          });
+          hlsReserveRef.current = reserve;
+          hls.on(Hls.Events.BUFFER_APPENDED, () => reserve.pump());
           hls.attachMedia(video);
 
           hls.on(Hls.Events.MEDIA_ATTACHED, () => {
@@ -1427,11 +1439,7 @@ export default function ClientDetailsLivestreamSection({
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
             if (disposed) return;
             lastHlsProgressAtRef.current = Date.now();
-            setManifestReady(true);
-            setError("");
-            playTimeout = window.setTimeout(() => {
-              video.play().then(() => setNeedsTapToPlay(false)).catch(() => setNeedsTapToPlay(true));
-            }, 100);
+            reserve.pump();
           });
 
           hls.on(Hls.Events.MANIFEST_LOADED, () => {
@@ -1442,16 +1450,8 @@ export default function ClientDetailsLivestreamSection({
             lastHlsProgressAtRef.current = Date.now();
           });
 
-          hls.on(Hls.Events.LEVEL_LOADED, () => {
-            try {
-              const livePos = hls.liveSyncPosition;
-              if (Number.isFinite(livePos) && Number.isFinite(video.currentTime)) {
-                const behind = livePos - video.currentTime;
-                if (behind > HLS_CATCH_UP_SEEK_SECONDS) {
-                  video.currentTime = Math.max(0, livePos - 0.25);
-                }
-              }
-            } catch {}
+          hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+            reserve.setTargetDuration(data?.details?.targetduration);
           });
 
           hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -1459,6 +1459,7 @@ export default function ClientDetailsLivestreamSection({
             if (data.fatal) {
               try {
                 if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                  reserve.rearm();
                   hls.recoverMediaError();
                   return;
                 }
@@ -1468,6 +1469,7 @@ export default function ClientDetailsLivestreamSection({
                   // billige startLoad-recovery, men planlæg altid en bounded
                   // player-recreation som fallback. effectiveRefreshKey giver
                   // en ny manifest-URL med cache-buster og frisk Hls-instans.
+                  reserve.rearm();
                   hls.startLoad(-1);
                   if (fatalErrorTimeout) window.clearTimeout(fatalErrorTimeout);
                   fatalErrorTimeout = window.setTimeout(() => {
@@ -1478,6 +1480,8 @@ export default function ClientDetailsLivestreamSection({
               } catch {}
 
               setError("Streamforbindelsen blev afbrudt. Genopretter afspilleren …");
+              reserve.dispose();
+              if (hlsReserveRef.current === reserve) hlsReserveRef.current = null;
               hls.destroy();
               if (hlsRef.current === hls) hlsRef.current = null;
               activeHls = null;
@@ -1511,15 +1515,6 @@ export default function ClientDetailsLivestreamSection({
               }
               setError("");
             }
-            try {
-              const livePos = hls.liveSyncPosition;
-              if (Number.isFinite(livePos) && Number.isFinite(video.currentTime)) {
-                const behind = livePos - video.currentTime;
-                if (behind > HLS_CATCH_UP_SEEK_SECONDS) {
-                  video.currentTime = Math.max(0, livePos - 0.25);
-                }
-              }
-            } catch {}
           });
           return;
         }
@@ -1555,6 +1550,8 @@ export default function ClientDetailsLivestreamSection({
       if (fatalErrorTimeout) window.clearTimeout(fatalErrorTimeout);
       if (playTimeout) window.clearTimeout(playTimeout);
       if (nativeLoadedHandler) video.removeEventListener("loadedmetadata", nativeLoadedHandler);
+      reserve?.dispose();
+      if (hlsReserveRef.current === reserve) hlsReserveRef.current = null;
       if (activeHls) {
         activeHls.destroy();
         if (hlsRef.current === activeHls) hlsRef.current = null;
@@ -1650,19 +1647,9 @@ export default function ClientDetailsLivestreamSection({
       if (!video || !hls) return;
 
       const now = Date.now();
-      const currentTime = Number(video.currentTime || 0);
-      const progressed = Math.abs(currentTime - lastVideoTimeRef.current) > 0.05;
-      lastVideoTimeRef.current = currentTime;
-
       try {
-        const livePos = hls.liveSyncPosition;
-        if (Number.isFinite(livePos) && Number.isFinite(video.currentTime)) {
-          const behind = livePos - video.currentTime;
-          if (behind > HLS_CATCH_UP_SEEK_SECONDS || (!progressed && behind > 4)) {
-            video.currentTime = Math.max(0, livePos - 0.75);
-            video.play?.().catch(() => {});
-          }
-        }
+        hlsReserveRef.current?.pump();
+        hlsReserveRef.current?.catchUp(hls.liveSyncPosition);
 
         const noHlsProgressMs = lastHlsProgressAtRef.current ? now - lastHlsProgressAtRef.current : 0;
         if (noHlsProgressMs > 25_000) {
@@ -1746,17 +1733,8 @@ export default function ClientDetailsLivestreamSection({
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
     else if (el.msRequestFullscreen)     el.msRequestFullscreen();
 
-    // Fullscreen kan få browseren til at pause/nudge video. Hold HLS tæt på live edge.
-    window.setTimeout(() => {
-      try {
-        const video = videoRef.current;
-        const hls = hlsRef.current;
-        if (hls?.liveSyncPosition && video) {
-          video.currentTime = Math.max(0, hls.liveSyncPosition - 0.5);
-          video.play?.().catch(() => {});
-        }
-      } catch {}
-    }, 500);
+    // Fullscreen must not seek forward or spend the playback reserve.
+    hlsReserveRef.current?.pump();
   };
 
   useEffect(() => {
@@ -1765,9 +1743,9 @@ export default function ClientDetailsLivestreamSection({
     return () => clearTimeout(t);
   }, [showControls]);
 
-  function handleVideoWaiting() { setBuffering(true);  }
-  function handleVideoPlaying() { setBuffering(false); setNeedsTapToPlay(false); }
-  function handleVideoCanPlay() { setBuffering(false); }
+  function handleVideoWaiting() { if (!hlsReserveRef.current) setBuffering(true); }
+  function handleVideoPlaying() { if (!hlsReserveRef.current) { setBuffering(false); setNeedsTapToPlay(false); } }
+  function handleVideoCanPlay() { if (!hlsReserveRef.current) setBuffering(false); }
 
   const lagStatus       = getLagStatus(manifestReady ? computedLag : null);
   const disabledOverlay = livestreamVisuallyOffline ? { opacity: 0.65 } : {};
@@ -2510,7 +2488,6 @@ export default function ClientDetailsLivestreamSection({
               <video
                 ref={videoRef}
                 id="livestream-video"
-                autoPlay
                 playsInline
                 muted
                 onWaiting={handleVideoWaiting}
@@ -2526,12 +2503,13 @@ export default function ClientDetailsLivestreamSection({
                 tabIndex={-1}
                 key={effectiveRefreshKey}
               />
-              {isTouchHandset && needsTapToPlay && (
+              {needsTapToPlay && (
                 <Button
                   variant="contained"
                   onClick={() => {
                     const video = videoRef.current;
-                    if (video) void video.play().then(() => setNeedsTapToPlay(false)).catch(() => {});
+                    if (hlsReserveRef.current) hlsReserveRef.current.playFromGesture();
+                    else if (video) void video.play().then(() => setNeedsTapToPlay(false)).catch(() => {});
                   }}
                   sx={{
                     position: "absolute", zIndex: 40, left: "50%", top: "50%",
