@@ -1,4 +1,4 @@
-// Unmounted MSE candidate. The owning view supplies a generation-bound ticket
+// Pilot MSE player. The owning view supplies a generation-bound ticket
 // request and owns heartbeat, 30-second hidden lifecycle, fallback and cleanup.
 import { decodeLiveWire, LIVE_INIT } from "./livestreamWssWire.mjs";
 import { avcMime } from "./livestreamFmp4Codec.mjs";
@@ -18,7 +18,8 @@ export function createWssPlayer(video, {
 }) {
   let disposed = false, failed = false, socket = null, source = null, buffer = null;
   let objectUrl = null, decoderEpoch = 0, decoderCleanup = () => {};
-  let cursor = 0, lastTimestamp = -1, queue = [], started = false, announced = false;
+  let cursor = 0, lastTimestamp = -1, queue = [], pendingInit = null;
+  let started = false, announced = false, waitingFresh = false, freshAppendInFlight = false;
   const startedAt = clock();
   let readyAt = startedAt, lastFragmentAt = readyAt, lastProgressAt = readyAt;
   let everPlayable = false;
@@ -31,7 +32,8 @@ export function createWssPlayer(video, {
     decoderEpoch++;
     decoderCleanup();
     decoderCleanup = () => {};
-    buffer = null; source = null; queue = []; started = false;
+    buffer = null; source = null; queue = []; pendingInit = null; started = false;
+    waitingFresh = false; freshAppendInFlight = false;
     cursor = 0; lastTimestamp = -1; lastEdge = null; lastTime = null;
     video.pause();
     video.removeAttribute("src");
@@ -64,7 +66,7 @@ export function createWssPlayer(video, {
   }
   function mediaError() { fail("media-error"); }
   function progress() {
-    if (disposed || documentRef.visibilityState === "hidden") return;
+    if (disposed || waitingFresh || !started || documentRef.visibilityState === "hidden") return;
     const position = video.currentTime;
     if (!Number.isFinite(position)) return;
     if (lastTime === null || position > lastTime + 0.01) {
@@ -85,11 +87,38 @@ export function createWssPlayer(video, {
   function pump(epoch) {
     if (disposed || epoch !== decoderEpoch || !buffer || buffer.updating || documentRef.visibilityState === "hidden") return;
     try {
+      // Initialization is a separate prerequisite, not a queued video frame.
+      if (pendingInit !== null) {
+        const init = pendingInit;
+        pendingInit = null;
+        buffer.appendBuffer(init);
+        return;
+      }
+      // When reusing a decoder, wait for the first *fresh* append before
+      // examining ranges or calling play. An old updateend must not resume
+      // the pre-hide video.
+      if (waitingFresh) {
+        if (queue.length) {
+          freshAppendInFlight = true;
+          buffer.appendBuffer(queue.shift());
+        }
+        return;
+      }
       const ranges = buffer.buffered;
       if (ranges.length) {
         const start = ranges.start(ranges.length - 1);
         const edge = ranges.end(ranges.length - 1);
         lastEdge = edge;
+        // A gap from a hidden interval or dropped local backlog is expected.
+        // Remove older disjoint ranges; do not count an unbuffered time gap
+        // as retained media or seek through it.
+        if (ranges.length > 1 && video.currentTime < start) {
+          if (!started && edge - start >= START_RESERVE) {
+            video.currentTime = Math.max(start, edge - START_RESERVE);
+          }
+          buffer.remove(ranges.start(0), start);
+          return;
+        }
         if (documentRef.visibilityState !== "hidden" && cursor > 0 && edge - start >= START_RESERVE) {
           if (!started || video.currentTime < start || edge - video.currentTime > MAX_BEHIND) {
             video.currentTime = Math.max(start, edge - START_RESERVE);
@@ -109,7 +138,9 @@ export function createWssPlayer(video, {
           }
         }
         // Do not accumulate media indefinitely in a throttled background tab.
-        if (ranges.end(ranges.length - 1) - ranges.start(0) > 12) {
+        let retainedSeconds = 0;
+        for (let i = 0; i < ranges.length; i++) retainedSeconds += ranges.end(i) - ranges.start(i);
+        if (retainedSeconds > 12) {
           fail("buffer-budget");
           return;
         }
@@ -140,7 +171,14 @@ export function createWssPlayer(video, {
         pump(epoch);
       } catch { fail("source-buffer"); }
     };
-    const updated = () => pump(epoch);
+    const updated = () => {
+      if (disposed || epoch !== decoderEpoch) return;
+      if (freshAppendInFlight) {
+        freshAppendInFlight = false;
+        waitingFresh = false;
+      }
+      pump(epoch);
+    };
     const sourceError = () => { if (epoch === decoderEpoch) fail("source-error"); };
     decoderCleanup = () => {
       currentSource.removeEventListener("sourceopen", opened);
@@ -148,17 +186,21 @@ export function createWssPlayer(video, {
       buffer?.removeEventListener("updateend", updated);
       buffer?.removeEventListener("error", sourceError);
     };
-    queue.push(payload);
+    pendingInit = payload;
     currentSource.addEventListener("sourceopen", opened);
     currentSource.addEventListener("sourceclose", sourceError);
     objectUrl = urlApi.createObjectURL(currentSource);
     video.src = objectUrl;
   }
   function acceptFragment(frame) {
-    if (!source || (cursor !== 0 && frame.sequence !== cursor + 1) ||
-        frame.timestampUs <= lastTimestamp || queue.length >= MAX_PENDING) {
+    if (!source) { fail("fragment-without-init"); return; }
+    if ((cursor !== 0 && frame.sequence !== cursor + 1) || frame.timestampUs <= lastTimestamp) {
       fail("fragment-discontinuity"); return;
     }
+    // Network ordering remains strict. Local decoding backpressure is
+    // different: the verified sync-sample fragments are independent and
+    // only the newest two waiting media fragments are worth retaining.
+    if (queue.length >= MAX_PENDING) queue.shift();
     cursor = frame.sequence;
     lastTimestamp = frame.timestampUs;
     lastFragmentAt = clock();
@@ -172,6 +214,7 @@ export function createWssPlayer(video, {
     hiddenFrame = null;
     hiddenCursor = cursor;
     hiddenTimestamp = lastTimestamp;
+    queue = []; // Do not replay the pre-hide waiting media.
   }
   function message(event) {
     if (disposed) return;
@@ -208,7 +251,23 @@ export function createWssPlayer(video, {
       const init = hiddenInit, frame = hiddenFrame;
       hiddenInit = hiddenFrame = null;
       if (frame && init && clock() - lastFragmentAt <= STALE_MS) {
-        initialize(init);
+        if (init === lastInit && source?.readyState === "open" && buffer &&
+            frame.sequence > cursor && frame.timestampUs > lastTimestamp) {
+          // Same initialization epoch: keep the open MediaSource and append
+          // the latest independently decodable fragment across the gap.
+          // A newly received init still requires a full decoder reset.
+          video.pause();
+          queue = [];
+          started = announced = false;
+          readyAt = lastProgressAt = clock();
+          lastTime = lastEdge = null;
+          waitingFresh = true;
+          freshAppendInFlight = false;
+          cursor = frame.sequence - 1;
+          onLatency(null);
+        } else {
+          initialize(init);
+        }
         if (!disposed) acceptFragment(frame);
         return;
       }
