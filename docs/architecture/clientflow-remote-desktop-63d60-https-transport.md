@@ -224,3 +224,21 @@ when the operator disconnects. A missing status event leaves it absent.
 This is binary tunnel attachment, not proof of pixel rendering, nor the
 transport of unrelated JSON control/file/terminal channels. CI matrix and
 physical UI verification remain required. No fleet gate change.
+
+
+### 63D-68B — stable browser HTTPS URLs
+
+Physical Render samples showed repeated browser OPTIONS requests. The prior
+browser protocol embeds each new sequence in its URL, preventing reuse of
+a URL-keyed CORS preflight cache. Browser upload and poll now use stable
+per-peer paths with the canonical sequence in X-ClientFlow-Sequence.
+The explicitly enumerated CORS header allowlist includes that header;
+origins, credentials policy and existing preflight lifetime are unchanged.
+Duplicate/missing/malformed sequence headers fail through existing lane
+validation after owner checks. No authorization or response caching,
+replay, downgrade or new dependency. Response no-store stays unchanged.
+Legacy sequenced routes are retained for older clients and the agent.
+Deploy backend first; new browser requires the stable routes. Physical
+measurement must verify actual preflight reduction and CPU impact; browser
+cache behavior varies. This does not change agent admission, fleet policy,
+release approval or the four binary transport modes.
