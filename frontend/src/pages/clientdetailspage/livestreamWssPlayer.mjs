@@ -5,6 +5,7 @@ import { avcMime } from "./livestreamFmp4Codec.mjs";
 
 const MAX_PENDING = 2;
 const MAX_BEHIND = 4;
+const START_RESERVE = 1.5;
 const KEEP_BEHIND = 3;
 const STARTUP_MS = 8000;
 const STALE_MS = 5000;
@@ -21,6 +22,8 @@ export function createWssPlayer(video, {
   const startedAt = clock();
   let readyAt = startedAt, lastFragmentAt = readyAt, lastProgressAt = readyAt;
   let everPlayable = false;
+  let lastInit = null, hiddenInit = null, hiddenFrame = null, wasHidden = false;
+  let hiddenCursor = 0, hiddenTimestamp = -1;
   let lastTime = null, lastEdge = null, lastLatencyAt = -Infinity;
   const abort = new AbortController();
 
@@ -50,6 +53,7 @@ export function createWssPlayer(video, {
       try { socket.close(); } catch {}
     }
     cleanupDecoder();
+    lastInit = hiddenInit = hiddenFrame = null;
     onLatency(null);
   }
   function fail(reason) {
@@ -79,16 +83,16 @@ export function createWssPlayer(video, {
     }
   }
   function pump(epoch) {
-    if (disposed || epoch !== decoderEpoch || !buffer || buffer.updating) return;
+    if (disposed || epoch !== decoderEpoch || !buffer || buffer.updating || documentRef.visibilityState === "hidden") return;
     try {
       const ranges = buffer.buffered;
       if (ranges.length) {
         const start = ranges.start(ranges.length - 1);
         const edge = ranges.end(ranges.length - 1);
         lastEdge = edge;
-        if (documentRef.visibilityState !== "hidden" && cursor > 0 && edge - start >= 0.7) {
+        if (documentRef.visibilityState !== "hidden" && cursor > 0 && edge - start >= START_RESERVE) {
           if (!started || video.currentTime < start || edge - video.currentTime > MAX_BEHIND) {
-            video.currentTime = Math.max(start, edge - 0.7);
+            video.currentTime = Math.max(start, edge - START_RESERVE);
             lastTime = null;
           }
           if (!started) {
@@ -118,9 +122,11 @@ export function createWssPlayer(video, {
     try { mime = avcMime(payload); } catch { fail("unsupported-init"); return; }
     if (!MediaSourceClass.isTypeSupported(mime)) { fail("unsupported-codec"); return; }
     cleanupDecoder();
+    lastInit = payload;
+    if (announced) readyAt = clock();
     announced = false;
     onLatency(null);
-    readyAt = lastProgressAt = clock();
+    lastProgressAt = clock();
     const epoch = decoderEpoch;
     source = new MediaSourceClass();
     const currentSource = source;
@@ -148,26 +154,65 @@ export function createWssPlayer(video, {
     objectUrl = urlApi.createObjectURL(currentSource);
     video.src = objectUrl;
   }
+  function acceptFragment(frame) {
+    if (!source || (cursor !== 0 && frame.sequence !== cursor + 1) ||
+        frame.timestampUs <= lastTimestamp || queue.length >= MAX_PENDING) {
+      fail("fragment-discontinuity"); return;
+    }
+    cursor = frame.sequence;
+    lastTimestamp = frame.timestampUs;
+    lastFragmentAt = clock();
+    queue.push(frame.payload);
+    pump(decoderEpoch);
+  }
+  function enterHidden() {
+    if (wasHidden) return;
+    wasHidden = true;
+    hiddenInit = lastInit;
+    hiddenFrame = null;
+    hiddenCursor = cursor;
+    hiddenTimestamp = lastTimestamp;
+  }
   function message(event) {
     if (disposed) return;
     try {
       const frame = decodeLiveWire(event.data);
-      if (frame.kind === LIVE_INIT) { initialize(frame.payload); return; }
-      if (!source || (cursor !== 0 && frame.sequence !== cursor + 1) ||
-          frame.timestampUs <= lastTimestamp || queue.length >= MAX_PENDING) {
-        fail("fragment-discontinuity"); return;
+      if (documentRef.visibilityState === "hidden") {
+        enterHidden();
+        // Hold only init and the latest complete fragment; no background MSE
+        // append queue. A fresh decode point is selected when visible again.
+        if (frame.kind === LIVE_INIT) {
+          hiddenInit = frame.payload; hiddenFrame = null;
+          hiddenCursor = 0; hiddenTimestamp = -1;
+        } else {
+          if (!hiddenInit || (hiddenCursor !== 0 && frame.sequence !== hiddenCursor + 1) ||
+              frame.timestampUs <= hiddenTimestamp) {
+            fail("hidden-discontinuity"); return;
+          }
+          hiddenCursor = frame.sequence; hiddenTimestamp = frame.timestampUs;
+          hiddenFrame = frame; lastFragmentAt = clock();
+        }
+        return;
       }
-      cursor = frame.sequence;
-      lastTimestamp = frame.timestampUs;
-      lastFragmentAt = clock();
-      queue.push(frame.payload);
-      pump(decoderEpoch);
+      if (wasHidden) visible();
+      if (disposed) return;
+      if (frame.kind === LIVE_INIT) { initialize(frame.payload); return; }
+      acceptFragment(frame);
     } catch { fail("wire-error"); }
   }
   function visible() {
-    if (disposed || documentRef.visibilityState === "hidden") return;
-    // Fresh recovery is delegated to the view's transport controller; never
-    // pretend stale buffered history is live after a long background pause.
+    if (disposed) return;
+    if (documentRef.visibilityState === "hidden") { enterHidden(); return; }
+    if (wasHidden) {
+      wasHidden = false;
+      const init = hiddenInit, frame = hiddenFrame;
+      hiddenInit = hiddenFrame = null;
+      if (frame && init && clock() - lastFragmentAt <= STALE_MS) {
+        initialize(init);
+        if (!disposed) acceptFragment(frame);
+        return;
+      }
+    }
     if (clock() - lastFragmentAt > STALE_MS || clock() - lastProgressAt > STALE_MS) {
       fail("stale-background"); return;
     }
