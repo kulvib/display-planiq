@@ -124,7 +124,7 @@ test("steady-state Livestream media uses short-lived capability and event-driven
   assert.match(source, /HEALTH_STABLE_POLL_MS = 10_000/);
   assert.match(source, /VIEWER_HEARTBEAT_MS = 25_000/);
   assert.match(source, /visibilitychange/);
-  assert.match(source, /!pageVisible \|\| !mediaCapability/);
+  assert.match(source, /!pageVisible \|\| !hasMediaCapability/);
 });
 
 test("hidden Livestream inactivity timer is lifecycle-independent and recoverable", () => {
