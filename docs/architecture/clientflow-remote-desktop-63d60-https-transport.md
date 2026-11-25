@@ -149,3 +149,13 @@ connection, error counts and cumulative response duration. Keep-alive is
 subject to the actual proxy/server. Blocking workers are not force-cancelled;
 retired lanes cannot be reused and socket timeouts/cleanup remain necessary.
 CI and repeat physical measurement are required before approving performance.
+
+### 63D-65B
+
+The transport matrix records the actual next download sequence independently
+for each HTTPS peer. Revocation is tested at that sequence and must return
+403 with the authorization detail, without delivering queued ciphertext.
+The persistent and proxy HTTP adapters reject a response whose advertised
+length exceeds the actual bytes received; a syntactically valid prefix of
+an interrupted binary response is not sufficient to accept delivery.
+The real TLS regression includes a deliberately truncated response.

@@ -133,8 +133,10 @@ def make_agent_https_request(transport, ssl_context) -> Request:
                 counts["connections"] += 1
                 try:
                     with opener.open(req, timeout=seconds) as response:
+                        expected = response.length
                         data = response.read(cap + 1)
-                        if len(data) > cap or not 200 <= response.status < 300:
+                        if ((expected is not None and len(data) != expected)
+                                or len(data) > cap or not 200 <= response.status < 300):
                             raise PeerError("HTTPS response rejected")
                         return SimpleNamespace(status_code=int(response.status), body=data,
                                                headers={k.lower(): v for k, v in response.headers.items()})
@@ -157,9 +159,12 @@ def make_agent_https_request(transport, ssl_context) -> Request:
             try:
                 if not 200 <= response.status < 300:
                     raise PeerError("HTTPS request rejected")
-                if response.length is not None and response.length > cap:
+                expected = response.length
+                if expected is not None and expected > cap:
                     raise PeerError("HTTPS response too large")
                 data = response.read(cap + 1)
+                if expected is not None and len(data) != expected:
+                    raise PeerError("HTTPS response truncated")
                 if len(data) > cap:
                     raise PeerError("HTTPS response too large")
                 # A bounded read can leave HTTP framing pending. Never reuse

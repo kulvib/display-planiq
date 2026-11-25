@@ -58,6 +58,14 @@ def test_real_tls_agent_request_rejects_redirect_and_oversize(tmp_path, monkeypa
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
+            if self.path.endswith("/truncated"):
+                self.send_response(200)
+                self.send_header("Content-Length", "6")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(b"abc")
+                self.close_connection = True
+                return
             body = b"x" * 33 if self.path.endswith("/oversize") else b"\x00\xff\x03"
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -101,6 +109,8 @@ def test_real_tls_agent_request_rejects_redirect_and_oversize(tmp_path, monkeypa
             await request("GET", prefix + "redirect", None, 32, 3)
         with pytest.raises(PeerError):
             await request("GET", prefix + "oversize", None, 32, 3)
+        with pytest.raises(PeerError, match="truncated"):
+            await request("GET", prefix + "truncated", None, 32, 3)
         wrong = SimpleNamespace(
             credential=SimpleNamespace(backend_url=f"https://127.0.0.1:{server.server_port}"),
             access_token=transport.access_token,
@@ -114,7 +124,7 @@ def test_real_tls_agent_request_rejects_redirect_and_oversize(tmp_path, monkeypa
 
     try:
         asyncio.run(exercise())
-        assert len(calls) == 5
+        assert len(calls) == 6
         assert all(token == "Bearer synthetic-test-token" for _, token in calls)
         assert not any(path.endswith("forbidden-target") for path, _ in calls)
     finally:

@@ -170,6 +170,8 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                 tasks.append(asyncio.create_task(native.native_rdp_agent_ws(agent, 3, SESSION, tunnel_id)))
                 await agent.accepted.wait()
 
+            download_sequences = {}
+
             async def transfer(source, target, sh, th, frames):
                 if isinstance(source, str):
                     result = await client.post(source + "/send/0", content=encode_batch(frames),
@@ -179,7 +181,7 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                     for frame in frames:
                         await source.incoming.put({"type": "websocket.receive", "bytes": frame})
                 actual = []
-                seq = 0
+                seq = download_sequences.get(target, 0) if isinstance(target, str) else 0
                 while len(actual) < len(frames):
                     if isinstance(target, str):
                         result = await client.get(target + "/poll/" + str(seq), headers=th)
@@ -188,6 +190,7 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                         if result.content:
                             actual.extend(decode_batch(result.content))
                             seq += 1
+                            download_sequences[target] = seq
                     else:
                         actual.append(await target.outgoing.get())
                 assert actual == frames
@@ -207,11 +210,15 @@ def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_
                 for entry in http._PEERS.values():
                     await entry.peer.send_bytes(b"must-not-be-delivered")
                 if browser_https:
-                    denied = await client.get(browser + "/poll/1", headers=bh)
+                    denied = await client.get(browser + "/poll/" + str(download_sequences[browser]), headers=bh)
                     assert denied.status_code == 403
+                    assert denied.json()["detail"] == "ClientFlow-session ikke godkendt"
+                    assert b"must-not-be-delivered" not in denied.content
                 elif agent_https:
-                    denied = await client.get(agent + "/poll/1", headers=ah)
+                    denied = await client.get(agent + "/poll/" + str(download_sequences[agent]), headers=ah)
                     assert denied.status_code == 403
+                    assert denied.json()["detail"] == "ClientFlow-session ikke godkendt"
+                    assert b"must-not-be-delivered" not in denied.content
             finally:
                 await native.close_native_rdp_session(3, SESSION)
                 await asyncio.gather(*tasks)
