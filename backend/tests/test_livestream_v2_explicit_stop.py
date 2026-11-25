@@ -370,7 +370,7 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
         from service1.routers.livestream_media import manifest_generation
         self.seed_running_with_viewer()
         with Session(self.engine) as session:
-            payload = b"#EXTM3U\n#PLANIQ-GENERATION:11111111-2222-3333-4444-555555555555\n#EXTINF:1,\nsegment-00000.ts\n"
+            payload = b"#EXTM3U\n#PLANIQ-GENERATION:11111111-2222-3333-4444-555555555555\n#EXTINF:1,\nsegment-000000000.ts\n"
             path = livestream_v2.write_hls_file(
                 session, client_id=self.CLIENT_ID, generation_id=self.GENERATION_ID,
                 filename="index.m3u8", payload=payload,
@@ -378,7 +378,7 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
             )
             self.assertEqual(manifest_generation(path.read_bytes()), self.GENERATION_ID)
             self.assertEqual(path.read_bytes().count(b"#PLANIQ-GENERATION:"), 1)
-            self.assertIn(b"segment-00000.ts", path.read_bytes())
+            self.assertIn(b"segment-000000000.ts", path.read_bytes())
 
 
 if __name__ == "__main__":
