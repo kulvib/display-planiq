@@ -34,7 +34,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from typing import Any, Optional
@@ -82,7 +82,7 @@ agent_router = APIRouter(prefix="/terminal-agent", tags=["terminal-agent"])
 logger = logging.getLogger(__name__)
 
 VALID_TERMINAL_MODES = {"user", "admin"}
-BROWSER_MESSAGE_TYPES = {"open", "input", "resize", "close", "stage_script"}
+BROWSER_MESSAGE_TYPES = {"open", "input", "resize", "close", "stage_script", "continue_session"}
 MAX_INPUT_CHARS = 200_000
 MAX_STAGED_SCRIPT_B64_CHARS = 2_000_000
 MAX_AGENT_MESSAGE_CHARS = 4 * 1024 * 1024
@@ -168,6 +168,40 @@ class DomainClientConnection:
     connected_at: float = field(default_factory=time.time)
 
 
+TERMINAL_IDLE_SECONDS = 600
+TERMINAL_WARNING_SECONDS = 60
+TERMINAL_IDLE_CLOSE_CODE = 4408
+TERMINAL_LIMIT_CLOSE_CODE = 4410
+
+
+@dataclass
+class TerminalDeadline:
+    session_id: str
+    idle_at: float
+    limit_at: float
+    warned: bool = False
+
+    @property
+    def deadline(self) -> float:
+        return min(self.idle_at, self.limit_at)
+
+    @property
+    def reason(self) -> str:
+        return "limit" if self.limit_at <= self.idle_at else "idle"
+
+    def next_check(self) -> float:
+        return self.deadline if self.warned else self.deadline - TERMINAL_WARNING_SECONDS
+
+    def touch(self, now: float) -> bool:
+        if now >= self.deadline:
+            return False
+        previous = self.deadline
+        self.idle_at = now + TERMINAL_IDLE_SECONDS
+        if self.deadline > previous:
+            self.warned = False
+        return True
+
+
 @dataclass
 class BrowserSession:
     session_id: str
@@ -185,6 +219,7 @@ class BrowserSession:
     rows: int = 32
     auth_session_binding: Optional[str] = None
     admin_step_up_failures: int = 0
+    deadline: TerminalDeadline | None = None
 
 
 # ClientFlow 1.2 has one Terminal-domain agent per client. There is no legacy
@@ -470,6 +505,7 @@ async def terminal_domain_agent_ws(websocket: WebSocket, client_id: int):
                         V2_SESSIONS.pop(session_id, None)
                     if browser.agent_session_id == session_id:
                         browser.agent_session_id = None
+                        browser.deadline = None
 
             if msg_type == "ready":
                 # seq-1200 opens at 120x32. Apply the browser's negotiated size
@@ -506,6 +542,7 @@ async def terminal_domain_agent_ws(websocket: WebSocket, client_id: int):
                 V2_SESSIONS.pop(session_id, None)
                 if browser.agent_session_id == session_id:
                     browser.agent_session_id = None
+                    browser.deadline = None
         for session_id, browser in orphaned:
             with Session(engine) as session:
                 mark_terminal_agent_disconnected(
@@ -596,6 +633,10 @@ async def _start_v2_browser_session(
                     step_up_verified_at=step_up_verified_at,
                 )
             payload = terminal_session_start_message(terminal_session, root_grant=root_grant)
+            expires_at = terminal_session.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            limit_at = time.monotonic() + max(0.0, (expires_at - datetime.now(timezone.utc)).total_seconds())
             session.commit()
     except HTTPException as exc:
         await _send_json(browser.websocket, {"type": "error", "message": str(exc.detail)})
@@ -610,6 +651,7 @@ async def _start_v2_browser_session(
 
     browser.protocol = "v2"
     browser.agent_session_id = agent_session_id
+    browser.deadline = TerminalDeadline(agent_session_id, time.monotonic() + TERMINAL_IDLE_SECONDS, limit_at)
     browser.agent_close_sent = False
     browser.admin_step_up_failures = 0
     browser.cols = cols
@@ -625,6 +667,7 @@ async def _start_v2_browser_session(
                 mark_browser_terminal_closed(session, session_id=agent_session_id, user_id=browser.user_id)
                 session.commit()
         browser.agent_session_id = None
+        browser.deadline = None
         browser.protocol = "pending"
         await _send_json(browser.websocket, {"type": "error", "message": "Kunne ikke sende sessionen til Terminal-agenten."})
     return True
@@ -971,13 +1014,43 @@ async def terminal_browser_ws(
     try:
         receive_task = asyncio.create_task(websocket.receive_text())
         while True:
-            timeout = max(0.0, next_auth_recheck - time.monotonic())
+            deadline = browser.deadline
+            due = min(next_auth_recheck, deadline.next_check()) if deadline else next_auth_recheck
+            timeout = max(0.0, due - time.monotonic())
             done, _ = await asyncio.wait(
                 {receive_task},
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            deadline = browser.deadline
+            now = time.monotonic()
+            if deadline and now >= deadline.deadline:
+                code = TERMINAL_LIMIT_CLOSE_CODE if deadline.reason == "limit" else TERMINAL_IDLE_CLOSE_CODE
+                try:
+                    await asyncio.wait_for(_send_json(websocket, {
+                        "type": "terminal_idle", "phase": "expired", "reason": deadline.reason,
+                        "session_id": deadline.session_id,
+                    }), timeout=1)
+                except Exception:
+                    pass
+                if browser.agent_session_id == deadline.session_id and not browser.agent_close_sent:
+                    try:
+                        browser.agent_close_sent = await asyncio.wait_for(_send_to_domain_agent(
+                            client_id, {"type": "close", "session_id": deadline.session_id}), timeout=3)
+                    except asyncio.TimeoutError:
+                        pass
+                await _close_with_reason(websocket, code, "Terminalsession afsluttet")
+                return
+            if deadline and not deadline.warned and now >= deadline.next_check():
+                deadline.warned = True
+                await asyncio.wait_for(_send_json(websocket, {
+                    "type": "terminal_idle", "phase": "warning", "reason": deadline.reason,
+                    "session_id": deadline.session_id,
+                    "seconds": max(1, min(60, int(deadline.deadline - now + 0.999))),
+                }), timeout=3)
             if receive_task not in done:
+                if time.monotonic() < next_auth_recheck:
+                    continue
                 current_user = _current_terminal_superadmin(browser)
                 if current_user is None:
                     await _close_with_reason(websocket, 4403, "Superadministrator-sessionen er ikke længere gyldig")
@@ -1012,6 +1085,14 @@ async def terminal_browser_ws(
             msg_type = decoded.type
             if msg_type == "ping":
                 await _send_json(websocket, {"type": "pong", "ts": time.time()})
+                continue
+
+            if msg_type == "continue_session":
+                deadline = browser.deadline
+                if (deadline and msg.get("session_id") == deadline.session_id
+                        and deadline.reason == "idle" and deadline.touch(time.monotonic())):
+                    await _send_json(websocket, {"type": "terminal_idle", "phase": "reset",
+                                                 "session_id": deadline.session_id})
                 continue
 
             if msg_type == "open":
@@ -1109,7 +1190,13 @@ async def terminal_browser_ws(
                     await _send_json(websocket, {"type": "error", "message": exc.message})
                     continue
                 if browser.protocol == "v2":
-                    await _stage_script_v2(browser, filename=filename, content_b64=content_b64)
+                    if await _stage_script_v2(browser, filename=filename, content_b64=content_b64):
+                        deadline = browser.deadline
+                        if deadline:
+                            warned = deadline.warned
+                            if deadline.touch(time.monotonic()) and warned and not deadline.warned:
+                                await _send_json(websocket, {"type": "terminal_idle", "phase": "reset",
+                                                             "session_id": deadline.session_id})
                 else:
                     await _send_json(websocket, {"type": "error", "message": "Terminalsessionen er ikke aktiv"})
                 continue
@@ -1126,10 +1213,16 @@ async def terminal_browser_ws(
                 if not data:
                     continue
                 if browser.protocol == "v2" and browser.agent_session_id:
-                    await _send_to_domain_agent(
+                    sent = await _send_to_domain_agent(
                         client_id,
                         {"type": "input", "session_id": browser.agent_session_id, "data": data, "encoding": "utf-8"},
                     )
+                    deadline = browser.deadline
+                    if sent and deadline:
+                        warned = deadline.warned
+                        if deadline.touch(time.monotonic()) and warned and not deadline.warned:
+                            await _send_json(websocket, {"type": "terminal_idle", "phase": "reset",
+                                                         "session_id": deadline.session_id})
                 else:
                     await _send_json(websocket, {"type": "error", "message": "Terminalsessionen er ikke aktiv"})
                 continue

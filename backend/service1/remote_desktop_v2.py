@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
+from types import MappingProxyType
 from datetime import datetime, timedelta, timezone
 import os
 import uuid
@@ -35,6 +37,41 @@ SESSION_SECONDS = min(
     max(60, int(os.getenv("CLIENTFLOW_REMOTE_DESKTOP_SESSION_SECONDS", "3600"))),
     4 * 3600,
 )
+
+
+@dataclass(frozen=True)
+class NativeRdpTransportPolicy:
+    browser_modes: frozenset[str]
+    agent_modes: frozenset[str]
+
+
+# Reviewed pilot admission only. Not a local root authority.
+# Do not add fleet identities until the independent root admission contract
+# and installed-release proof are implemented and physically tested.
+NATIVE_RDP_CLIENT_POLICIES = MappingProxyType({
+    3: NativeRdpTransportPolicy(frozenset({"wss", "https"}),
+                                frozenset({"wss", "https"})),
+})
+
+
+def native_rdp_client_admitted(client_id: int) -> bool:
+    return type(client_id) is int and client_id in NATIVE_RDP_CLIENT_POLICIES
+
+
+def native_rdp_transport_allowed(client_id: int, role: str, mode: str) -> bool:
+    """Server policy, separate from identity authorization; no fallback."""
+    if not native_rdp_client_admitted(client_id) or mode not in ("wss", "https"):
+        return False
+    policy = NATIVE_RDP_CLIENT_POLICIES[client_id]
+    if role == "browser":
+        allowed = policy.browser_modes
+    elif role == "agent":
+        allowed = policy.agent_modes
+    else:
+        return False
+    return mode in allowed and (
+        mode == "wss" or os.environ.get("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED") == "true"
+    )
 
 
 def _remote_desktop_auth_signing_key() -> bytes:

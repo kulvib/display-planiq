@@ -16,11 +16,12 @@ PlanIQ Display superadmin session and one-time browser ticket
 The browser uses a disposable same-origin iframe running the official SDL3
 FreeRDP 3.33.1 Emscripten build. The compiled JavaScript and WASM runtime ARE
 NOW source-pinned in frontend/public/native-rdp with their complete provenance:
-GitHub Actions build 45066909031 passed and independently SHA256-verified
-sdl-freerdp.js (269234 bytes, sha256 609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5)
-and sdl-freerdp.wasm (11089855 bytes, sha256
-808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90).
-The exact compiled files were integrated into PR #408, not deployed. The iframe's credential fields are never
+GitHub Actions build 45178692053 passed the SDL3/Chromium/WebSocket proof,
+integrated in separate staging commit 8b4939715566406763cb6f54a4398be82735c383:
+sdl-freerdp.js (269234 bytes, sha256 c7d0a7e20a7b6473c5743892086b00dfb096807b8386adf992ab294867ad8112)
+and sdl-freerdp.wasm (11086426 bytes, sha256
+f5cfa907421b47c3ed6acdee329f5ebda7e9279c4a5972e02139dc8e2fe6f315).
+The exact files are staged in unmerged draft PR #412. On 2026-11-23 the *frontend* was temporarily deployed from staging commit d5e5db2; the Render backend remained on main 9898ab5. This is not release approval. The iframe's credential fields are never
 posted to the PlanIQ API. A trusted GNOME TLS SHA256 fingerprint is required
 before the WASM client can connect; /cert:ignore is explicitly forbidden.
 
@@ -148,7 +149,7 @@ safety feature; extending it requires its own operator-reviewed approval.
 ## Verified artifact integration and current gates (2026-11-22)
 
 - Official FreeRDP 3.33.1 WASM build **PASS**, including upstream Node tests.
-- Source-pinned JS/WASM artifact **verified and committed into PR #408**.
+- Corrected SDL3/Chromium-verified JS/WASM artifact **staged in draft PR #412**; no Render deploy or Viborg1 release change.
 - The write-permitted artifact integration workflow was temporary and removed
   after the reviewed files were committed. Normal branch CI remains read-only.
 - Frontend now fails its build on missing or modified FreeRDP assets if the
@@ -202,3 +203,240 @@ X-Frame-Options `SAMEORIGIN` on the iframe, and no restrictive
 `window.crossOriginIsolated === true` in both browser contexts.
 Changes to `render.yaml` do not themselves prove the live Render service's
 headers were updated; Render Dashboard/Blueprint rules must match deployment.
+
+## 63D-42 — Physical black-screen failure and next isolated fix (23 November 2026)
+
+**Status: development candidate, NOT an approved Remote Desktop release.**
+Do not merge PR #411 or #412, deploy a new backend/agent, or approve release
+1249 until the new candidate is reviewed and the *physical* Viborg1 pilot
+works. The physical client was restored after the failed pilot: original
+1248 agent active, temporary systemd override removed, GNOME RDP disabled,
+expired browser grant removed and rollback timer stopped.
+
+### What the physical evidence actually proves
+
+At 14:25:43.960 UTC GNOME logged an initial OTHER_ERROR, followed by
+GRAPHICS at 14:25:44.050. At 14:28:06.369 the later READ_FAILURE and
+TRANSPORT_ERROR appeared, then disconnect/write failures. A later
+OTHER_ERROR/GRAPHICS pair appeared at 14:28:40.880/14:28:40.974.
+The browser and agent WSS both connected for approximately 144 seconds,
+but the browser remained black. The later transport close does **not**
+prove that it caused the initial failure. Existing GNOME journals alone
+do not distinguish missing client bytes, incomplete GNOME negotiation,
+unavailable graphics codec or an SDL render issue.
+
+Inspecting the **actual** pinned FreeRDP 3.33.1 generated Emscripten
+SOCKFS shows that it sends typed-array binary WebSocket messages and
+receives ArrayBuffer messages. It maps multiple WS frames to a TCP
+byte-stream abstraction; this does not itself prove correct end-to-end
+RDP behavior. A browser frame larger than 64 KiB was previously rejected
+by the Render relay. The 63D-42 browser adapter now splits outgoing bytes
+in order into 16 KiB frames, rejects text and has a 2 MiB max buffered
+send cap. No compiled JS/WASM hash, FreeRDP options, TLS pin or
+credential handling has changed.
+
+### Content-blind boundary measurements
+
+The following counters are integers only. Do not log or persist
+RDP PDU data, TLS handshake content, WebSocket tickets, GNOME credentials,
+session UUIDs, tunnel identifiers or binary payload samples.
+
+| Boundary | Diagnostic / direction |
+| --- | --- |
+| FreeRDP iframe | Browser binary sent/received frame counts and bytes |
+| Render WSS relay | native_rdp_flow browser_to_agent_frames/bytes and agent_to_browser_frames/bytes, first-byte elapsed times |
+| Viborg1 GNOME agent | native_rdp_agent_flow wss_to_tcp and tcp_to_wss frames/bytes |
+| GNOME journal | First real handshake/graphics error in exact timestamp order, without printing secrets |
+
+The relay periodically logs aggregate counts (at most once per 10 seconds
+while active plus once at close) with **client ID only**. The agent logs
+equivalent aggregates at most once per 10 seconds and at close. Both
+measure only successful forwarding calls, never merely an open WSS
+handshake; there is no DB query per packet and no new Render service.
+
+### Decision table for ONE physical rerun
+
+1. Browser outgoing bytes = 0: investigate FreeRDP/SDL/SOCKFS startup
+   before the backend, not GNOME graphics.
+2. Browser outgoing bytes > 0, Render browser_to_agent = 0: inspect
+   WebSocket send/receive, protocol rejection or relay backpressure.
+3. Render browser_to_agent > 0, Viborg1 wss_to_tcp = 0:
+   investigate Render-to-agent pipe and connection lifetime.
+4. Viborg1 wss_to_tcp > 0, tcp_to_wss = 0: inspect GNOME's earliest
+   RDP/TLS/credentials/transport journal event.
+5. Viborg1 tcp_to_wss > 0, Render agent_to_browser = 0:
+   investigate the return relay.
+6. All directions > 0 including browser received bytes, but screen
+   black: focus next on GNOME negotiated graphics capabilities,
+   compiled FreeRDP decoder capabilities and SDL3 rendering. Do not
+   declare success just because RDP bytes flow.
+
+The iframe fails closed if no outgoing RDP bytes are sent within 12 s
+after WSS open or GNOME returns no bytes within 20 s, and ends an
+unconfirmed visible-screen pilot after 45 s. A physical operator can
+explicitly confirm **visible** GNOME pixels only *after* bytes have flowed
+in both directions. This manual confirmation prevents an open socket
+from being mistaken for a working desktop; it does not replace physical
+mouse, drag, scroll, keyboard or latency tests.
+
+### Mandatory controls and acceptance
+
+- New development branch fix/63d42-viborg1-binary-rdp-telemetry
+  is based on staging PR #412, **not** the Render auto-deployed staging
+  branch. It must remain draft until independently reviewed.
+- Keep release 1248 and its rollback, TLS SHA-256 pin, short-lived ticket
+  and existing session binding. No open/externally reachable TCP/UDP
+  3389. Restore GNOME root-watchdog + nftables guard using the official,
+  immutable six-minute physical procedure before another pilot.
+- Check actual deployment commits of frontend and backend, and that
+  the temporary physical agent contains the new forwarder code before
+  claiming that all four boundary counters are instrumented. A frontend
+  deploy alone does not activate backend/agent counters.
+- Require CI (including negative security/byte-preservation tests),
+  Docker/PostgreSQL smoke and an observed actual GNOME image with mouse
+  click/drag/scroll, keyboard and measured input-to-visible-pixel
+  latency. JPEG fallback must work. No release 1249 on green CI alone.
+
+## 63D-43 — RDP bytes reach browser but no image (physical evidence 2026-11-23)
+
+The second physical Viborg1 run PASSed all firewall, six-minute GNOME timer,
+root-only browser grant and temporary-agent integrity gates. The browser
+reported **53,565 bytes / 858 WS frames to GNOME** and **4,325,501 bytes /
+1,220 WS frames from GNOME**, but the desktop remained visually black. This
+proves bidirectional delivery into the browser, **not** successful RDP graphics,
+authentication, decoded pixels, or mouse/keyboard control.
+
+The pinned FreeRDP SDL3 browser build delegates window creation to SDL3's
+Emscripten video driver. Upstream SDL3's Emscripten CreateWindow defaults to
+CSS selector `#canvas` unless an explicit SDL hint/window property overrides
+it. The pinned FreeRDP SDL3 window creation does not specify such an override.
+Our iframe originally used `<canvas id="desktop">` and the viewer bound
+`Module.canvas` to that element; this mismatches the SDL3 selector and can
+prevent drawing while WSS continues flowing. The fix changes the iframe to
+`<canvas id="canvas">`, updates the `Module.canvas` binding and adds a
+fail-closed selector guard and a Node regression test against the verified
+compiled Emscripten JS. The compiled JS/WASM artifacts are left byte-for-byte
+unchanged, as are the TLS pin, short-lived ticket, relay and agent.
+
+This is a source-supported **root-cause hypothesis**, not a physically proven
+fix. Only rerun physical Viborg1 after reviewing and passing CI and redeploying
+the matching frontend source commit; confirm actual GNOME pixels, mouse and
+keyboard before merging or cutting release 1249. Do not repeat the six-minute
+pilot until its preceding cleanup state is verified.
+  
+## 63D-44 — Physical GNOME image succeeds; viewport sizing remains incorrect
+
+A new 2026-11-23 Viborg1 physical screenshot shows **actual GNOME desktop
+pixels** rendered by the pinned FreeRDP 3.33.1 SDL3 WASM client via the existing
+secure binary tunnel (11,567 B / 146 frames to GNOME and 715,795 B /
+193 frames from GNOME at capture). This supersedes the earlier black-screen
+result for video rendering only. Mouse/keyboard input and latency are **not**
+yet independently accepted.
+
+The image was approximately 520x390 and pinned in the upper-left of a much
+larger iframe. Root cause in the frontend: 63D-43 changed the canvas element ID
+from `desktop` to `canvas` to fix the missing SDL3 target, but the HTML CSS
+continued to style `#desktop`; there was no responsive fit or centering for
+the actual `#canvas`.
+
+63D-44 adds an independent source-only viewport fitter. It observes only the
+canvas backing-resolution attributes and the iframe's viewport, computes one
+uniform scale (min(width ratio, height ratio)), centers the result and preserves
+aspect ratio on browser resizing. SDL3's Emscripten pointer event path scales
+CSS target coordinates into its SDL window coordinates; this must be verified
+physically for mouse/drag/scroll after deployment. The fitter writes **only
+CSS custom presentation properties**; it never changes canvas bitmap
+resolution, RDP PDUs, TLS pinning, authenticated WSS transport, or FreeRDP
+WASM artifacts. It ignores SDL3's transient 1x1 initialization framebuffer.
+
+Acceptance: maximize remote pixels within the iframe without aspect distortion,
+correct pointer alignment across scaled canvas, keyboard, 6-minute watchdog,
+and measured latency. RDP-native dynamic resolution and higher sharpness would
+be a later separate change, not assumed or faked by this CSS-only fix.
+Keep all related PRs draft and release 1249 blocked until physical acceptance.
+
+
+## 63D-45 — Slow physical mouse despite visible GNOME desktop
+
+The 63D-44 physical pilot now renders real GNOME desktop pixels, but the
+operator reports **very slow mouse behavior**. This remains a BLOCKER for
+release 1249. The original root cause is not yet established and the image,
+keyboard, pointer responsiveness and end-to-end latency are separate acceptance
+checks.
+
+The browser diagnostic adapter was previously calling its progress callback
+on **every incoming/outgoing WebSocket binary packet** even though the UI
+limited status rendering to once every three seconds. 63D-45 coalesces that
+reporting to at most one callback per second while still counting **every byte
+and frame** exactly. Mouse packets and browser/agent/server protocol payloads
+are never dropped, modified or reordered.
+
+The same-origin disposable iframe passively observes pointermove event
+arrival delay (performance.now minus DOM event.timeStamp), maximum browser
+WebSocket bufferedAmount and maximum one-second timer slip. These four
+integer fields are sent to the parent at the existing bounded status cadence,
+with no coordinates, keys, credential fields, session IDs, RDP payloads or
+packet samples. They are explicitly **NOT input-to-visible-frame latency**.
+No persistent storage, database or additional Render infrastructure is used.
+
+Interpretation for ONE bounded physical check:
+- High browser event delay / timer slip => investigate browser main-thread
+  contention and SDL3 framebuffer updates.
+- High WebSocket bufferedAmount => investigate outbound queue and network
+  backpressure.
+- Small values on both do NOT prove the mouse is fast: latency may still be
+  server/remote-cursor rendering or downstream RDP processing.
+
+Do not introduce speculative `-mouse-motion`, codec changes or parallel
+RDP input channels until actual behavior is measured. FreeRDP/SDL3 upstream
+also reports input lag in graphics-heavy sessions, so changing a network flag
+without evidence is not an accepted fix. Keep PR draft, retain immutable
+release 1248, six-minute GNOME firewall/watchdog and ten-minute agent rollback.
+
+## 63D-47 — RDP-viewer resolution fidelity and operator choice (2026-11-23)
+
+Physical operator feedback: the GNOME image in native RDP does not appear to
+match the physical Viborg1 monitor resolution; mouse response remains too slow.
+Neither the true primary-monitor pixel dimensions nor actual end-to-end latency
+has been measured in this report. Do not declare a resolution or latency fix
+based on tests of the browser alone.
+
+GNOME 63D-30 is explicitly `screen-share-mode='mirror-primary'`: the existing
+kiosk session is shared rather than starting a headless/virtual desktop. A
+physical-session mirror's resolution is not safely controlled through a browser
+window or the RDP dynamic-resolution extension. The browser must not issue
+`/dynamic-resolution`, `/size` or `/smart-sizing` speculatively; avoid
+changing the physical monitor settings, creating virtual monitors or enabling
+a second RDP service.
+
+This draft changes only CSS presentation of the already-decoded SDL3 canvas:
+
+- The default **Fit without upscaling** mode can shrink a large canvas, but
+  NEVER enlarge a small one to disguise a possible source resolution mismatch.
+- **Original pixel size (1:1)** uses canvas width/height directly as CSS pixels,
+  and uses scrollbars instead of cropping when larger than the iframe.
+- Display-state changes send one message per actual dimension/mode change,
+  authenticated by the existing same-origin iframe message provenance.
+  Messages contain *only* validated canvas dimensions, CSS dimensions and
+  a mode value; no pixel contents, mouse positions, passwords, tickets or
+  session IDs. They do NOT measure GNOME's physical monitor resolution.
+- No RDP framebuffer dimensions, Emscripten JS/WASM artifacts, websocket
+  contents, GNOME display settings or transport security parameters change.
+
+Physical acceptance (one combined guarded Viborg1 test after CI and staging):
+
+1. Record Viborg1's **actual active GNOME primary monitor mode** with
+   read-only session tools (do not make any `gsettings` / `xrandr` changes).
+2. In the web viewer compare its displayed FreeRDP canvas size with the
+   physical primary mode. If different, capture both integer measurements
+   and stop: investigate FreeRDP/SDL/RDP graphics negotiation, without
+   silently treating CSS resizing as a protocol-resolution fix.
+3. Test default no-upscale and original 1:1 mode. Confirm proper cursor
+   alignment, clicks, drag, scrolling and keyboard in both modes; verify
+   large desktop can be scrolled and image aspect is correct.
+4. Record browser event lag, WS queue depth and timer slip, plus physical
+   input-to-visible-pixel timing before approving the transport hotpath change.
+5. Keep the existing 6-minute independent GNOME watchdog, nftables guard,
+   10-minute temporary-agent rollback, release 1248 and draft PR #413.
+   Release 1249 stays blocked until an actual resolution match and responsive
+   mouse are observed on the physical client.

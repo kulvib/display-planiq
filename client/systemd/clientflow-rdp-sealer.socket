@@ -1,0 +1,16 @@
+# Release-owned native RDP unit.
+[Unit]
+Description=ClientFlow protected native RDP sealer socket
+
+[Socket]
+ListenStream=/run/clientflow/rdp-sealer-v1.sock
+SocketUser=root
+SocketGroup=root
+SocketMode=0600
+DirectoryMode=0755
+Accept=yes
+MaxConnections=2
+RemoveOnStop=yes
+
+[Install]
+WantedBy=clientflow.target

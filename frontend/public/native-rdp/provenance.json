@@ -4,12 +4,12 @@
   "emsdk": "6.0.12",
   "files": {
     "sdl-freerdp.js": {
-      "sha256": "609715445d2dc9f637f386572566b10fa8b3b9f0736f483a1d6a5ed423ee8cb5",
+      "sha256": "c7d0a7e20a7b6473c5743892086b00dfb096807b8386adf992ab294867ad8112",
       "bytes": 269234
     },
     "sdl-freerdp.wasm": {
-      "sha256": "808752fe85bb1d65964d19f4b5d40cf990d1708c437ff0e40ec92f5994d7cf90",
-      "bytes": 11089855
+      "sha256": "f5cfa907421b47c3ed6acdee329f5ebda7e9279c4a5972e02139dc8e2fe6f315",
+      "bytes": 11086426
     }
   }
 }

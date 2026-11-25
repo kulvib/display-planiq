@@ -91,9 +91,20 @@ def test_agent_socket_is_bound_to_live_control_credential_not_old_jwt(monkeypatc
     control = SimpleNamespace(credential_id="rdp-credential", token_version=7)
     monkeypatch.setitem(relay.CONTROL_AGENTS, 3, control)
     monkeypatch.setattr(relay, "_remote_desktop_agent_channel_valid", lambda _: True)
+    # Production pins the exact channel at tunnel creation. An incomplete
+    # fixture without that binding must be rejected rather than authorized.
+    assert not tunnel.authorized_agent()
+    tunnel.control_channel = control
     assert tunnel.authorized_agent()
-    # A renewed handshake JWT is not needed while the same credential remains
-    # approved. Changing its persisted version must still revoke immediately.
+    # A renewed handshake JWT is not needed while the same channel and
+    # credential remain approved. A new channel with identical claims is
+    # nevertheless a different generation and cannot inherit the old tunnel.
+    replacement = SimpleNamespace(credential_id="rdp-credential", token_version=7)
+    monkeypatch.setitem(relay.CONTROL_AGENTS, 3, replacement)
+    assert not tunnel.authorized_agent()
+    monkeypatch.setitem(relay.CONTROL_AGENTS, 3, control)
+    assert tunnel.authorized_agent()
+    # Changing the persisted credential version must still revoke immediately.
     control.token_version = 8
     assert not tunnel.authorized_agent()
 
