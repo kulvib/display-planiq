@@ -155,7 +155,7 @@ test("livestream overview exposes playback latency and fullscreen per tile", () 
   assert.match(overview, /FullscreenIcon/);
   assert.match(overview, /requestFullscreen/);
   assert.match(overview, /aria-label=\{`Vis \$\{client\.name/);
-  assert.match(overview, /Forsinkelse: \$\{formatLatency\(latencySeconds\)\}/);
+  assert.match(overview, /Forsinkelse: \$\{formatLatency\(state === "live" && shouldRun \? latencySeconds : null\)\}/);
   assert.match(overview, /hlsRef\.current\?\.latency/);
   assert.match(overview, /seekable\.end/);
   assert.match(overview, /authenticatedFetch\(`\$\{apiUrl\}\/api\/livestream-v2\/hls/);

@@ -333,3 +333,19 @@ export function createHlsReserveController(video, { onReady = () => {}, onBuffer
     },
   };
 }
+
+/** Presentation only. HLS live-edge estimate is not capture-to-screen delay.
+ * Never coerce missing readings to zero or use these colors to drive recovery.
+ * Thresholds use the displayed tenth of a second so the label and color agree.
+ */
+export function livestreamLatencyStatus(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return { text: "Måler forsinkelse …", severity: "neutral", color: "#94a3b8" };
+  }
+  const tenths = Math.round(seconds * 10);
+  const text = `${(tenths / 10).toFixed(1).replace(".", ",")} sek. forsinkelse`;
+  if (tenths <= 70) return { text, severity: "success", color: "#4ade80" };
+  if (tenths <= 100) return { text, severity: "warning", color: "#facc15" };
+  if (tenths <= 150) return { text, severity: "elevated", color: "#fb923c" };
+  return { text, severity: "error", color: "#f87171" };
+}
