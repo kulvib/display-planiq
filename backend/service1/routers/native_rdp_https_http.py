@@ -62,6 +62,8 @@ def _sequence(value: str) -> int:
 class HttpPeer(BinaryHttpsPeer):
     """Minimal handshake surface consumed by the existing native handlers."""
 
+    native_rdp_https_adapter = True  # Server-owned transport identity.
+
     def __init__(self, headers: dict[str, str], host: str | None):
         super().__init__(_BUDGET)
         self.headers = headers
