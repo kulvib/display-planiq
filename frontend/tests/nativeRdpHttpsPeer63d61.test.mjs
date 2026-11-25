@@ -24,15 +24,16 @@ test("binary codec matches canonical big-endian framing and validates complete b
 test("browser peer sends one ordered binary upload, delivers poll bytes, closes on rejection", async () => {
   const calls = [];
   let resolvePoll;
-  const request = async ({ method, path, body, signal }) => {
-    calls.push([method, path]);
+  const request = async ({ method, path, body, signal, headers }) => {
+    const sequence = headers["X-ClientFlow-Sequence"];
+    calls.push([method, path, sequence]);
     if (path.endsWith("/open")) return reply(200, opened);
-    if (path.endsWith("/send/0")) {
+    if (path.endsWith("/send") && sequence === "0") {
       assert.deepEqual(decodeBatch(body).map(x => [...new Uint8Array(x)]), [[9, 8]]);
       return reply(204, empty, { "x-clientflow-sequence": "1" });
     }
-    if (path.endsWith("/send/1")) return reply(401);
-    if (path.endsWith("/poll/0")) return new Promise((resolve, reject) => {
+    if (path.endsWith("/send") && sequence === "1") return reply(401);
+    if (path.endsWith("/poll") && sequence === "0") return new Promise((resolve, reject) => {
       resolvePoll = resolve;
       signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     });
@@ -54,7 +55,14 @@ test("browser peer sends one ordered binary upload, delivers poll bytes, closes 
   peer.send(new Uint8Array([7]));
   assert.equal((await closed).code, 1006);
   assert.equal(peer.readyState, peer.CLOSED);
-  assert.equal(calls.filter(([, path]) => path.endsWith("/send/1")).length, 1);
+  assert.equal(calls.filter(([, path, seq]) => path.endsWith("/send") && seq === "1").length, 1);
+  const uploads = calls.filter(([, path]) => path.endsWith("/send"));
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[0][1], uploads[1][1]);
+  assert.deepEqual(uploads.map(([, , seq]) => seq), ["0", "1"]);
+  const polls = calls.filter(([, path]) => path.endsWith("/poll"));
+  assert.deepEqual(polls.map(([, , seq]) => seq), ["0", "1"]);
+  assert.equal(polls[0][1], polls[1][1]);
   assert.equal(calls.filter(([method]) => method === "DELETE").length, 1);
 });
 
