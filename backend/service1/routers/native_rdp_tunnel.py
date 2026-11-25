@@ -32,6 +32,7 @@ from .remote_desktop_v2 import (
     _remote_desktop_browser_auth_state,
     _remote_desktop_agent_channel_valid,
     _send_agent,
+    _send_browser,
     _ws_origin_allowed,
 )
 
@@ -84,6 +85,8 @@ class NativeRdpTunnel:
     agent_token_version: int | None = None
     managed_request_id: str | None = None
     renewable: bool = False
+    status_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    status_announced: bool = False
     browser_to_agent: BinaryFlow = field(default_factory=BinaryFlow)
     agent_to_browser: BinaryFlow = field(default_factory=BinaryFlow)
 
@@ -299,6 +302,43 @@ async def _pump(tunnel: NativeRdpTunnel, incoming: WebSocket, *, browser_side: b
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+def _binary_transport(peer: object) -> str:
+    # Server-created HTTP adapter, never browser input or environment flags.
+    return "https" if getattr(peer, "native_rdp_https_adapter", False) is True else "wss"
+
+
+async def _publish_transport(tunnel: NativeRdpTunnel, *, ready: bool) -> None:
+    """Best-effort UI-only status over the existing authorized control path."""
+    async with tunnel.status_lock:
+        if ready:
+            if tunnel.closed.is_set() or tunnel.agent is None or not tunnel.ready.is_set():
+                return
+            if tunnel.status_announced:
+                return
+            tunnel.status_announced = True
+        elif not tunnel.status_announced:
+            return
+        else:
+            tunnel.status_announced = False
+        payload = {
+            "type": "native_rdp_transport",
+            "session_id": tunnel.session_id,
+            "tunnel_id": tunnel.tunnel_id,
+            "phase": "ready" if ready else "closed",
+        }
+        if ready:
+            payload.update(browser=_binary_transport(tunnel.browser),
+                           agent=_binary_transport(tunnel.agent))
+        try:
+            await asyncio.wait_for(
+                _send_browser(tunnel.session_id, tunnel.client_id, payload),
+                timeout=0.5,
+            )
+        except Exception:
+            # Presentation cannot prevent RDP data transfer or cleanup.
+            pass
+
+
 async def _cleanup(tunnel: NativeRdpTunnel) -> None:
     if tunnel.closed.is_set():
         return
@@ -307,6 +347,7 @@ async def _cleanup(tunnel: NativeRdpTunnel) -> None:
     # Retain the one-client reservation until both close attempts complete.
     # Otherwise a new tunnel could overlap an old, still-closing generation.
     try:
+        await _publish_transport(tunnel, ready=False)
         await asyncio.gather(*(
             _reject(socket, "RDP-session afsluttet", 1000)
             for socket in (tunnel.agent, tunnel.browser) if socket is not None
@@ -404,6 +445,9 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
             })
             await asyncio.wait_for(tunnel.ready.wait(), timeout=OPEN_TIMEOUT)
             if tunnel.agent is None or tunnel.closed.is_set():
+                return
+            await _publish_transport(tunnel, ready=True)
+            if tunnel.closed.is_set():
                 return
             monitor = asyncio.create_task(_watch_traffic(tunnel))
             await _pump(tunnel, ws, browser_side=True)
