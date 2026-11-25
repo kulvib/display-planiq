@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { createLivestreamBrowserTiming, createHlsReserveController, contiguousVideoBuffer, latestManifestSegment, hlsHttpTransportLabel } from "../src/pages/clientdetailspage/livestreamBrowserTiming.mjs";
+import { createLivestreamBrowserTiming, createHlsReserveController, contiguousVideoBuffer, latestManifestSegment, hlsHttpTransportLabel, livestreamLatencyStatus } from "../src/pages/clientdetailspage/livestreamBrowserTiming.mjs";
 
 test("63D-33 HLS live-edge samples are bounded, local and independently labeled", () => {
   const timing = createLivestreamBrowserTiming(3);
@@ -305,4 +305,24 @@ test("63D-73F both HLS.js views bind live recovery and dispose reserve", () => {
     assert.match(source,/reserve\.bindLiveVisibility\(hls, document, Hls\.Events\.LEVEL_UPDATED/);
     assert.match(source,/(?:reserve|hlsReserveRef\.current)\??\.dispose\(\)/);
   }
+});
+
+test("63D-74 visual latency bands follow the displayed tenth and never coerce unknown", () => {
+  for (const value of [null, undefined, NaN, Infinity, -1, "0", false]) {
+    assert.equal(livestreamLatencyStatus(value).severity, "neutral");
+  }
+  for (const [value, severity] of [[0,"success"],[7,"success"],[7.04,"success"],[7.1,"warning"],[10,"warning"],[10.1,"elevated"],[15,"elevated"],[15.1,"error"]]) {
+    assert.equal(livestreamLatencyStatus(value).severity, severity);
+  }
+  assert.equal(livestreamLatencyStatus(5.2).text, "5,2 sek. forsinkelse");
+});
+test("63D-74 both live views use numeric presentation, no false green on unknown", () => {
+  const detail = readFileSync(new URL("../src/pages/clientdetailspage/ClientDetailsLivestreamSection.jsx", import.meta.url), "utf8");
+  const wall = readFileSync(new URL("../src/pages/adminpages/LivestreamOverview.jsx", import.meta.url), "utf8");
+  assert.doesNotMatch(detail, /title: "Stream live"/);
+  assert.match(detail, /title: latencyStatus\.text/);
+  assert.match(detail, /severity: latencyStatus\.severity/);
+  assert.match(wall, /state === "live" \? latencyStatus\.text/);
+  assert.doesNotMatch(wall, /Number\(hlsRef\.current\?\.latency\)/);
+  assert.doesNotMatch(wall, /const value = Number\(seconds\)/);
 });
