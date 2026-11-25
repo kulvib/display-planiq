@@ -57,13 +57,88 @@ try {
     await writeFile(join(folder, "fragment-" + (++count) + ".bin"), wire(2, count, data));
   }
   assert.equal(count, 18);
+  console.log("FFMPEG_INDEPENDENT_FRAGMENT_FIXTURE=PASS", count);
   for (const name of moduleNames) {
     await copyFile(join(ROOT, "frontend/src/pages/clientdetailspage", name), join(folder, name));
   }
-  await writeFile(join(folder, "index.html"), '<!doctype html><meta charset="utf-8"><video id="video" width="320" height="180" muted playsinline></video>');
+  // Run the actual repository player against real Chrome MediaSource. Only
+  // the socket delivery and visibility events are deterministic test inputs.
+  const proof = async () => {
+    // createWssPlayer is imported by the actual browser ES module.
+    const video = document.querySelector("#video");
+    if (!video) throw Error("missing video element");
+    const wait = ms => new Promise(ok => setTimeout(ok, ms));
+    const get = async path => {
+      const r = await fetch(path); if (!r.ok) throw Error("fixture fetch");
+      return r.arrayBuffer();
+    };
+    const init = await get("/init.bin");
+    const fragments = await Promise.all(Array.from({ length: 18 }, (_, i) => get("/fragment-" + (i + 1) + ".bin")));
+    const visibility = new EventTarget();
+    visibility.visibilityState = "visible";
+    let socket, ready = 0, failure = null, resumedFrames = null;
+    class InjectedSocket {
+      constructor(_url, protocols) {
+        socket = this;
+        this.protocol = protocols[0];
+        queueMicrotask(() => this.onopen?.());
+      }
+      close() { this.closed = true; }
+      deliver(data) { this.onmessage?.({ data }); }
+    }
+    const player = createWssPlayer(video, {
+      url: "wss://example.invalid/unused",
+      getTicket: async () => ({ subprotocol: "clientflow-livestream-v1", ticket: "a".repeat(43) }),
+      SocketClass: InjectedSocket,
+      documentRef: visibility,
+      onPlayable: () => { ready++; },
+      onFailure: reason => { failure = reason; },
+    });
+    const check = (condition, label) => { if (!condition) throw Error(label + " failure=" + failure + " ready=" + ready + " time=" + video.currentTime); };
+    try {
+      for (let i = 0; !socket && i < 50; i++) await wait(20);
+      check(socket, "socket created");
+      socket.deliver(init);
+      for (let i = 0; i < 18; i++) {
+        socket.deliver(fragments[i]);
+        await wait(1000);
+        if (i === 4) {
+          check(!failure && ready >= 1 && video.videoWidth === 320 && video.videoHeight === 180 &&
+            video.currentTime > 1 && video.getVideoPlaybackQuality().totalVideoFrames > 0, "initial real MSE playback");
+          visibility.visibilityState = "hidden";
+          visibility.dispatchEvent(new Event("visibilitychange"));
+        }
+        if (i === 9) {
+          check(!failure, "hidden media bounded");
+          visibility.visibilityState = "visible";
+          visibility.dispatchEvent(new Event("visibilitychange"));
+          resumedFrames = video.getVideoPlaybackQuality().totalVideoFrames;
+        }
+        if (i === 15) {
+          check(!failure && ready >= 2 && video.currentTime > 11 &&
+            video.getVideoPlaybackQuality().totalVideoFrames > resumedFrames, "fresh MSE playback after hidden interval");
+        }
+        check(!failure, "continuous playback");
+      }
+      socket.deliver(new Uint8Array([1, 2, 3]).buffer);
+      await wait(50);
+      check(failure === "wire-error" && socket.closed, "malformed wire closes player");
+      return { pass: true, ready, failure };
+    } finally { player.dispose(); }
+  };
+
+  // A real module loaded from the document has a well-defined module base.
+  // CDP only reads the result, never evaluates an import in an anonymous script.
+  await writeFile(join(folder, "proof.mjs"),
+    'import { createWssPlayer } from "./livestreamWssPlayer.mjs";\n' +
+    'window.__livestreamProof = (' + proof.toString() + ')().then(' +
+    'value => ({ value }), error => ({ error: String(error?.stack || error) }));\n');
+  await writeFile(join(folder, "index.html"),
+    '<!doctype html><meta charset="utf-8"><video id="video" width="320" height="180" muted playsinline></video>' +
+    '<script type="module" src="/proof.mjs"></script>');
   server = createServer(async (req, res) => {
     const name = req.url === "/" ? "index.html" : req.url?.slice(1);
-    if (!["index.html", "init.bin", ...moduleNames].includes(name) && !/^fragment-(?:[1-9]|1[0-8])\.bin$/.test(name || "")) {
+    if (!["index.html", "proof.mjs", "init.bin", ...moduleNames].includes(name) && !/^fragment-(?:[1-9]|1[0-8])\.bin$/.test(name || "")) {
       res.writeHead(404).end(); return;
     }
     try {
@@ -102,69 +177,6 @@ try {
     cdp.addEventListener("open", ok, { once: true });
     cdp.addEventListener("error", bad, { once: true });
   });
-  // Run the actual repository player against real Chrome MediaSource. Only
-  // the socket delivery and visibility events are deterministic test inputs.
-  const proof = async () => {
-    const { createWssPlayer } = await import("/livestreamWssPlayer.mjs");
-    const video = document.querySelector("#video");
-    const wait = ms => new Promise(ok => setTimeout(ok, ms));
-    const get = async path => {
-      const r = await fetch(path); if (!r.ok) throw Error("fixture fetch");
-      return r.arrayBuffer();
-    };
-    const init = await get("/init.bin");
-    const fragments = await Promise.all(Array.from({ length: 18 }, (_, i) => get("/fragment-" + (i + 1) + ".bin")));
-    const visibility = new EventTarget();
-    visibility.visibilityState = "visible";
-    let socket, ready = 0, failure = null;
-    class InjectedSocket {
-      constructor(_url, protocols) {
-        socket = this;
-        this.protocol = protocols[0];
-        queueMicrotask(() => this.onopen?.());
-      }
-      close() { this.closed = true; }
-      deliver(data) { this.onmessage?.({ data }); }
-    }
-    const player = createWssPlayer(video, {
-      url: "wss://example.invalid/unused",
-      getTicket: async () => ({ subprotocol: "clientflow-livestream-v1", ticket: "a".repeat(43) }),
-      SocketClass: InjectedSocket,
-      documentRef: visibility,
-      onPlayable: () => { ready++; },
-      onFailure: reason => { failure = reason; },
-    });
-    const check = (condition, label) => { if (!condition) throw Error(label + " failure=" + failure + " ready=" + ready + " time=" + video.currentTime); };
-    try {
-      for (let i = 0; !socket && i < 50; i++) await wait(20);
-      check(socket, "socket created");
-      socket.deliver(init);
-      for (let i = 0; i < 18; i++) {
-        socket.deliver(fragments[i]);
-        await wait(1000);
-        if (i === 4) {
-          check(!failure && ready >= 1 && video.videoWidth === 320 && video.videoHeight === 180 &&
-            video.currentTime > 1 && video.getVideoPlaybackQuality().totalVideoFrames > 0, "initial real MSE playback");
-          visibility.visibilityState = "hidden";
-          visibility.dispatchEvent(new Event("visibilitychange"));
-        }
-        if (i === 9) {
-          check(!failure, "hidden media bounded");
-          visibility.visibilityState = "visible";
-          visibility.dispatchEvent(new Event("visibilitychange"));
-        }
-        if (i === 15) {
-          check(!failure && ready >= 2 && video.currentTime > 11 &&
-            video.getVideoPlaybackQuality().totalVideoFrames > 0, "fresh MSE playback after hidden interval");
-        }
-        check(!failure, "continuous playback");
-      }
-      socket.deliver(new Uint8Array([1, 2, 3]).buffer);
-      await wait(50);
-      check(failure === "wire-error" && socket.closed, "malformed wire closes player");
-      return { pass: true, ready, failure };
-    } finally { player.dispose(); }
-  };
   const result = await new Promise((ok, bad) => {
     const timer = setTimeout(() => bad(Error("Chromium MSE proof timed out")), 40000);
     cdp.addEventListener("message", event => {
@@ -177,11 +189,13 @@ try {
       ok(m.result?.result?.value);
     });
     cdp.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: {
-      expression: "(" + proof.toString() + ")()", awaitPromise: true, returnByValue: true,
+      expression: '(async () => { for (let i = 0; i < 100; i++) { if (window.__livestreamProof) return await window.__livestreamProof; await new Promise(resolve => setTimeout(resolve, 100)); } throw Error("page proof module did not load"); })()',
+      awaitPromise: true, returnByValue: true,
     } }));
   });
-  assert.equal(result?.pass, true);
-  console.log("CHROMIUM_REAL_MSE=PASS", JSON.stringify(result));
+  assert.ok(!result?.error, result?.error);
+  assert.equal(result?.value?.pass, true);
+  console.log("CHROMIUM_REAL_MSE=PASS", JSON.stringify(result.value));
 } finally {
   cdp?.close();
   if (chrome && chrome.exitCode === null) {

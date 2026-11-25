@@ -16,3 +16,6 @@ Baseline: main 9231d499fde054034610a8fb1e5bad29beeb5d9a, PR #422 merged with CI 
 - Review transport-level Uvicorn queue/message constraints without affecting RDP/terminal, package/config install defaults, runtime fault isolation and publisher token refresh. No changes to shared WebSocket server settings in this candidate.
 - Before enabling test client: signed package/overlay verification, backend and frontend same approved commit, exact client identity, explicit opt-in, rollback procedure.
 - Physical acceptance: simultaneous RDP, 5/20s tab switches, 5-minute uninterrupted visible playback, actual transport label, WSS forced failure and HLS fallback/recovery, resource and latency measurement, explicit stop, mobile rule. Release 1249 is not approved by CI alone.
+
+## CI fixture loading (follow-up)
+- Real Chrome and libx264 are installed/verified in the dedicated test job. The fixture is generated locally with 18 independent one-second fragments. The browser loads the production player through a normal document ES module, not a relative dynamic import in an anonymous DevTools evaluation. CDP reads the asynchronous proof result. Require fresh decoded frames after hidden-tab resumption, not just an advancing video clock. This job still injects socket data; it is not physical WSS acceptance.
