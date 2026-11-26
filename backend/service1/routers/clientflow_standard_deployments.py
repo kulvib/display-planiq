@@ -1,7 +1,8 @@
 """Explicit superadmin forward-update orders for the physically accepted 1.4 baseline.
 
-This lane never arms a pilot, promotes a catalog, opens a control flag, runs
-historical plans, performs fresh installation or authorizes a downgrade.
+Standard orders never promote a catalog, open a control flag, run historical
+plans, perform fresh installation or authorize a downgrade. The separate
+pre-cutover pilot endpoints can authorize exactly one approved Viborg1 update.
 """
 from __future__ import annotations
 
@@ -19,7 +20,10 @@ from ..clientflow_deployments import (
     unacknowledged_recovery_failure,
 )
 from ..clientflow_release_admin_models import ClientFlowPhysicalAcceptance, ClientFlowReleaseControl
-from ..clientflow_release_security_policy import ClientFlowReleaseSecurityDenied
+from ..clientflow_release_security_policy import ClientFlowReleaseSecurityDenied, require_centrally_eligible_release
+from ..clientflow_pilot_1250 import (
+    Pilot1250Denied, approval_lock_1250, require_pilot_holds, pilot_release, match_approved_artifact,
+)
 from ..clientflow_releases import (
     ClientFlowArtifactUnavailable, ClientFlowCatalogError, deployment_release_snapshot,
     load_catalog, resolve_release, validate_release_compatibility,
@@ -33,7 +37,7 @@ from ..db import get_session
 from ..models import Client
 from ..system_control import lock_system_client
 from .clientflow_deployments import _canonical_runtime_version, _require_deployable_client
-from .clientflow_release_administration import _reauth, _require_actor, _no_store
+from .clientflow_release_administration import _reauth, _require_actor, _no_store, _bound_control
 
 router = APIRouter(prefix="/clientflow/standard-deployments", tags=["clientflow-standard-deployments"])
 
@@ -227,3 +231,130 @@ def authorize_standard_deployments(
         detail = str(exc) if isinstance(exc, (StandardReleaseDenied, ClientFlowCatalogError,
             ClientFlowReleaseSecurityDenied, ClientFlowDeploymentConflict)) else "Bestillingen kunne ikke gennemføres sikkert"
         raise HTTPException(status_code=409, detail=detail) from exc
+
+
+class BaselinePilotOrder(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_id: int = Field(strict=True, gt=0)
+    target_release_id: str = Field(min_length=1, max_length=160)
+    expected_source_version: str
+    expected_bundle_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_revision: int = Field(strict=True, ge=1)
+    confirmed_prepared: bool = Field(strict=True)
+    password: str = Field(min_length=1, max_length=256)
+
+
+def _pilot_client(session: Session):
+    client = session.get(Client, 3)
+    if client is None or client.name != "Viborg1":
+        raise Pilot1250Denied("Pilotklientens identitet er ændret")
+    session.refresh(client)
+    _require_deployable_client(session, client)
+    version = _canonical_runtime_version(session, client)
+    if version != "1.3.47" or client.ubuntu_version != "26.04":
+        raise Pilot1250Denied("Viborg1 skal rapportere frisk 1.3.47 og Ubuntu 26.04")
+    if session.exec(select(ClientFlowDeployment.id).where(
+        ClientFlowDeployment.target_release_id == BASELINE_ID
+    ).limit(1)).first() is not None:
+        raise Pilot1250Denied("1250-piloten er allerede bestilt; manuel revurdering kræves")
+    if (active_deployment(session, client_id=3) is not None
+            or unacknowledged_recovery_failure(session, client_id=3) is not None):
+        raise Pilot1250Denied("Aktiv deployment eller uafklaret recovery")
+    credentials = session.exec(select(ClientFlowUpdateCredential.id).where(
+        ClientFlowUpdateCredential.client_id == 3,
+        ClientFlowUpdateCredential.revoked_at.is_(None),
+    ).limit(2)).all()
+    if len(credentials) != 1:
+        raise Pilot1250Denied("Entydig Update-identitet mangler")
+    return client
+
+
+def _pilot_snapshot(approval):
+    require_centrally_eligible_release(release_id=BASELINE_ID, release_sequence=BASELINE_SEQUENCE)
+    artifact = deployment_release_snapshot(pilot_release())
+    match_approved_artifact(approval, artifact)
+    return artifact
+
+
+@router.get("/pilot/availability")
+def baseline_pilot_availability(
+    request: Request, response: Response, session: Session = Depends(get_session),
+    user=Depends(get_current_superadmin_user),
+):
+    _require_actor(request, user)
+    _no_store(response)
+    try:
+        approval = approval_lock_1250()
+        control = _bound_control(session)
+        require_pilot_holds(load_catalog(), control.model_dump(), control.revision)
+        _pilot_client(session)
+        artifact = _pilot_snapshot(approval)
+        return {"available": True, "client_id": 3, "target_release_id": BASELINE_ID,
+                "source_version": "1.3.47", "bundle_sha256": artifact["bundle_sha256"],
+                "revision": control.revision, "fleet_authorized": False,
+                "fresh_install_authorized": False, "rollback_authorized": False}
+    except (Pilot1250Denied, ClientFlowCatalogError, ClientFlowReleaseSecurityDenied, HTTPException):
+        return {"available": False, "reason": "1250-pilot afventer godkendt pakke, lukket releasepolitik eller frisk klientstatus"}
+
+
+@router.post("/pilot/authorize", status_code=201)
+def authorize_baseline_pilot(
+    body: BaselinePilotOrder, request: Request, response: Response,
+    session: Session = Depends(get_session), user=Depends(get_current_superadmin_user),
+):
+    _require_actor(request, user)
+    _no_store(response)
+    try:
+        if (body.client_id != 3 or body.target_release_id != BASELINE_ID
+                or body.expected_source_version != "1.3.47" or body.confirmed_prepared is not True):
+            raise Pilot1250Denied("Kun udtrykkeligt forberedt Viborg1/1248 → 1250 er tilladt")
+        approval = approval_lock_1250()
+        if body.expected_bundle_sha256 != approval["approved_bundle_sha256"]:
+            raise Pilot1250Denied("Godkendt bundle er ændret")
+        initial = _bound_control(session)
+        require_pilot_holds(load_catalog(), initial.model_dump(), body.expected_revision)
+        _reauth(request, session, user, body.password)
+        artifact = _pilot_snapshot(approval)
+        lock_system_client(session, 3)
+        control = _bound_control(session, lock=True)
+        session.refresh(control)
+        require_pilot_holds(load_catalog(), control.model_dump(), body.expected_revision)
+        client = _pilot_client(session)
+        validate_release_compatibility(pilot_release(), current_version="1.3.47", ubuntu_version=client.ubuntu_version)
+        # Local preparation is an explicit operator attestation, not remote
+        # proof. The actual host activation retains all transaction guards.
+        reason = "Fysisk engangspilot Viborg1: ClientFlow 1.3.47 → 1.4.0"
+        deployment = create_authorized_deployment(
+            session, client_id=3, requested_by_user_id=int(user.id),
+            target_release_id=BASELINE_ID, target_version=BASELINE_VERSION,
+            target_release_sequence=BASELINE_SEQUENCE, bundle_sha256=artifact["bundle_sha256"],
+            bundle_size=artifact["bundle_size"], release_approval_reference=artifact["release_approval_reference"],
+            release_candidate_sha256=artifact["release_candidate_sha256"], source_commit=artifact["source_commit"],
+            allow_downgrade=False, reason=reason,
+        )
+        add_audit_log(
+            session, action="clientflow_1250_pilot_authorized", request=request,
+            actor=user, target_organization_id=client.organization_id, entity_type="clientflow_deployment",
+            entity_id=3, entity_label="Viborg1 → ClientFlow 1.4.0/1250",
+            severity="critical", is_critical=True, details={
+                "deployment_id": deployment.id, "release_id": BASELINE_ID,
+                "bundle_sha256": artifact["bundle_sha256"], "source_commit": artifact["source_commit"],
+                "approval_reference": artifact["release_approval_reference"], "policy_revision": control.revision,
+                "local_preparation_attested_by_operator": True, "physical_acceptance": False,
+                "fleet_authorized": False, "fresh_install_authorized": False, "rollback_authorized": False,
+            },
+        )
+        session.commit()
+        return {"deployment_id": deployment.id, "client_id": 3, "target_release_id": BASELINE_ID,
+                "state": "authorized", "fleet_authorized": False, "fresh_install_authorized": False,
+                "rollback_authorized": False}
+    except HTTPException:
+        session.rollback()
+        raise
+    except ClientFlowArtifactUnavailable as exc:
+        session.rollback()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (Pilot1250Denied, ClientFlowCatalogError, ClientFlowReleaseSecurityDenied,
+            ClientFlowDeploymentConflict, IntegrityError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="1250-pilotbestillingen kunne ikke verificeres") from exc

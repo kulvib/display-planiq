@@ -827,3 +827,62 @@ def test_standard_multi_client_order_is_atomic_and_auditable(environment, monkey
     assert len(logs) == 2
     assert http.post(path, json=_standard_payload(ids=(7,8))).status_code == 409
     assert len(session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all()) == 2
+
+
+def test_1250_pilot_is_closed_without_post_build_approval(environment, monkeypatch):
+    from service1 import clientflow_pilot_1250 as policy
+    http, session = environment
+    monkeypatch.setattr(policy, "EXPECTED_APPROVAL_SHA256", None)
+    monkeypatch.setattr(standard_route, "deployment_release_snapshot",
+                        lambda *a, **k: pytest.fail("unapproved pilot read artifact"))
+    path = "/api/clientflow/standard-deployments/pilot"
+    assert http.get(path + "/availability").json()["available"] is False
+    body = {"client_id":3, "target_release_id":BASELINE_ID, "expected_source_version":"1.3.47",
+            "expected_bundle_sha256":"a"*64, "expected_revision":1,
+            "confirmed_prepared":True, "password":"correct-password"}
+    assert http.post(path + "/authorize", json=body).status_code == 409
+    assert session.exec(select(ClientFlowDeployment)).all() == []
+
+
+def test_1250_pilot_exact_one_shot_does_not_open_cutover(environment, monkeypatch):
+    from datetime import timezone
+    from uuid import uuid4
+    from service1 import clientflow_pilot_1250 as policy
+    http, session = environment
+    monkeypatch.setenv("CLIENTFLOW_FRESH_INSTALL_SUSPENDED", "1")
+    for flag in policy.CONFLICTING_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
+    approval = {"approved_bundle_sha256":"a"*64, "approved_bundle_size":100,
+                "approval_reference":"fixture-only", "candidate_sha256":"b"*64, "source_commit":"c"*40}
+    artifact = {"target_release_id":BASELINE_ID, "bundle_sha256":"a"*64, "bundle_size":100,
+                "release_approval_reference":"fixture-only", "release_candidate_sha256":"b"*64, "source_commit":"c"*40}
+    # Synthetic proof only: no real package or source approval is created.
+    monkeypatch.setattr(standard_route, "approval_lock_1250", lambda: approval)
+    monkeypatch.setattr(standard_route, "deployment_release_snapshot", lambda release: artifact)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    row = session.get(ClientDomainStatus, "test-status-row-3")
+    row.agent_version = "1.3.47"
+    row.reported_at = now
+    session.add(row)
+    session.add(ClientFlowUpdateCredential(id=str(uuid4()), client_id=3,
+                key_id="test-1250-key", public_key_pem="fixture-only", created_at=now))
+    session.commit()
+    path = "/api/clientflow/standard-deployments/pilot"
+    body = {"client_id":3,"target_release_id":BASELINE_ID,"expected_source_version":"1.3.47",
+            "expected_bundle_sha256":"a"*64,"expected_revision":1,
+            "confirmed_prepared":True,"password":"correct-password"}
+    assert http.get(path + "/availability").json()["available"] is True
+    for changes in ({"client_id":4},{"confirmed_prepared":False},{"expected_revision":2},
+                    {"expected_bundle_sha256":"d"*64},{"expected_source_version":"1.3.46"}):
+        assert http.post(path + "/authorize", json={**body, **changes}).status_code == 409
+    assert session.exec(select(ClientFlowDeployment)).all() == []
+    result = http.post(path + "/authorize", json=body)
+    assert result.status_code == 201, result.text
+    assert result.json()["client_id"] == 3 and result.json()["fleet_authorized"] is False
+    assert http.post(path + "/authorize", json=body).status_code == 409
+    assert http.get(path + "/availability").json()["available"] is False
+    control = session.get(ClientFlowReleaseControl, 1)
+    assert control.revision == 1 and control.stable_release_id == RELEASE_ID
+    assert not control.fleet_open and not control.fresh_install_open and not control.cutover_enabled
+    assert len(session.exec(select(ClientFlowDeployment)).all()) == 1
+    assert session.exec(select(AuditLog).where(AuditLog.action == "clientflow_1250_pilot_authorized")).first() is not None

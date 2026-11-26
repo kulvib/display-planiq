@@ -424,3 +424,24 @@ test fixtures are historical records, not current installation instructions.
 Consolidate operational instructions here and retain version-specific evidence
 until source/test references and release provenance have been checked. Do not
 remove files merely because their names contain an older version.
+
+### 1250 pre-cutover physical pilot
+
+The 1250 pilot is separate from the ordinary post-acceptance standard orders.
+The source-stage `EXPECTED_APPROVAL_SHA256 = None` in
+`backend/service1/clientflow_pilot_1250.py` deliberately blocks both pilot
+availability and authorization. After reproducible main build, approval and
+immutable archive, a reviewed follow-up commit must pin the exact actual
+approval JSON and the Render store must contain those exact signed bytes.
+No guessed hash or synthetic fixture may be used for this purpose.
+
+The pilot may then be reviewed through
+`GET /api/clientflow/standard-deployments/pilot/availability`, and explicitly
+ordered through `POST /api/clientflow/standard-deployments/pilot/authorize`.
+It is limited to Viborg1 (client ID 3), fresh canonical 1.3.47 and Ubuntu
+26.04, with all legacy, fleet and fresh-install holds closed. The operator
+must first physically prepare Viborg1 using the verified
+`scripts/clientflow_63d83b_prepare_viborg1.py` procedure and attest that
+preparation; this is not a substitute for the local activation guards.
+The order is one-shot and uses the existing signed artifact and updater
+transaction. It does not promote the catalog or record physical acceptance.
