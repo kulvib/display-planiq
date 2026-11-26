@@ -61,3 +61,15 @@ test('Brugeradministration remains reachable for superadmin and API errors remai
   assert.doesNotMatch(access, /localStorage\.setItem\([^)]*role/);
   assert.doesNotMatch(boundary, /fetch\(|api\/users|Authorization/);
 });
+
+
+test("calendar never enables bulk or automatic writes after an unverified season read", () => {
+  assert.match(calendar, /calendarLoad\.scope === calendarScope && calendarLoad\.state === "ready"/);
+  assert.match(calendar, /const mapped = validateCalendarDays\(data\)/);
+  assert.match(calendar, /const isDisabled = !activeClient \|\| !calendarVerified/);
+  assert.match(calendar, /if \(!calendarVerified \|\| savingCalendar \|\| editDialogOpen/);
+  assert.match(calendar, /currentCalendarScope\.current !== calendarScope/);
+  assert.match(calendar, /Ændringer er låst, indtil sæsondata er verificeret/);
+  assert.doesNotMatch(calendar, /days:\s*\{\s*\}/);
+  assert.doesNotMatch(calendar, /setFadeIn/);
+});

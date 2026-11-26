@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
+  Alert,
   Box,
   Card,
   CardContent,
@@ -132,6 +133,13 @@ function mapRawDays(rawDays) {
     mapped[stripTimeFromDateKey(key)] = rawDays[key];
   });
   return mapped;
+}
+
+function validateCalendarDays(data) {
+  if (!data?.markedDays || typeof data.markedDays !== "object" || Array.isArray(data.markedDays)) {
+    throw new Error("Ugyldigt kalendersvar");
+  }
+  return mapRawDays(data.markedDays);
 }
 
 function getOrganizationId(entity) {
@@ -505,16 +513,7 @@ export default function CalendarPage() {
     user,
   ]);
 
-  const [fadeIn, setFadeIn] = useState(true);
-  useEffect(() => {
-    let timer;
-    if (selectedSeason !== currentSeason) {
-      timer = setInterval(() => setFadeIn((f) => !f), 1200);
-    } else {
-      setFadeIn(true);
-    }
-    return () => timer && clearInterval(timer);
-  }, [selectedSeason, currentSeason]);
+
 
   useEffect(() => {
     getOrganizations(token)
@@ -612,9 +611,18 @@ export default function CalendarPage() {
   }, [user, filteredClients, isRestrictedOrgRole, selectedClients]);
 
   const [markedDays, dispatchMarkedDays] = useReducer(markedDaysReducer, {});
+  const [calendarLoad, setCalendarLoad] = useState({ scope: "", state: "idle" });
+  const [calendarRetry, setCalendarRetry] = useState(0);
+  const calendarScope = JSON.stringify([selectedSeason, activeClient, calendarRetry]);
+  const calendarVerified = Boolean(activeClient && selectedSeason &&
+    calendarLoad.scope === calendarScope && calendarLoad.state === "ready");
+  const calendarFailed = calendarLoad.scope === calendarScope && calendarLoad.state === "error";
+  const currentCalendarScope = useRef(calendarScope);
+  currentCalendarScope.current = calendarScope;
 
   useEffect(() => {
-    if (!activeClient) return;
+    if (!activeClient || !selectedSeason) return;
+    setCalendarLoad({ scope: calendarScope, state: "loading" });
     dispatchMarkedDays({
       type: "set",
       clientId: activeClient,
@@ -624,7 +632,7 @@ export default function CalendarPage() {
     getMarkedDays(selectedSeason, activeClient)
       .then((data) => {
         if (!isCurrent) return;
-        const mapped = mapRawDays(data.markedDays || {});
+        const mapped = validateCalendarDays(data);
         dispatchMarkedDays({
           type: "set",
           clientId: activeClient,
@@ -637,14 +645,11 @@ export default function CalendarPage() {
           ...lastDialogSavedMarkedDays.current,
           [activeClient]: mapped,
         };
+        setCalendarLoad({ scope: calendarScope, state: "ready" });
       })
       .catch(() => {
         if (isCurrent) {
-          dispatchMarkedDays({ type: "set", clientId: activeClient, days: {} });
-          lastDialogSavedMarkedDays.current = {
-            ...lastDialogSavedMarkedDays.current,
-            [activeClient]: {},
-          };
+          setCalendarLoad({ scope: calendarScope, state: "error" });
           setSnackbar({
             open: true,
             message: "Kunne ikke hente kalender.",
@@ -655,7 +660,7 @@ export default function CalendarPage() {
     return () => {
       isCurrent = false;
     };
-  }, [selectedSeason, activeClient, token]);
+  }, [selectedSeason, activeClient, token, calendarScope]);
 
   const getDefaultTimes = useCallback((dateStr, clientId) => {
     const client = clients.find((c) => c.id === clientId);
@@ -699,7 +704,7 @@ export default function CalendarPage() {
 
   const handleDayClick = useCallback(
     (clientIds, dateString, mode) => {
-      if (isReadOnly) return;
+      if (isReadOnly || !calendarVerified || savingCalendar) return;
       clientIds.forEach((cid) => {
         dispatchMarkedDays({
           type: "updateDay",
@@ -709,12 +714,12 @@ export default function CalendarPage() {
         });
       });
     },
-    [isReadOnly],
+    [isReadOnly, calendarVerified, savingCalendar],
   );
 
   const handleDateShiftLeftClick = useCallback(
     (clientId, date) => {
-      if (isReadOnly) return;
+      if (isReadOnly || !calendarVerified || savingCalendar) return;
       if (autoSaveTimer.current) {
         clearTimeout(autoSaveTimer.current);
         autoSaveTimer.current = null;
@@ -722,6 +727,11 @@ export default function CalendarPage() {
       setLoadingDialogDate(date);
       setLoadingDialogClient(clientId);
       setTimeout(() => {
+        if (currentCalendarScope.current !== calendarScope) {
+          setLoadingDialogDate(null);
+          setLoadingDialogClient(null);
+          return;
+        }
         setEditDialogClient(clientId);
         setEditDialogDate(date);
         setEditDialogOpen(true);
@@ -729,18 +739,19 @@ export default function CalendarPage() {
         setLoadingDialogClient(null);
       }, 1100);
     },
-    [isReadOnly],
+    [isReadOnly, calendarVerified, savingCalendar, calendarScope],
   );
 
   const handleSaveSingleClient = useCallback(async (clientId) => {
-    if (isReadOnly || !clientId) return;
+    if (isReadOnly || !calendarVerified || savingCalendar || !clientId || currentCalendarScope.current !== calendarScope) return;
     const allDates = [];
     getSeasonYearMonths(selectedSeason).forEach(({ month, year }) => {
       for (let d = 1; d <= getDaysInMonth(month, year); d += 1) {
         allDates.push(formatDate(year, month, d));
       }
     });
-    const currentClientDays = markedDays[clientId] || {};
+    const currentClientDays = markedDays[clientId];
+    if (!currentClientDays || typeof currentClientDays !== "object") return;
     const payloadMarkedDays = { [String(clientId)]: {} };
     allDates.forEach((dateStr) => {
       const md = currentClientDays[dateStr];
@@ -772,12 +783,12 @@ export default function CalendarPage() {
         severity: "error",
       });
     }
-  }, [getDefaultTimes, isReadOnly, markedDays, selectedSeason]);
+  }, [getDefaultTimes, isReadOnly, markedDays, selectedSeason, calendarVerified, savingCalendar, calendarScope]);
 
   const activeClientMarkedDays = activeClient ? markedDays[activeClient] : undefined;
 
   useEffect(() => {
-    if (editDialogOpen || !activeClient || activeClientMarkedDays === undefined) {
+    if (!calendarVerified || savingCalendar || editDialogOpen || !activeClient || activeClientMarkedDays === undefined) {
       return undefined;
     }
 
@@ -806,7 +817,7 @@ export default function CalendarPage() {
       window.clearTimeout(timerId);
       if (autoSaveTimer.current === timerId) autoSaveTimer.current = null;
     };
-  }, [activeClient, activeClientMarkedDays, editDialogOpen, handleSaveSingleClient]);
+  }, [activeClient, activeClientMarkedDays, editDialogOpen, handleSaveSingleClient, calendarVerified, savingCalendar]);
 
   const handleClientSelectorChange = (newSelected) => {
     if (isRestrictedOrgRole) {
@@ -930,6 +941,7 @@ export default function CalendarPage() {
         });
         return;
       }
+      if (!calendarVerified || savingCalendar || currentCalendarScope.current !== calendarScope) return;
       setSavingCalendar(true);
       const allDates = [];
       seasonYearMonths.forEach(({ month, year }) => {
@@ -964,17 +976,18 @@ export default function CalendarPage() {
         if (activeClient) {
           try {
             const data = await getMarkedDays(selectedSeason, activeClient);
-            dispatchMarkedDays({
-              type: "set",
-              clientId: activeClient,
-              days: mapRawDays(data.markedDays || {}),
-            });
+            const mapped = validateCalendarDays(data);
+            if (currentCalendarScope.current === calendarScope) {
+              dispatchMarkedDays({ type: "set", clientId: activeClient, days: mapped });
+              lastDialogSavedMarkedDays.current = {
+                ...lastDialogSavedMarkedDays.current, [activeClient]: mapped,
+              };
+            }
           } catch {
-            dispatchMarkedDays({
-              type: "set",
-              clientId: activeClient,
-              days: {},
-            });
+            if (currentCalendarScope.current === calendarScope) {
+              setCalendarLoad({ scope: calendarScope, state: "error" });
+              setSnackbar({ open: true, message: "Kalenderen er gemt, men kunne ikke genindlæses.", severity: "warning" });
+            }
           }
         }
       } catch (e) {
@@ -995,6 +1008,9 @@ export default function CalendarPage() {
       seasonYearMonths,
       selectedSeason,
       getDefaultTimes,
+      calendarVerified,
+      savingCalendar,
+      calendarScope,
     ],
   );
 
@@ -1007,12 +1023,11 @@ export default function CalendarPage() {
 
   useEffect(() => clearSnackbarTimer, [clearSnackbarTimer]);
 
-  const clientMarkedDays = activeClientMarkedDays;
-  const loadingMarkedDays = activeClient && clientMarkedDays === undefined;
+  const loadingMarkedDays = activeClient && !calendarVerified && !calendarFailed;
   const handleCloseSnackbar = () =>
     setSnackbar({ open: false, message: "", severity: "success" });
-  const isDisabled = !activeClient;
-  const isEditDisabled = isDisabled || isReadOnly;
+  const isDisabled = !activeClient || !calendarVerified;
+  const isEditDisabled = isDisabled || isReadOnly || savingCalendar;
   const sortedOrganizations = useMemo(
     () => [...organizations].sort((a, b) => a.name.localeCompare(b.name)),
     [organizations],
@@ -1039,8 +1054,7 @@ export default function CalendarPage() {
               color="warning"
               sx={{
                 mr: 0.5,
-                transition: "opacity 0.7s",
-                opacity: fadeIn ? 1 : 0.2,
+
               }}
             />
           </Tooltip>
@@ -1139,8 +1153,7 @@ export default function CalendarPage() {
                 Kalender
               </Typography>
               <Typography sx={{ color: "rgba(203,213,225,0.68)", mt: 0.35 }}>
-                Planlæg driftstid for skærme på tværs af organisationer og
-                sæsoner.
+                Planlæg skærmenes driftstid.
               </Typography>
             </Box>
           </Stack>
@@ -1194,10 +1207,7 @@ export default function CalendarPage() {
                   <Tooltip title="Ikke indeværende sæson" arrow>
                     <WarningAmberIcon
                       color="warning"
-                      sx={{
-                        transition: "opacity 0.7s",
-                        opacity: fadeIn ? 1 : 0.2,
-                      }}
+
                     />
                   </Tooltip>
                 )}
@@ -1364,7 +1374,7 @@ export default function CalendarPage() {
                     color: "rgba(203,213,225,0.62)",
                   }}
                 >
-                  ændringerne slår også igennem på klienterne:{" "}
+                  Ved fælles gemning kopieres kalenderen til:{" "}
                   {otherClientNames}
                 </Typography>
               )}
@@ -1374,7 +1384,7 @@ export default function CalendarPage() {
               color="primary"
               onClick={() => handleSave(true)}
               disabled={
-                savingCalendar || selectedClients.length < 1 || isReadOnly
+                isEditDisabled || selectedClients.length < 1
               }
               startIcon={
                 savingCalendar ? (
@@ -1389,7 +1399,7 @@ export default function CalendarPage() {
             >
               {savingCalendar
                 ? "Gemmer..."
-                : "Gem kalender for valgte klienter"}
+                : selectedClients.length === 1 ? "Gem kalender" : `Gem for ${selectedClients.length} klienter`}
             </Button>
           </Box>
         )}
@@ -1488,7 +1498,7 @@ export default function CalendarPage() {
           </Typography>
         )}
         {activeClient &&
-          !loadingMarkedDays &&
+          calendarVerified &&
           seasonYearMonths.map(({ name, month, year }) => (
             <MemoizedMonthCalendar
               key={name + year}
@@ -1505,9 +1515,14 @@ export default function CalendarPage() {
               todayStr={todayInfo.todayStr}
               currentMonth={todayInfo.currentMonth}
               currentYear={todayInfo.currentYear}
-              readOnly={isReadOnly}
+              readOnly={isEditDisabled}
             />
           ))}
+        {activeClient && calendarFailed && (
+          <Alert severity="error" sx={{ gridColumn: "1/-1" }} action={<Button color="inherit" size="small" onClick={() => setCalendarRetry((n) => n + 1)}>Prøv igen</Button>}>
+            Kalenderen kunne ikke hentes. Ændringer er låst, indtil sæsondata er verificeret.
+          </Alert>
+        )}
         {activeClient && loadingMarkedDays && (
           <Box sx={{ textAlign: "center", mt: 6, gridColumn: "1/-1" }}>
             <CircularProgress />

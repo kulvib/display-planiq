@@ -1,8 +1,8 @@
 import * as React from "react";
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
-import ScheduleIcon from "@mui/icons-material/Schedule";
+import ErrorIcon from "@mui/icons-material/Error";
+import PendingActionsIcon from "@mui/icons-material/PendingActions";
 import { CANCELLABLE_STATES, DEPLOYMENT_STEPS, deploymentPresentation } from "./clientflowDeploymentHistory.mjs";
 
 function dateLabel(value) {
@@ -38,8 +38,8 @@ export default function ClientFlowDeploymentHistory({ rows = [], showClient = tr
           <Box key={item.id} sx={{ border: 1, borderColor: "divider", borderRadius: 3, p: { xs: 1.5, sm: 2.5 }, bgcolor: "action.hover" }}>
             <Stack direction="row" spacing={1.25} alignItems="flex-start" useFlexGap flexWrap="wrap">
               {item.state === "succeeded" ? <CheckCircleIcon color="success" sx={{ fontSize: 32 }} /> :
-                state.color === "error" ? <ErrorOutlineIcon color="error" sx={{ fontSize: 32 }} /> :
-                <ScheduleIcon color={state.color === "warning" ? "warning" : "action"} sx={{ fontSize: 32 }} />}
+                state.color === "error" ? <ErrorIcon color="error" sx={{ fontSize: 32 }} /> :
+                <PendingActionsIcon color={state.color === "warning" ? "warning" : "action"} sx={{ fontSize: 32 }} />}
               <Box sx={{ flex: "1 1 160px", minWidth: 0 }}>
                 <Typography variant="h6" fontWeight={850}>ClientFlow {item.target_version}</Typography>
                 <Typography variant="body2" color="text.secondary">

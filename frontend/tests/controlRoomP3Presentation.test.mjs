@@ -87,3 +87,13 @@ test("calendar rolls its seven-day view forward at midnight without another netw
   assert.match(diagnostics, /const base = new Date\(calendarDayStart\)/);
   assert.match(diagnostics, /\[markedDays, calendarDayStart\]/);
 });
+
+
+test("Control Room overview distinguishes a failed inventory read from verified empty data", () => {
+  assert.match(listing, /setClientListStatus\("error"\)/);
+  assert.match(listing, /setClientListStatus\("ready"\)/);
+  assert.match(listing, /Klientlisten kunne ikke opdateres/);
+  assert.match(listing, /clientListStatus !== "ready" \? "Afventer verificeret klientliste\."/);
+  assert.match(listing, /presence\?\.is_online === false/);
+  assert.match(listing, /aria-expanded=\{trashExpanded\}/);
+});
