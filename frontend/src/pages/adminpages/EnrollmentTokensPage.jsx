@@ -372,7 +372,7 @@ export default function EnrollmentTokensPage() {
           sx={{ alignItems: { xs: "stretch", md: "center" } }}
         >
           <Box sx={{ flex: 1 }}>
-            <Typography variant="h4" sx={{ fontWeight: 900 }}>Installationskoder</Typography>
+            <Typography variant="h5" sx={{ fontWeight: 900 }}>Installationskoder</Typography>
           </Box>
 
           <TextField
@@ -435,7 +435,7 @@ export default function EnrollmentTokensPage() {
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <DialogContentText>
-              Koden kan bruges én gang af en ny Ubuntu-klient. Oprettelsen kræver, at den canonical fresh-install release allerede er publiceret og verificeret i 51M artifact store.
+              Koden kan bruges én gang af en ny Ubuntu-klient. En godkendt installationsrelease skal være tilgængelig.
             </DialogContentText>
             <TextField
               label="Udløb i timer"
