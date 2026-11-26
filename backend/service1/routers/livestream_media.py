@@ -35,6 +35,48 @@ MANIFEST_STALE_SECONDS = int(os.getenv("HLS_STALE_SECONDS", "60"))
 
 _GENERATION_TAG = b"#PLANIQ-GENERATION:"
 _GENERATION_ID = re.compile(rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_GENERATION_MEDIA_PREFIX = r"g-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-"
+_GENERATION_MEDIA_RE = re.compile(_GENERATION_MEDIA_PREFIX + r"(?:segment-\d{9}\.(?:ts|m4s)|init\.mp4)")
+_SOURCE_MEDIA_RE = re.compile(r"(?:segment-\d{9}\.(?:ts|m4s)|init\.mp4)")
+_MAP_RE = re.compile(r'#EXT-X-MAP:URI="init\.mp4"(?:,BYTERANGE="[0-9]+(?:@[0-9]+)?")?')
+
+
+def generation_media_name(generation_id: str, filename: str) -> str:
+    """Generation identity comes exclusively from the authenticated upload."""
+    if not _GENERATION_ID.fullmatch(generation_id.encode("ascii")) or not _SOURCE_MEDIA_RE.fullmatch(filename):
+        raise ValueError("Invalid generation media identity")
+    return f"g-{generation_id}-{filename}"
+
+
+def is_generation_media_name(name: str) -> bool:
+    return bool(_GENERATION_MEDIA_RE.fullmatch(name))
+
+
+def is_public_hls_filename(name: str) -> bool:
+    # Legacy numeric media remains readable during the upgrade; marker files,
+    # temporary files, nested directories and arbitrary disk files do not.
+    return name in {"index.m3u8", "init.mp4"} or _is_hls_segment_name(name) or is_generation_media_name(name)
+
+
+def namespace_manifest_media(payload: bytes, generation_id: str) -> bytes:
+    """Rewrite only allowlisted media references, never arbitrary URI attributes."""
+    lines = []
+    for line in payload.decode("utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            if not re.fullmatch(r"segment-\d{9}\.(?:ts|m4s)", stripped):
+                raise ValueError("Invalid segment reference")
+            line = generation_media_name(generation_id, stripped)
+        elif stripped.startswith("#EXT-X-MAP:"):
+            if not _MAP_RE.fullmatch(stripped):
+                raise ValueError("Invalid initialization reference")
+            line = stripped.replace('URI="init.mp4"', f'URI="{generation_media_name(generation_id, "init.mp4")}"', 1)
+        elif stripped.startswith(("#EXT-X-KEY:", "#EXT-X-SESSION-KEY:")) or (
+            stripped.startswith("#") and re.search(r"(?:^|[:,])\s*[A-Z0-9-]*URI\s*=", stripped, re.IGNORECASE)
+        ):
+            raise ValueError("Unsupported URI-bearing HLS tag")
+        lines.append(line)
+    return bind_manifest_generation(("\n".join(lines) + "\n").encode("utf-8"), generation_id)
 
 
 def bind_manifest_generation(payload: bytes, generation_id: str) -> bytes:
@@ -70,7 +112,7 @@ def safe_client_dir(client_id: str) -> str:
 
 
 def _is_hls_segment_name(name: str) -> bool:
-    return bool(re.fullmatch(r"segment(?:_|-)\d+\.(?:ts|m4s|mp4)", name))
+    return bool(re.fullmatch(r"segment(?:_|-)\d+\.(?:ts|m4s|mp4)", name) or (_GENERATION_MEDIA_RE.fullmatch(name) and not name.endswith("-init.mp4")))
 
 
 def _hls_stop_marker_path(client_id: str) -> str:

@@ -42,7 +42,10 @@ from .livestream_v2_models import (
     LivestreamV2Viewer,
     utcnow,
 )
-from .routers.livestream_media import HLS_DIR, safe_client_dir, bind_manifest_generation
+from .routers.livestream_media import (
+    HLS_DIR, safe_client_dir, generation_media_name, is_generation_media_name,
+    namespace_manifest_media,
+)
 
 DOMAIN = "livestream"
 ACTIVE_GENERATION_STATES = {"starting", "running", "stopping"}
@@ -800,6 +803,7 @@ def ensure_current_generation(
 
 
 def generation_started(session: Session, *, client_id: int, generation_id: str) -> LivestreamV2Generation:
+    _lock_client(session, client_id)
     generation = ensure_current_generation(
         session,
         client_id=client_id,
@@ -1299,6 +1303,7 @@ def _clear_hls_media(client_id: int) -> None:
             name == "index.m3u8"
             or name == "init.mp4"
             or _SEGMENT_RE.fullmatch(name)
+            or is_generation_media_name(name)
             or re.fullmatch(r"segment_\d+\.(?:ts|mp4)", name)
         ):
             try:
@@ -1338,6 +1343,9 @@ def write_hls_file(
     sha256: str,
     sequence: int,
 ) -> Path:
+    # Serialize publication against start/stop/supersession. The row lock
+    # is released by the existing upload transaction commit.
+    _lock_client(session, client_id)
     generation = ensure_current_generation(
         session,
         client_id=client_id,
@@ -1352,11 +1360,17 @@ def write_hls_file(
     safe_name = safe_hls_filename(filename)
     if safe_name == "index.m3u8":
         validate_manifest(payload)
-        payload = bind_manifest_generation(payload, generation_id)
+        try:
+            payload = namespace_manifest_media(payload, generation_id)
+        except (ValueError, UnicodeError) as exc:
+            raise HTTPException(status_code=400, detail="Ugyldig HLS-mediereference") from exc
+        storage_name = safe_name
+    else:
+        storage_name = generation_media_name(generation_id, safe_name)
     directory = Path(safe_client_dir(str(client_id)))
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / safe_name
-    tmp = directory / f".{safe_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+    path = directory / storage_name
+    tmp = directory / f".{storage_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
     try:
         with open(tmp, "wb") as handle:
             handle.write(payload)

@@ -378,7 +378,63 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
             )
             self.assertEqual(manifest_generation(path.read_bytes()), self.GENERATION_ID)
             self.assertEqual(path.read_bytes().count(b"#PLANIQ-GENERATION:"), 1)
-            self.assertIn(b"segment-000000000.ts", path.read_bytes())
+            self.assertIn(f"g-{self.GENERATION_ID}-segment-000000000.ts".encode(), path.read_bytes())
+
+    def test_generation_media_names_cannot_alias_after_restart(self):
+        import hashlib
+        from fastapi import HTTPException
+        from service1.routers.livestream_media import manifest_generation, is_public_hls_filename
+        self.seed_running_with_viewer()
+        with Session(self.engine) as session:
+            def upload(generation, name, data):
+                return livestream_v2.write_hls_file(
+                    session, client_id=self.CLIENT_ID, generation_id=generation,
+                    filename=name, payload=data, sha256=hashlib.sha256(data).hexdigest(),
+                    sequence=0,
+                )
+
+            segment = "segment-000000000.ts"
+            manifest = b"#EXTM3U\n#EXTINF:1,\nsegment-000000000.ts\n"
+            old_file = upload(self.GENERATION_ID, segment, b"old media")
+            index = upload(self.GENERATION_ID, "index.m3u8", manifest)
+            old_playlist = index.read_bytes()
+            new, _ = livestream_v2.request_restart(
+                session, self.CLIENT_ID, source="test_resolution_change",
+            )
+            session.flush()
+            new_file = upload(new.id, segment, b"new media")
+            upload(new.id, "index.m3u8", manifest)
+            self.assertNotEqual(old_file, new_file)
+            self.assertEqual(old_file.read_bytes(), b"old media")
+            self.assertEqual(new_file.read_bytes(), b"new media")
+            self.assertIn(old_file.name.encode(), old_playlist)
+            self.assertIn(new_file.name.encode(), index.read_bytes())
+            self.assertEqual(manifest_generation(index.read_bytes()), new.id)
+            self.assertTrue(is_public_hls_filename(new_file.name))
+            self.assertFalse(is_public_hls_filename(".stream_generation.json"))
+            self.assertFalse(is_public_hls_filename("../" + new_file.name))
+            with self.assertRaises(HTTPException) as stale:
+                upload(self.GENERATION_ID, segment, b"late old upload")
+            self.assertEqual(stale.exception.status_code, 409)
+            self.assertEqual(new_file.read_bytes(), b"new media")
+            livestream_v2._clear_hls_media(self.CLIENT_ID)
+            self.assertFalse(old_file.exists())
+            self.assertFalse(new_file.exists())
+            self.assertFalse(index.exists())
+
+    def test_manifest_initialization_reference_is_generation_bound(self):
+        from service1.routers.livestream_media import namespace_manifest_media
+        content = b'#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:1,\nsegment-000000000.m4s\n'
+        result = namespace_manifest_media(content, self.GENERATION_ID)
+        self.assertIn(f'URI="g-{self.GENERATION_ID}-init.mp4"'.encode(), result)
+        self.assertIn(f"g-{self.GENERATION_ID}-segment-000000000.m4s".encode(), result)
+        for tag in (
+            b'#EXT-X-MAP:URI="../init.mp4"',
+            b'#EXT-X-KEY:METHOD=AES-128,URI="https://invalid.example/key"',
+            b'#EXT-X-MEDIA:TYPE=AUDIO,URI="https://invalid.example/audio"',
+        ):
+            with self.assertRaises(ValueError):
+                namespace_manifest_media(b"#EXTM3U\n" + tag + b"\nsegment-000000000.ts\n", self.GENERATION_ID)
 
 
 if __name__ == "__main__":

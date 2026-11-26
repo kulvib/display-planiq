@@ -1830,6 +1830,16 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "ubuntu_update_progress": getattr(client, "ubuntu_update_progress", None),
         "ubuntu_update_package_count": getattr(client, "ubuntu_update_package_count", None),
         "ubuntu_update_reboot_required": getattr(client, "ubuntu_update_reboot_required", None),
+        # The existing System status/command projection already owns these.
+        "firmware": getattr(client, "firmware", None),
+        "pending_firmware_update": getattr(client, "pending_firmware_update", False),
+        "firmware_update_status": getattr(client, "firmware_update_status", None),
+        "firmware_update_message": getattr(client, "firmware_update_message", None),
+        "firmware_update_error": getattr(client, "firmware_update_error", None),
+        "firmware_update_started_at": getattr(client, "firmware_update_started_at", None),
+        "firmware_update_updated_at": getattr(client, "firmware_update_updated_at", None),
+        "firmware_update_finished_at": getattr(client, "firmware_update_finished_at", None),
+        "firmware_update_reboot_required": getattr(client, "firmware_update_reboot_required", None),
         # Local-management is already projected from the same latest System
         # command batch above. Expose it on the hot read without another DB
         # query so the UI does not need a second 2-second polling endpoint.

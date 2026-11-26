@@ -628,11 +628,14 @@ class AuthenticatedHLSStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
         request = Request(scope)
         self._check_hls_access(request, path)
+        parts = path.split("/")
+        if len(parts) != 2 or not livestream_media.is_public_hls_filename(parts[1]):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HLS stream ikke fundet")
 
         # Når Ubuntu-klienten har kvitteret et eksplicit livestream_stop, skriver
         # backend en stop-marker. Den skjuler gamle manifest/segmenter, indtil en
         # ny uploader-generation udfører det autoritative HLS-reset.
-        if path.endswith((".m3u8", ".ts", ".mp4")) and _hls_stop_marker_exists_for_static(path):
+        if path.endswith((".m3u8", ".ts", ".mp4", ".m4s")) and _hls_stop_marker_exists_for_static(path):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="HLS stream er stoppet")
 
         # index.m3u8 is rewritten in-place by the generation-aware uploader.
@@ -660,9 +663,9 @@ class AuthenticatedHLSStaticFiles(StaticFiles):
             response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
         elif path.endswith('.ts'):
             response.headers["Content-Type"] = "video/mp2t"
-        elif path.endswith('.mp4'):
+        elif path.endswith(('.mp4', '.m4s')):
             response.headers["Content-Type"] = "video/mp4"
-        if path.endswith(('.m3u8', '.ts', '.mp4')):
+        if path.endswith(('.m3u8', '.ts', '.mp4', '.m4s')):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"
