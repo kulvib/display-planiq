@@ -27,6 +27,11 @@ export function clientMatchesSearch(client, search, namesById = new Map()) {
   return fields.some((value) => normalized(value).includes(query));
 }
 
+export function clientPresenceState(client) {
+  const online = client?.presence?.is_online;
+  return online === true ? "online" : online === false ? "offline" : "unknown";
+}
+
 const COLLATOR = new Intl.Collator("da-DK", { numeric: true, sensitivity: "base" });
 
 export function sortLivestreamClients(clients, order = "online", namesById = new Map()) {
@@ -35,7 +40,8 @@ export function sortLivestreamClients(clients, order = "online", namesById = new
     COLLATOR.compare(String(a.id ?? ""), String(b.id ?? ""));
   sorted.sort((a, b) => {
     if (order === "online") {
-      const rank = Number(b?.presence?.is_online === true) - Number(a?.presence?.is_online === true);
+      const ranks = { online: 0, offline: 1, unknown: 2 };
+      const rank = ranks[clientPresenceState(a)] - ranks[clientPresenceState(b)];
       if (rank !== 0) return rank;
     }
     if (order === "location") {

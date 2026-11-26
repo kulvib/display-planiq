@@ -40,7 +40,8 @@ export function normalizeUsername(value) {
 
 export async function fetchUsers() {
   const data = await request("/api/users/");
-  return Array.isArray(data) ? data.map(normalizeUser) : [];
+  if (!Array.isArray(data)) throw new Error("Ugyldig brugerliste");
+  return data.map(normalizeUser);
 }
 
 export async function createUser(body) {
@@ -71,7 +72,8 @@ export async function permanentlyDeleteUser(userId, confirmationEmail) {
 
 export async function fetchOrganizations() {
   const organizations = await getOrganizations();
-  return Array.isArray(organizations) ? organizations : [];
+  if (!Array.isArray(organizations)) throw new Error("Ugyldig organisationsliste");
+  return organizations;
 }
 
 export function validateEmail(email) {

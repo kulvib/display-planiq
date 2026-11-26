@@ -106,10 +106,15 @@ function SectionButton({ section, active, onClick }) {
       startIcon={section.icon}
       aria-current={active ? "page" : undefined}
       sx={{
-        minHeight: 50,
+        minHeight: 44,
         justifyContent: "flex-start",
         borderRadius: 2,
-        px: 1.7,
+        px: 1.25,
+        textTransform: "none",
+        minWidth: 0,
+        overflowWrap: "anywhere",
+        lineHeight: 1.25,
+        textAlign: "left",
         color: active ? "#f8fafc" : "rgba(203,213,225,0.74)",
         fontWeight: active ? 950 : 800,
         border: active
@@ -174,7 +179,7 @@ export default function AdminPage() {
 
   return (
     <Box sx={{ ...pageShellSx, color: "#f8fafc" }}>
-      <Stack spacing={2.2}>
+      <Stack spacing={2}>
         <Paper
           elevation={0}
           sx={{
@@ -183,12 +188,12 @@ export default function AdminPage() {
               "linear-gradient(135deg, rgba(15,23,42,0.92), rgba(30,41,59,0.62))",
           }}
         >
-          <Stack spacing={2}>
+          <Stack spacing={1.5}>
             <Stack
               direction={{ xs: "column", md: "row" }}
               spacing={1.4}
               sx={{
-                alignItems: { xs: "stretch", md: "flex-end" },
+                alignItems: { xs: "stretch", md: "center" },
                 justifyContent: "space-between"
               }}>
               <Stack
@@ -246,13 +251,15 @@ export default function AdminPage() {
             <Divider sx={{ borderColor: "rgba(148,163,184,0.12)" }} />
 
             <Box
+              component="nav"
+              aria-label="Administration"
               sx={{
                 display: "grid",
                 gridTemplateColumns: {
                   xs: "1fr",
                   sm: "repeat(2, minmax(0, 1fr))",
                   lg: "repeat(4, minmax(0, 1fr))",
-                  xl: `repeat(${visibleSections.length}, minmax(0, 1fr))`,
+                  xl: "repeat(4, minmax(0, 1fr))",
                 },
                 gap: 1,
               }}

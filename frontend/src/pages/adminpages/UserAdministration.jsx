@@ -681,6 +681,11 @@ export default function UserAdministration() {
   const [users, setUsers] = React.useState([]);
   const [organizations, setOrganizations] = React.useState([]);
   const [userLoading, setUserLoading] = React.useState(false);
+  const [usersVerified, setUsersVerified] = React.useState(false);
+  const [organizationsVerified, setOrganizationsVerified] = React.useState(false);
+  const [organizationReadError, setOrganizationReadError] = React.useState("");
+  const userRead = React.useRef(0);
+  const auditRead = React.useRef(0);
   const [userError, setUserError] = React.useState("");
   const [userSuccess, setUserSuccess] = React.useState("");
 
@@ -765,25 +770,37 @@ export default function UserAdministration() {
 
   const loadData = React.useCallback(async () => {
     if (!isAdmin && !isSuperadmin) return;
+    const request = ++userRead.current;
     setUserLoading(true);
+    setUsersVerified(false);
+    setOrganizationsVerified(false);
     setUserError("");
-    try {
-      const [userData, orgData] = await Promise.all([
-        service.fetchUsers(),
-        service.fetchOrganizations().catch(() => []),
-      ]);
-      setUsers(Array.isArray(userData) ? userData : []);
-      setOrganizations(Array.isArray(orgData) ? orgData : []);
-    } catch (err) {
-      setUserError(service.errorToString(err));
-      setOpenUserError(true);
-    } finally {
-      setUserLoading(false);
+    setOrganizationReadError("");
+    const [userResult, orgResult] = await Promise.allSettled([
+      service.fetchUsers(),
+      service.fetchOrganizations(),
+    ]);
+    if (request !== userRead.current) return;
+    if (userResult.status === "fulfilled" && Array.isArray(userResult.value)) {
+      setUsers(userResult.value);
+      setUsersVerified(true);
+    } else {
+      setUsers([]);
+      setUserError(service.errorToString(userResult.reason || new Error("Ugyldig brugerliste")));
     }
+    if (orgResult.status === "fulfilled" && Array.isArray(orgResult.value)) {
+      setOrganizations(orgResult.value);
+      setOrganizationsVerified(true);
+    } else {
+      setOrganizations([]);
+      setOrganizationReadError("Organisationer kunne ikke hentes. Valg af organisation er spærret.");
+    }
+    setUserLoading(false);
   }, [isAdmin, isSuperadmin]);
 
   React.useEffect(() => {
     loadData();
+    return () => { userRead.current += 1; };
   }, [loadData, reloadUsers]);
 
   React.useEffect(() => {
@@ -814,13 +831,14 @@ export default function UserAdministration() {
     const name = service.normalizeText(newUser.name);
     const email = service.normalizeEmail(newUser.email);
     const emailRepeat = service.normalizeEmail(newUser.emailRepeat);
+    if (!usersVerified || (isSuperadmin && roleRequiresOrganization(newUser.role) && !organizationsVerified)) return true;
     if (!username || username.length < 3) return true;
     if (!name) return true;
     if (!email || !service.validateEmail(email)) return true;
     if (email !== emailRepeat) return true;
     if (roleRequiresOrganization(newUser.role) && !newUser.organization_id && isSuperadmin) return true;
     return false;
-  }, [newUser, isSuperadmin]);
+  }, [newUser, isSuperadmin, usersVerified, organizationsVerified]);
 
   const visibleRoles = React.useMemo(() => {
     const roles = [];
@@ -888,7 +906,7 @@ export default function UserAdministration() {
   };
 
   const handleEditClick = (user) => {
-    if (!user) return;
+    if (!usersVerified || userLoading || !user) return;
     setEditUserId(user.id);
     setEditFields({
       name: displayName(user),
@@ -918,7 +936,8 @@ export default function UserAdministration() {
   };
 
   const handleEditSave = async (user) => {
-    if (!user || editLoading) return;
+    if (!usersVerified || userLoading || !user || editLoading) return;
+    if (isSuperadmin && roleRequiresOrganization(editFields.role) && !organizationsVerified) return;
     const errors = {};
     const name = service.normalizeText(editFields.name);
     const email = service.normalizeEmail(editFields.email);
@@ -959,7 +978,7 @@ export default function UserAdministration() {
   };
 
   const openPasswordResetDialog = (user) => {
-    if (!user?.id) return;
+    if (!usersVerified || userLoading || !user?.id) return;
     setUserToResetPassword(user);
     setResetConfirmOpen(true);
   };
@@ -972,7 +991,7 @@ export default function UserAdministration() {
 
   const confirmSendPasswordResetLink = async () => {
     const target = userToResetPassword;
-    if (!target?.id) return;
+    if (!usersVerified || userLoading || !target?.id) return;
     setResetMailLoadingUserId(target.id);
     setUserError("");
     setUserSuccess("");
@@ -1015,7 +1034,7 @@ export default function UserAdministration() {
   };
 
   const openTemporaryPasswordDialog = (user) => {
-    if (!user?.id) return;
+    if (!usersVerified || userLoading || !user?.id) return;
     setUserToReceiveTemporaryPassword(user);
     setTemporaryPassword("");
     setTemporaryPasswordRepeat("");
@@ -1034,7 +1053,7 @@ export default function UserAdministration() {
 
   const confirmTemporaryPassword = async () => {
     const target = userToReceiveTemporaryPassword;
-    if (!target?.id) return;
+    if (!usersVerified || userLoading || !target?.id) return;
     if (temporaryPassword.length < 12) {
       setTemporaryPasswordError("Midlertidigt password skal være mindst 12 tegn.");
       return;
@@ -1071,6 +1090,7 @@ export default function UserAdministration() {
   };
 
   const confirmUserStatusChange = async () => {
+    if (!usersVerified || userLoading) return;
     setStatusConfirmOpen(false);
     if (!userToChangeStatus || typeof nextUserActiveStatus !== "boolean") return;
     setUserError("");
@@ -1103,7 +1123,7 @@ export default function UserAdministration() {
   };
 
   const confirmPermanentDeleteUser = async () => {
-    if (!userToPermanentlyDelete || permanentDeleteLoading) return;
+    if (!usersVerified || userLoading || !userToPermanentlyDelete || permanentDeleteLoading) return;
     setPermanentDeleteLoading(true);
     try {
       await service.permanentlyDeleteUser(userToPermanentlyDelete.id, permanentDeleteConfirmation);
@@ -1168,6 +1188,8 @@ export default function UserAdministration() {
   }, [users, filterText, roleFilter, activeFilter, sortField, sortDirection, orgNameById, displayOrgName]);
 
   const closeSelectedUserAuditLog = () => {
+    auditRead.current += 1;
+    setAuditLogLoading(false);
     setAuditLogUserId(null);
     setAuditLogs([]);
     setAuditLogError("");
@@ -1175,6 +1197,7 @@ export default function UserAdministration() {
 
   const openSelectedUserAuditLog = async (user) => {
     if (!user?.id || !isSuperadmin) return;
+    const request = ++auditRead.current;
     const userId = Number(user.id);
     setAuditLogUserId(user.id);
     setAuditLogs([]);
@@ -1192,7 +1215,7 @@ export default function UserAdministration() {
       const asAuditLogArray = (value) => {
         if (Array.isArray(value)) return value;
         if (Array.isArray(value?.items)) return value.items;
-        return [];
+        throw new Error("Ugyldigt svar fra audit-log");
       };
 
       const mergedById = new Map();
@@ -1217,11 +1240,11 @@ export default function UserAdministration() {
         const bt = new Date(b.created_at || 0).getTime();
         return bt - at;
       });
-      setAuditLogs(merged);
+      if (request === auditRead.current) setAuditLogs(merged);
     } catch (err) {
-      setAuditLogError(service.errorToString(err));
+      if (request === auditRead.current) setAuditLogError(service.errorToString(err));
     } finally {
-      setAuditLogLoading(false);
+      if (request === auditRead.current) setAuditLogLoading(false);
     }
   };
 
@@ -1238,11 +1261,12 @@ export default function UserAdministration() {
   const selectedRoleIsSuperadmin = selectedUser?.role === "superadmin";
   const editingRoleIsSuperadmin = editFields.role === "superadmin";
 
-  const canEdit = Boolean(selectedUser) && isAdmin && (!selectedIsMe || isSuperadmin);
-  const canSendLink = Boolean(selectedUser) && isAdmin && !selectedIsMe && selectedUser.is_active !== false && Boolean(selectedUser.email);
-  const canTemp = Boolean(selectedUser) && isAdmin && !selectedIsMe && selectedUser.is_active !== false;
-  const canStatus = Boolean(selectedUser) && isAdmin && !selectedIsMe;
-  const canPermanent = Boolean(selectedUser) && isSuperadmin && !selectedIsMe && selectedUser.is_active === false && !selectedRoleIsSuperadmin;
+  const userActionsReady = usersVerified && !userLoading;
+  const canEdit = userActionsReady && Boolean(selectedUser) && isAdmin && (!selectedIsMe || isSuperadmin);
+  const canSendLink = userActionsReady && Boolean(selectedUser) && isAdmin && !selectedIsMe && selectedUser.is_active !== false && Boolean(selectedUser.email);
+  const canTemp = userActionsReady && Boolean(selectedUser) && isAdmin && !selectedIsMe && selectedUser.is_active !== false;
+  const canStatus = userActionsReady && Boolean(selectedUser) && isAdmin && !selectedIsMe;
+  const canPermanent = userActionsReady && Boolean(selectedUser) && isSuperadmin && !selectedIsMe && selectedUser.is_active === false && !selectedRoleIsSuperadmin;
 
   if (authLoading) return <Box sx={{ p: 2 }} role="status">Kontrollerer adgang til brugeradministration …</Box>;
   if (!isAdmin && !isSuperadmin) {
@@ -1278,7 +1302,7 @@ export default function UserAdministration() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setStatusConfirmOpen(false)}>Annullér</Button>
-          <Button color={nextUserActiveStatus ? "success" : "warning"} variant="contained" onClick={confirmUserStatusChange}>
+          <Button color={nextUserActiveStatus ? "success" : "warning"} variant="contained" onClick={confirmUserStatusChange} disabled={!userActionsReady}>
             {nextUserActiveStatus ? "Gendan bruger" : "Deaktiver bruger"}
           </Button>
         </DialogActions>
@@ -1310,7 +1334,7 @@ export default function UserAdministration() {
             variant="contained"
             onClick={confirmPermanentDeleteUser}
             disabled={
-              permanentDeleteLoading ||
+              !userActionsReady || permanentDeleteLoading ||
               permanentDeleteConfirmation.trim().toLowerCase() !== String(userToPermanentlyDelete?.email || "").trim().toLowerCase()
             }
           >
@@ -1338,7 +1362,7 @@ export default function UserAdministration() {
             color="warning"
             variant="contained"
             onClick={confirmSendPasswordResetLink}
-            disabled={Boolean(resetMailLoadingUserId)}
+            disabled={!userActionsReady || Boolean(resetMailLoadingUserId)}
           >
             {resetMailLoadingUserId ? "Sender…" : "Send link"}
           </Button>
@@ -1394,7 +1418,7 @@ export default function UserAdministration() {
         </DialogContent>
         <DialogActions>
           <Button onClick={closeTemporaryPasswordDialog} disabled={temporaryPasswordLoading}>Annullér</Button>
-          <Button variant="contained" onClick={confirmTemporaryPassword} disabled={temporaryPasswordLoading}>
+          <Button variant="contained" onClick={confirmTemporaryPassword} disabled={!userActionsReady || temporaryPasswordLoading}>
             {temporaryPasswordLoading ? "Gemmer…" : "Tildel password"}
           </Button>
         </DialogActions>
@@ -1409,7 +1433,7 @@ export default function UserAdministration() {
       />
       <Box sx={pageShellSx}>
         <Paper sx={pagePaperSx}>
-          <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, mb: 2, flexWrap: "wrap" }}>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, mb: 2, flexWrap: "wrap" }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5, minWidth: 0 }}>
               <PeopleAltIcon color="primary" />
               <Typography variant="h5" sx={{ fontWeight: 700, color: "#f8fafc" }}>
@@ -1417,7 +1441,7 @@ export default function UserAdministration() {
               </Typography>
             </Box>
             <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", justifyContent: "flex-end", flexShrink: 0 }}>
-              <AdminRefreshButton onClick={() => void loadData()} loading={userLoading} ariaLabel="Opdater brugere" />
+              <AdminRefreshButton onClick={() => void loadData()} loading={userLoading} disabled={Boolean(editUserId || statusConfirmOpen || permanentDeleteOpen || resetConfirmOpen || temporaryPasswordOpen)} ariaLabel="Opdater brugere" />
             </Stack>
           </Box>
           <Divider sx={{ my: 2, borderColor: COLORS.border }} />
@@ -1425,10 +1449,11 @@ export default function UserAdministration() {
             <Alert severity="error" sx={{ mb: 2 }} role="alert" action={
               <Button color="inherit" size="small" onClick={() => void loadData()} disabled={userLoading}>Prøv igen</Button>
             }>
-              Brugerlisten kunne ikke hentes: {userError}
+              {usersVerified ? "Handlingen mislykkedes:" : "Brugerlisten kunne ikke hentes:"} {userError}
             </Alert>
           )}
 
+          {organizationReadError && <Alert severity="warning" sx={{ mb: 2 }}>{organizationReadError}</Alert>}
           <Box
             component="form"
             autoComplete="off"
@@ -1506,6 +1531,7 @@ export default function UserAdministration() {
                 <InputLabel id="org-select-label">Organisation</InputLabel>
                 <Select
                   labelId="org-select-label"
+                  disabled={!organizationsVerified || userLoading}
                   value={newUser.organization_id ?? ""}
                   label="Organisation"
                   onChange={(event) => setNewUser({ ...newUser, organization_id: event.target.value === "" ? null : Number(event.target.value) })}
@@ -1575,25 +1601,27 @@ export default function UserAdministration() {
             </Box>
 
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: { xs: 0, md: "auto" }, width: { xs: "100%", md: "auto" }, justifyContent: { xs: "flex-start", md: "flex-end" }, flexWrap: "wrap" }}>
-              <Chip label={`${filteredUsers.length} vist`} size="small" sx={countChipSx} />
+              <Chip label={usersVerified ? `${filteredUsers.length} vist` : "Ikke verificeret"} size="small" sx={countChipSx} />
               <Button size="small" variant="outlined" startIcon={<FilterListOffIcon fontSize="small" />} onClick={clearFilters}>
                 Ryd filtre
               </Button>
             </Box>
           </Box>
 
-          {userLoading && users.length === 0 ? (
+          {userLoading && !usersVerified ? (
             <Box sx={{ display: "flex", gap: 1, alignItems: "center", py: 3 }}>
               <CircularProgress size={18} />
               <Typography>Henter brugere…</Typography>
             </Box>
+          ) : !usersVerified ? (
+            <Alert severity="warning">Brugerlisten er ikke verificeret. Ingen brugerhandlinger kan udføres.</Alert>
           ) : detailViewOpen ? (
             <Box sx={{ ...viewSwitchSx, ...userAdminLayoutSx }}>
               <Box sx={userListPanelSx}>
                 <Box sx={{ px: 1.5, py: 1.25, bgcolor: COLORS.panelSoft, borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}>
                     <Typography sx={{ fontWeight: 850, color: COLORS.text }}>Brugere</Typography>
-                    <Chip label={`${filteredUsers.length} vist`} size="small" sx={countChipSx} />
+                    <Chip label={usersVerified ? `${filteredUsers.length} vist` : "Ikke verificeret"} size="small" sx={countChipSx} />
                   </Box>
                   <Button
                     size="small"
@@ -1698,7 +1726,7 @@ export default function UserAdministration() {
                             <DetailField label="Organisation">
                               {selectedIsEditing && isSuperadmin && !selectedIsMe && !editingRoleIsSuperadmin ? (
                                 <FormControl fullWidth size="small" variant="standard" sx={editableInlineFieldSx} error={Boolean(editError.organization_id)}>
-                                  <Select value={editFields.organization_id ?? ""} onChange={(event) => handleEditFieldChange("organization_id", event.target.value === "" ? null : Number(event.target.value))}>
+                                  <Select disabled={!organizationsVerified || userLoading} value={editFields.organization_id ?? ""} onChange={(event) => handleEditFieldChange("organization_id", event.target.value === "" ? null : Number(event.target.value))}>
                                     <MenuItem value=""><em>Vælg organisation</em></MenuItem>
                                     {organizations.map((organization) => <MenuItem key={organization.id} value={organization.id}>{organization.name}</MenuItem>)}
                                   </Select>
@@ -1725,7 +1753,7 @@ export default function UserAdministration() {
                           <Box sx={visibleActionsGridSx}>
                             {selectedIsEditing ? (
                               <>
-                                <Button variant="contained" color="success" startIcon={<SaveIcon fontSize="small" />} loading={editLoading} loadingPosition="start" onClick={() => editingUser && handleEditSave(editingUser)} disabled={editLoading || !editingUser} sx={visibleActionButtonSx}>Gem ændringer</Button>
+                                <Button variant="contained" color="success" startIcon={<SaveIcon fontSize="small" />} loading={editLoading} loadingPosition="start" onClick={() => editingUser && handleEditSave(editingUser)} disabled={!userActionsReady || editLoading || !editingUser || (isSuperadmin && roleRequiresOrganization(editFields.role) && !organizationsVerified)} sx={visibleActionButtonSx}>Gem ændringer</Button>
                                 <Button variant="outlined" startIcon={<CloseIcon fontSize="small" />} onClick={handleEditCancel} sx={visibleActionButtonSx}>Annullér</Button>
                               </>
                             ) : (
@@ -1755,7 +1783,7 @@ export default function UserAdministration() {
               <Box sx={userListPanelSx}>
                 <Box sx={{ px: 1.5, py: 1.25, bgcolor: COLORS.panelSoft, borderBottom: `1px solid ${COLORS.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                   <Typography sx={{ fontWeight: 850, color: COLORS.text }}>Brugere</Typography>
-                  <Chip label={`${filteredUsers.length} vist`} size="small" sx={countChipSx} />
+                  <Chip label={usersVerified ? `${filteredUsers.length} vist` : "Ikke verificeret"} size="small" sx={countChipSx} />
                 </Box>
 
                 {filteredUsers.length === 0 ? (

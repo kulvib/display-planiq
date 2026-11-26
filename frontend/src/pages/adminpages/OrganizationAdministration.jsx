@@ -823,7 +823,7 @@ export default function OrganizationAdministration() {
             direction={{ xs: "column", md: "row" }}
             spacing={1.5}
             sx={{
-              alignItems: { xs: "stretch", md: "flex-start" },
+              alignItems: { xs: "stretch", md: "center" },
               justifyContent: "space-between"
             }}>
             <Box>
@@ -933,7 +933,7 @@ export default function OrganizationAdministration() {
 
             <Box sx={{ ml: { xs: 0, md: "auto" }, width: { xs: "100%", md: "auto" }, display: "flex", justifyContent: { xs: "space-between", md: "flex-start" }, alignItems: "center", gap: 1 }}>
               <Typography variant="body2" sx={{ color: COLORS.muted, whiteSpace: "nowrap" }}>
-                {displayedOrganizations.length} / {organizations.length} organisation{organizations.length !== 1 ? "er" : ""}
+                {organizationReadError ? "Antal ikke verificeret" : `${displayedOrganizations.length} / ${organizations.length} organisation${organizations.length !== 1 ? "er" : ""}`}
               </Typography>
               <Tooltip title="Nulstil filtre">
                 <span>

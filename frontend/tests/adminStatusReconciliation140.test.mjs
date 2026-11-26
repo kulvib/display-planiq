@@ -56,3 +56,22 @@ test("failed administrative reads cannot be presented as empty verified lists", 
   assert.match(audit, /!loading && !error && visibleLogs\.length === 0/);
   assert.match(incidents, /!Number\.isSafeInteger\(data\.total\)/);
 });
+
+
+test("user administration distinguishes failed user and organization reads and gates writes", () => {
+  const users = read("pages/adminpages/UserAdministration.jsx");
+  const service = read("pages/adminpages/userAdminService.js");
+  assert.doesNotMatch(users, /fetchOrganizations\(\)\.catch\(\(\) => \[\]\)/);
+  assert.match(service, /if \(!Array\.isArray\(data\)\) throw/);
+  assert.match(service, /if \(!Array\.isArray\(organizations\)\) throw/);
+  assert.match(users, /setUsersVerified\(false\)/);
+  assert.match(users, /request !== userRead\.current/);
+  assert.match(users, /!usersVerified \|\| userLoading \|\| !userToPermanentlyDelete/);
+  assert.match(users, /request === auditRead\.current/);
+});
+test("livestream wall isolates organization errors and distinguishes unknown from offline", () => {
+  assert.match(wall, /setOrganizationError\(/);
+  assert.match(wall, /presenceFilter === "all" \|\| clientPresenceState\(client\) === presenceFilter/);
+  assert.match(wall, /inventoryValid \? clientPresenceState\(client\) : "unknown"/);
+  assert.match(wall, /pageMediaActive=\{pageMediaActive && inventoryValid\}/);
+});

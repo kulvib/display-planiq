@@ -21,7 +21,7 @@ import { Link } from "react-router-dom";
 import { apiUrl, authHeaders, authenticatedFetch, getAuthSessionSignal, getControlRoomClients, getOrganizations } from "../../api";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
-import { clientMatchesSearch, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
+import { clientMatchesSearch, clientPresenceState, organizationNamesById, sortLivestreamClients } from "../../utils/clientSearchSort.mjs";
 import { MOBILE_LIVESTREAM_DURATIONS } from "../../utils/mobileLivestreamTiming.mjs";
 import { useMobileLivestreamSession } from "../../utils/useMobileLivestreamSession";
 import { createHlsReserveController, hlsHttpTransportLabel, livestreamLatencyStatus } from "../clientdetailspage/livestreamBrowserTiming.mjs";
@@ -62,7 +62,7 @@ async function sendViewerLeave(clientId, viewerId, source = "livestream_wall_lea
   }
 }
 
-function LivestreamTile({ client, pageMediaActive }) {
+function LivestreamTile({ client, pageMediaActive, inventoryValid }) {
   const rootRef = useRef(null);
   const previewRef = useRef(null);
   const videoRef = useRef(null);
@@ -88,7 +88,8 @@ function LivestreamTile({ client, pageMediaActive }) {
   const [videoResolution, setVideoResolution] = useState(null);
   const [needsTapToPlay, setNeedsTapToPlay] = useState(false);
 
-  const clientOnline = client?.presence?.is_online === true;
+  const presence = inventoryValid ? clientPresenceState(client) : "unknown";
+  const clientOnline = presence === "online";
   const shouldRun = Boolean(pageMediaActive && intersecting && clientOnline && mobileViewerActive);
 
   const updateVideoResolution = useCallback(() => {
@@ -195,8 +196,8 @@ function LivestreamTile({ client, pageMediaActive }) {
   useEffect(() => {
     if (!shouldRun) {
       stopLocalWork(true);
-      setState(clientOnline ? "paused" : "offline");
-      setMessage(!mobileViewerActive ? "Tryk Start for et tidsbegrænset mobil-preview." : clientOnline ? "Preview er sat på pause uden for visningen." : "Klienten er offline.");
+      setState(presence === "unknown" ? "unknown" : clientOnline ? "paused" : "offline");
+      setMessage(presence === "unknown" ? "Klientstatus ikke verificeret." : !clientOnline ? "Klienten er offline." : !mobileViewerActive ? "Tryk Start for et tidsbegrænset mobil-preview." : "Preview er sat på pause uden for visningen.");
       return undefined;
     }
 
@@ -489,12 +490,13 @@ function LivestreamTile({ client, pageMediaActive }) {
       window.clearTimeout(startupWarning);
       stopLocalWork(true);
     };
-  }, [client.id, clientOnline, shouldRun, mobileViewerActive, isTouchHandset, stopLocalWork, updateLatency, destroyPlayer]);
+  }, [client.id, clientOnline, presence, shouldRun, mobileViewerActive, isTouchHandset, stopLocalWork, updateLatency, destroyPlayer]);
 
   useEffect(() => () => stopLocalWork(true), [stopLocalWork]);
 
-  const latencyStatus = livestreamLatencyStatus(state === "live" && shouldRun ? latencySeconds : null);
-  const tone = state === "live" ? latencyStatus.severity : state === "error" ? "error" : state === "offline" ? "neutral" : "info";
+  const visibleState = presence === "unknown" ? "unknown" : presence === "offline" ? "offline" : state === "live" && !shouldRun ? "paused" : state;
+  const latencyStatus = livestreamLatencyStatus(visibleState === "live" && shouldRun ? latencySeconds : null);
+  const tone = visibleState === "live" ? latencyStatus.severity : visibleState === "error" ? "error" : ["unknown", "offline"].includes(visibleState) ? "neutral" : "info";
   const statusChipSx = tone === "elevated"
     ? compactDarkChipSx("neutral", { color: "#fb923c", bgcolor: "rgba(249,115,22,0.14)", borderColor: "rgba(251,146,60,0.45)" })
     : compactDarkChipSx(tone);
@@ -599,7 +601,7 @@ function LivestreamTile({ client, pageMediaActive }) {
             <FullscreenIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        {state !== "live" && (
+        {visibleState !== "live" && (
           <Stack
             spacing={1}
             sx={{
@@ -614,7 +616,7 @@ function LivestreamTile({ client, pageMediaActive }) {
           >
             {state === "starting" && <CircularProgress size={28} />}
             <Typography variant="body2" sx={{ color: "rgba(226,232,240,0.9)" }}>
-              {message || "Venter på livestream …"}
+              {presence === "unknown" ? "Klientstatus ikke verificeret." : presence === "offline" ? "Klienten er offline." : message || "Venter på livestream …"}
             </Typography>
           </Stack>
         )}
@@ -632,7 +634,7 @@ function LivestreamTile({ client, pageMediaActive }) {
             {mediaTransport && shouldRun && <Chip size="small" label={mediaTransport === "WSS" ? "WSS" : `HLS · ${mediaTransport}`} sx={compactDarkChipSx("neutral")} />}
             <Chip
               size="small"
-              label={state === "live" ? latencyStatus.text : state === "offline" ? "Offline" : state === "error" ? "Fejl" : state === "paused" ? "På pause" : "Klargør"}
+              label={visibleState === "live" ? latencyStatus.text : visibleState === "unknown" ? "Ukendt" : visibleState === "offline" ? "Offline" : visibleState === "error" ? "Fejl" : visibleState === "paused" ? "På pause" : "Klargør"}
               sx={statusChipSx}
             />
           </Stack>
@@ -669,6 +671,8 @@ export default function LivestreamOverview() {
   const PAGE_SIZE = 12;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [organizationError, setOrganizationError] = useState("");
+  const [organizationReload, setOrganizationReload] = useState(0);
   const [pageMediaActive, setPageMediaActive] = useState(document.visibilityState !== "hidden");
   const hiddenTimerRef = useRef(null);
   const inventoryRequest = useRef(null);
@@ -703,13 +707,16 @@ export default function LivestreamOverview() {
     // One scoped organization read per page mount, never per keystroke/poll.
     // Access restrictions are enforced by the existing organizations endpoint.
     let active = true;
+    setOrganizationError("");
     getOrganizations().then((items) => {
-      if (active) setOrganizations(Array.isArray(items) ? items : []);
+      if (!active) return;
+      if (!Array.isArray(items)) throw new Error("Ugyldig organisationsliste");
+      setOrganizations(items);
     }).catch(() => {
-      if (active) setError("Organisationsnavne kunne ikke indlæses. Prøv at opdatere siden.");
+      if (active) setOrganizationError("Organisationsnavne kunne ikke indlæses. Søgning på organisation kan være ufuldstændig.");
     });
     return () => { active = false; };
-  }, []);
+  }, [organizationReload]);
 
   useEffect(() => {
     inventoryActive.current = true;
@@ -756,7 +763,7 @@ export default function LivestreamOverview() {
   const sortedClients = useMemo(
     () => sortLivestreamClients(
       clients.filter((client) => clientMatchesSearch(client, search, organizationNameMap) &&
-        (presenceFilter === "all" || (client?.presence?.is_online === true) === (presenceFilter === "online"))),
+        (presenceFilter === "all" || clientPresenceState(client) === presenceFilter)),
       sortOrder,
       organizationNameMap,
     ),
@@ -764,7 +771,9 @@ export default function LivestreamOverview() {
   );
   const safePage = Math.min(page, Math.max(0, Math.ceil(sortedClients.length / PAGE_SIZE) - 1));
   const visibleClients = sortedClients.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
-  const onlineCount = clients.filter((client) => client?.presence?.is_online === true).length;
+  const onlineCount = clients.filter((client) => clientPresenceState(client) === "online").length;
+  const offlineCount = clients.filter((client) => clientPresenceState(client) === "offline").length;
+  const unknownCount = clients.length - onlineCount - offlineCount;
 
   return (
     <Stack spacing={2}>
@@ -823,14 +832,19 @@ export default function LivestreamOverview() {
             disabled={!inventoryValid} sx={{ minWidth: { xs: "100%", md: 160 } }}>
             <MenuItem value="all">Alle</MenuItem>
             <MenuItem value="online">Online</MenuItem>
-            <MenuItem value="offline">Ikke online</MenuItem>
+            <MenuItem value="offline">Offline</MenuItem>
+            <MenuItem value="unknown">Ukendt status</MenuItem>
           </TextField>
         </Stack>
         <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" sx={{ mt: 1 }}>
           <Typography variant="caption" color="text.secondary">
-            {sortedClients.length} af {clients.length} godkendte klienter
-            {inventoryValid ? " · " + onlineCount + " online" : " · Status ikke verificeret"}
+            {inventoryValid ? `${sortedClients.length} af ${clients.length} godkendte klienter` : "Klientliste ikke verificeret"}
           </Typography>
+          {inventoryValid && <>
+            <Chip size="small" label={`${onlineCount} online`} sx={compactDarkChipSx("success", { height: 28 })} />
+            <Chip size="small" label={`${offlineCount} offline`} sx={compactDarkChipSx("neutral", { height: 28 })} />
+            {unknownCount > 0 && <Chip size="small" label={`${unknownCount} ukendt`} sx={compactDarkChipSx("neutral", { height: 28 })} />}
+          </>}
           <Box sx={{ flex: 1 }} />
           <Typography variant="caption" color="text.secondary">{sortedClients.length ? safePage * PAGE_SIZE + 1 : 0}–{Math.min(sortedClients.length, (safePage + 1) * PAGE_SIZE)}</Typography>
           <Button size="small" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>Forrige</Button>
@@ -839,6 +853,7 @@ export default function LivestreamOverview() {
       </Paper>
 
       {error && <Alert severity="error">{error}</Alert>}
+      {organizationError && <Alert severity="warning" action={<Button size="small" color="inherit" onClick={() => setOrganizationReload((n) => n + 1)}>Prøv igen</Button>}>{organizationError}</Alert>}
       {loading && sortedClients.length === 0 ? (
         <Stack sx={{ minHeight: 240, alignItems: "center", justifyContent: "center" }}><CircularProgress /></Stack>
       ) : sortedClients.length === 0 ? (
@@ -856,7 +871,7 @@ export default function LivestreamOverview() {
           }}
         >
           {visibleClients.map((client) => (
-            <LivestreamTile key={client.id} client={client} pageMediaActive={pageMediaActive && inventoryValid} />
+            <LivestreamTile key={client.id} client={client} pageMediaActive={pageMediaActive && inventoryValid} inventoryValid={inventoryValid} />
           ))}
         </Box>
       )}

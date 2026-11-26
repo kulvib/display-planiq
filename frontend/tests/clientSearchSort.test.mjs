@@ -60,3 +60,16 @@ test("frontend filtering never writes manual drag-order to backend", () => {
   assert.match(live, /<LivestreamTile key=\{client\.id\}/);
   assert.doesNotMatch(live, /getOrganizations\(\)[\s\S]{0,200}setInterval/);
 });
+
+
+test("online ordering keeps confirmed offline separate from unknown", async () => {
+  const { clientPresenceState, sortLivestreamClients: sort } = await import("../src/utils/clientSearchSort.mjs");
+  const online = { id: 1, name: "Z", presence: { is_online: true } };
+  const offline = { id: 2, name: "Y", presence: { is_online: false } };
+  const unknown = { id: 3, name: "A", presence: { is_online: null } };
+  assert.equal(clientPresenceState(online), "online");
+  assert.equal(clientPresenceState(offline), "offline");
+  assert.equal(clientPresenceState(unknown), "unknown");
+  assert.equal(clientPresenceState({}), "unknown");
+  assert.deepEqual(sort([unknown, offline, online]).map((client) => client.id), [1, 2, 3]);
+});
