@@ -22,6 +22,16 @@ WEBSOCKET_RECHECK_CATEGORIES = frozenset({"terminal_ws_recheck", "remote_desktop
 
 def classify_hotpath(path: str) -> str | None:
     """Map a *path*, never a query string, to a fixed-cardinality category."""
+    # Measure operator reads separately from payload-free browser waits.
+    if path == "/api/clients/control-room-summary":
+        return "ui_control_room_summary"
+    if path == "/api/clients/control-room-realtime/wait":
+        return "ui_realtime_wait"
+    if path in {"/api/clients/control-room-realtime/capability", "/api/clients/release-administration-realtime/capability"}:
+        return "ui_realtime_capability"
+    parts = path.split("/")
+    if len(parts) == 5 and parts[:3] == ["", "api", "clients"] and parts[3].isdigit() and parts[4] == "chrome-status":
+        return "ui_control_room_hot"
     if path == "/api/clientflow-update/token":
         return "updater_token"
     if path.startswith("/api/clientflow-update/"):

@@ -25,6 +25,7 @@ APT_INDEX_STAMPS = (Path("/var/lib/apt/periodic/update-success-stamp"),
                     Path("/var/lib/clientflow/ubuntu-index-refresh"))
 UPDATE_STATUS_PATH = Path("/var/lib/clientflow/update-status/summary.json")
 APT_CHECK_TTL_SECONDS = 900
+APT_ERROR_RETRY_SECONDS = 300
 APT_INDEX_MAX_AGE_SECONDS = 48 * 3600
 _UPGRADABLE = re.compile(r"^[^/\s]+/\S+\s+\S+\s+\S+\s+\[upgradable from: [^\]]+\]$")
 FIRMWARE_STATUS_TTL_SECONDS = max(300, int(os.getenv("CLIENTFLOW_FIRMWARE_STATUS_TTL_SECONDS", "21600")))
@@ -92,11 +93,19 @@ class UbuntuStatusCache:
     def snapshot(self) -> dict[str, Any]:
         now = time.monotonic()
         fingerprint = _apt_fingerprint()
-        if self._value is None or fingerprint != self._fingerprint or now - self._loaded_at >= APT_CHECK_TTL_SECONDS:
+        ttl = APT_ERROR_RETRY_SECONDS if self._value is not None and self._value.get("state") == "unknown" else APT_CHECK_TTL_SECONDS
+        # A cached positive count must not remain known past the APT index age
+        # boundary, even if the package database did not change.
+        stamps = [stamp for stamp in fingerprint[:2] if stamp is not None]
+        index_fresh = bool(stamps) and -60 <= time.time() - max(stamps) / 1e9 <= APT_INDEX_MAX_AGE_SECONDS
+        known_index_expired = self._value is not None and self._value.get("state") == "known" and not index_fresh
+        if self._value is None or fingerprint != self._fingerprint or known_index_expired or now - self._loaded_at >= ttl:
             self._value = _ubuntu_snapshot()
             self._fingerprint = fingerprint
             self._loaded_at = now
-        return dict(self._value)
+        # A reboot marker can appear independently of the APT/dpkg fingerprint.
+        # Refresh this cheap observation without forcing another apt invocation.
+        return {**self._value, "requires_reboot": Path("/run/reboot-required").exists()}
 
 
 def _run_fwupd_json(*args: str, timeout: int = 45) -> tuple[int, dict[str, Any] | None, str | None]:

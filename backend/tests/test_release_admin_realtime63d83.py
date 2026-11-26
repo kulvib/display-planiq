@@ -1,4 +1,5 @@
 """Release-admin status is a committed, scoped, payload-free event stream."""
+import asyncio
 import os
 from types import SimpleNamespace
 
@@ -91,3 +92,60 @@ def test_committed_status_version_change_wakes_once_without_heartbeat_writes(mon
         assert realtime_wakeup.current_generation(topic, key) == expected[0]
     finally:
         engine.dispose()
+
+
+def test_async_ui_waiters_scale_and_wake_only_the_authorized_scope():
+    async def scenario():
+        def claims(client=None, org=None, global_scope=False):
+            return {"client_id": client, "organization_id": org, "global_scope": global_scope}
+
+        def generation(scope):
+            return ui_realtime.current_generation(
+                global_scope=scope["global_scope"], organization_id=scope["organization_id"], client_id=scope["client_id"]
+            )
+
+        scopes = [claims(client=83000 + i) for i in range(100)]
+        scopes += [claims(org=83001), claims(org=83002), claims(global_scope=True)]
+        before = [generation(scope) for scope in scopes]
+        tasks = [asyncio.create_task(ui_realtime.wait_for_ui_change_async(claims=scope, after=seen, timeout=10))
+                 for scope, seen in zip(scopes, before)]
+        try:
+            await asyncio.sleep(0)
+            assert sum(map(len, ui_realtime._UI_ASYNC_WAITERS.values())) == 103
+            await asyncio.to_thread(ui_realtime.notify_ui_state_changed, organization_id=83001, client_id=83003)
+            for index in (3, 100, 102):
+                assert await asyncio.wait_for(tasks[index], 1) == before[index] + 1
+            assert all(not task.done() for i, task in enumerate(tasks) if i not in (3, 100, 102))
+            await asyncio.to_thread(ui_realtime.notify_ui_fleet_order_changed, {83002})
+            assert await asyncio.wait_for(tasks[101], 1) == before[101] + 1
+            assert not tasks[4].done()
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        assert not ui_realtime._UI_ASYNC_WAITERS
+        scope = claims(client=83099)
+        before_timeout = generation(scope)
+        assert await ui_realtime.wait_for_ui_change_async(claims=scope, after=before_timeout, timeout=0.001) == before_timeout
+        assert not ui_realtime._UI_ASYNC_WAITERS
+    asyncio.run(scenario())
+
+
+def test_async_release_wait_keeps_commit_scope_and_never_uses_ui_client_waiters():
+    async def scenario():
+        claims = {"release_admin": True, "global_scope": True, "client_id": None, "organization_id": None}
+        topic = realtime_wakeup.RELEASE_ADMIN_WAKE_DOMAIN
+        key = realtime_wakeup.RELEASE_ADMIN_WAKE_KEY
+        before = realtime_wakeup.current_generation(topic, key)
+        task = asyncio.create_task(ui_realtime.wait_for_ui_change_async(claims=claims, after=before, timeout=10))
+        try:
+            await asyncio.sleep(0)
+            ui_realtime.notify_ui_state_changed(organization_id=83001, client_id=83003)
+            await asyncio.sleep(0)
+            assert not task.done()
+            await asyncio.to_thread(realtime_wakeup.notify_command_available, topic, key)
+            assert await asyncio.wait_for(task, 1) == before + 1
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(scenario())

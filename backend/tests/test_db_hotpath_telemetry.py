@@ -9,6 +9,11 @@ from service1.db_hotpath_telemetry import HotpathDatabaseTelemetry, classify_hot
 
 def test_only_fixed_route_categories_are_accepted_without_dynamic_identifiers() -> None:
     examples = {
+        "/api/clients/control-room-summary": "ui_control_room_summary",
+        "/api/clients/control-room-realtime/wait": "ui_realtime_wait",
+        "/api/clients/control-room-realtime/capability": "ui_realtime_capability",
+        "/api/clients/release-administration-realtime/capability": "ui_realtime_capability",
+        "/api/clients/57/chrome-status": "ui_control_room_hot",
         "/api/livestream-agent/clients/57/presence": "livestream_presence",
         "/api/livestream-agent/clients/57/status": "livestream_status",
         "/api/livestream-agent/clients/57/commands/claim": "livestream_other",
@@ -137,3 +142,18 @@ def test_websocket_recheck_wrapper_propagates_errors_and_counts_failed_checks(mo
     clock[0] = 2
     monitor.record_websocket_recheck("remote_desktop_ws_recheck", True, begin()[0])
     assert json.loads(logs[0])["categories"]["terminal_ws_recheck"]["failed_websocket_rechecks"] == 1
+
+
+def test_control_room_waits_and_authoritative_reads_are_measured_separately():
+    clock = [0.0]
+    logs = []
+    monitor = HotpathDatabaseTelemetry(clock=lambda: clock[0], interval_seconds=60, emit=logs.append)
+    monitor.record("/api/clients/control-room-realtime/wait", 200, SimpleNamespace())
+    monitor.record("/api/clients/999/chrome-status", 200, SimpleNamespace(statement_count=4, select_count=4, checkout_count=1))
+    clock[0] = 60
+    monitor.record("/api/clients/control-room-realtime/wait", 200, SimpleNamespace())
+    categories = json.loads(logs[0])["categories"]
+    assert categories["ui_realtime_wait"]["statements"] == 0
+    assert categories["ui_realtime_wait"]["checkouts"] == 0
+    assert categories["ui_control_room_hot"]["statements"] == 4
+    assert "999" not in logs[0]

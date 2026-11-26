@@ -83,6 +83,8 @@ def test_control_room_realtime_wait_is_capability_scoped_and_db_free():
     assert '"/clients/control-room-realtime/wait"' in clients
     wait_block = clients[clients.index("def wait_control_room_realtime"):clients.index('@router.get("/clients/deleted"')]
     assert "Depends(get_session)" not in wait_block
+    assert "async def wait_control_room_realtime(" in clients
+    assert "await wait_for_ui_change_async(" in wait_block
     assert "waitForControlRoomRealtime(capability, generation, 25)" in details
     assert "CHROME_STATUS_IDLE_POLL_MS = 60000" in details
     assert "waitForControlRoomRealtime(capability, generation, 25)" in listing
