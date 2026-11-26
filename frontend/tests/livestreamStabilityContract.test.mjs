@@ -157,8 +157,33 @@ test("livestream overview exposes playback latency and fullscreen per tile", () 
   assert.match(overview, /FullscreenIcon/);
   assert.match(overview, /requestFullscreen/);
   assert.match(overview, /aria-label=\{`Vis \$\{client\.name/);
-  assert.match(overview, /Forsinkelse: \$\{formatLatency\(state === "live" && shouldRun \? latencySeconds : null\)\}/);
+  assert.match(overview, /livestreamLatencyStatus\(state === "live" && shouldRun \? latencySeconds : null\)/);
+  assert.match(overview, /label=\{state === "live" \? latencyStatus\.text/);
+  assert.doesNotMatch(overview, /formatLatency\(/);
   assert.match(overview, /hlsRef\.current\?\.latency/);
   assert.match(overview, /seekable\.end/);
   assert.match(overview, /authenticatedFetch\(`\$\{apiUrl\}\/api\/livestream-v2\/hls/);
+});
+
+
+test("wall reports decoded video dimensions and native HLS starts only on actual playback", () => {
+  const wall = read("src/pages/adminpages/LivestreamOverview.jsx");
+  assert.match(wall, /video\?\.videoWidth/);
+  assert.match(wall, /video\?\.videoHeight/);
+  assert.match(wall, /onResize=\{updateVideoResolution\}/);
+  assert.match(wall, /onEmptied=\{\(\) => setVideoResolution\(null\)\}/);
+  assert.match(wall, /if \(cancelled \|\| reportedPlayable \|\| video\.paused \|\| video\.readyState < 2\) return/);
+  const native = wall.split('if (video.canPlayType("application/vnd.apple.mpegurl"))', 2)[1].split('setState("error")', 1)[0];
+  assert.doesNotMatch(native, /setState\("live"\)/);
+  assert.match(wall, /if \(nativeHls\) \{[\s\S]*?setState\("live"\)/);
+  assert.match(wall, /Number\.isSafeInteger\(viewers\) && viewers >= 0 \? viewers : null/);
+});
+
+test("wall caps mounted tiles and suspends media on unverified inventory", () => {
+  const wall = read("src/pages/adminpages/LivestreamOverview.jsx");
+  assert.match(wall, /const PAGE_SIZE = 12/);
+  assert.match(wall, /sortedClients\.slice\(safePage \* PAGE_SIZE, \(safePage \+ 1\) \* PAGE_SIZE\)/);
+  assert.match(wall, /visibleClients\.map/);
+  assert.match(wall, /pageMediaActive=\{pageMediaActive && inventoryValid\}/);
+  assert.match(wall, /if \(!inventoryActive\.current \|\| inventoryRequest\.current\) return/);
 });

@@ -16,6 +16,7 @@ from ..realtime_wakeup import current_generation as wake_generation, wait_for_ch
 from ..livestream_v2 import (
     CLIENT_TOKEN_TTL_SECONDS,
     MAX_HLS_FILE_BYTES,
+    MAX_HLS_MANIFEST_BYTES,
     TOKEN_ISSUER,
     VIEWER_HEARTBEAT_SECONDS,
     VIEWER_LEASE_SECONDS,
@@ -41,6 +42,7 @@ from ..livestream_v2 import (
     viewer_heartbeat,
     viewer_leave,
     write_hls_file,
+    safe_hls_filename,
 )
 from .livestream_media import require_hls_access
 from ..livestream_media_capability import issue_livestream_media_capability, TTL_SECONDS as MEDIA_CAPABILITY_TTL_SECONDS
@@ -131,6 +133,35 @@ def _no_cache(response: Response) -> None:
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
+
+
+# Single ASGI event-loop ownership; release reservations even on disconnect.
+MAX_HLS_UPLOADS = 8
+MAX_HLS_UPLOAD_RESERVED_BYTES = 64 * 1024 * 1024
+HLS_UPLOAD_TIMEOUT_SECONDS = 60
+_upload_reservations: dict[int, int] = {}
+
+
+def _upload_capacity(request: Request, maximum: int) -> int:
+    raw = request.headers.getlist("content-length")
+    if len(raw) > 1:
+        raise HTTPException(400, "Ugyldig Content-Length")
+    if not raw:
+        return maximum
+    try:
+        size = int(raw[0])
+    except ValueError as exc:
+        raise HTTPException(400, "Ugyldig Content-Length") from exc
+    if not 0 < size <= maximum:
+        raise HTTPException(413, "Livestreamfil er tom eller for stor")
+    return size
+
+
+def _reserve_upload(client_id: int, size: int) -> None:
+    if (client_id in _upload_reservations or len(_upload_reservations) >= MAX_HLS_UPLOADS
+            or sum(_upload_reservations.values()) + size > MAX_HLS_UPLOAD_RESERVED_BYTES):
+        raise HTTPException(429, "Livestream uploadkapacitet er optaget", headers={"Retry-After": "1"})
+    _upload_reservations[client_id] = size
 
 
 async def _read_bounded_body(request: Request, *, maximum: int) -> bytes:
@@ -399,19 +430,31 @@ async def agent_upload_file(
     with Session(engine) as auth_session:
         require_agent_token(auth_session, authorization, client_id=client_id)
 
-    payload = await _read_bounded_body(request, maximum=MAX_HLS_FILE_BYTES)
-    with Session(engine) as session:
-        write_hls_file(
-            session,
-            client_id=client_id,
-            generation_id=generation_id,
-            filename=filename,
-            payload=payload,
-            sha256=sha256,
-            sequence=sequence,
-        )
-        session.commit()
-        return {"ok": True, "generation_id": generation_id, "filename": filename}
+    maximum = MAX_HLS_MANIFEST_BYTES if safe_hls_filename(filename) == "index.m3u8" else MAX_HLS_FILE_BYTES
+    size = _upload_capacity(request, maximum)
+    _reserve_upload(client_id, size)
+    try:
+        try:
+            payload = await asyncio.wait_for(_read_bounded_body(request, maximum=size),
+                                             timeout=HLS_UPLOAD_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(408, "Livestream upload timeout") from exc
+        with Session(engine) as session:
+            # Recheck credentials after a potentially slow body transfer.
+            require_agent_token(session, authorization, client_id=client_id)
+            write_hls_file(
+                session,
+                client_id=client_id,
+                generation_id=generation_id,
+                filename=filename,
+                payload=payload,
+                sha256=sha256,
+                sequence=sequence,
+            )
+            session.commit()
+            return {"ok": True, "generation_id": generation_id, "filename": filename}
+    finally:
+        _upload_reservations.pop(client_id, None)
 
 
 @router.post("/livestream-v2/hls/{client_id}/viewer-heartbeat")

@@ -35,8 +35,10 @@ import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { buildClientflowUpdateRequest } from "./clientflowUpdateRequest.mjs";
+import apiClient from "../../api/client";
+import { BASELINE_ID, BASELINE_VERSION, validateOrderAvailability, verifyOrderResult } from "../adminpages/clientflowStandardOrders.mjs";
 import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "./clientflowCatalogOptions.mjs";
-import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, getClientflowRecoveryGate, acknowledgeClientflowRecovery, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
+import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, getActiveClientflowDeployment, getClientflowRecoveryGate, acknowledgeClientflowRecovery, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
@@ -182,7 +184,17 @@ function UpdateStepTimeline({ steps, currentIndex = -1, terminal = false, error 
   );
 }
 
-function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
+function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendingOsUpdate, pendingFirmwareUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === "superadmin";
+  const [standardIntent, setStandardIntent] = React.useState(null);
+  const [standardPassword, setStandardPassword] = React.useState("");
+  const standardRequest = React.useRef(null);
+  const standardMounted = React.useRef(false);
+  React.useEffect(() => {
+    standardMounted.current = true;
+    return () => { standardMounted.current = false; standardRequest.current?.abort(); };
+  }, []);
   const [polling, setPolling] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
@@ -206,7 +218,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const meta = getClientflowDeploymentStepMeta(state);
   const inProgress = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(state);
   const finished = CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES.has(state);
-  const otherUpdateInProgress = !inProgress && pendingOsUpdate === true;
+  const otherUpdateInProgress = !inProgress && (pendingOsUpdate === true || pendingFirmwareUpdate === true);
   const installedVersion = clientVersion;
   const latestVersion = releaseCatalog?.latest_stable || null;
   const selectableReleases = React.useMemo(
@@ -215,6 +227,12 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   );
   const resolvedSelectedVersion = selectedVersion === "latest" ? latestVersion : selectedVersion;
   const selectedRelease = selectableReleases.find((release) => release.version === resolvedSelectedVersion) || null;
+  const standardBaseline = releaseCatalog?.catalog_sequence >= 1250;
+  const standardEligible = standardBaseline && releaseCatalog?.catalog_sequence === 1250 &&
+    latestVersion === BASELINE_VERSION && resolvedSelectedVersion === BASELINE_VERSION &&
+    selectedRelease?.release_id === BASELINE_ID && selectedRelease?.rollback_allowed === false &&
+    String(installedVersion || "").replace(/^v/i, "") === "1.3.47" &&
+    Number.isSafeInteger(Number(clientId)) && Number(clientId) > 0 && isSuperadmin && clientOnline === true;
   const selectedReleaseRequiresReboot = selectedRelease?.requires_reboot === true;
   const deploymentRelease = selectableReleases.find((release) => release.version === deployment?.target_version) || null;
   const deploymentRequiresReboot = deploymentRelease?.requires_reboot === true;
@@ -317,12 +335,13 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   }, [feedbackVisible, inProgress, starting, cancelling, finished, state]);
 
   const executeClientFlowUpdate = async ({ confirmDowngrade = false, reason = null } = {}) => {
-    if (!clientId || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
+    if (standardBaseline || !clientId || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
     setFeedbackVisible(true);
     setStarting(true);
     try {
       const options = buildClientflowUpdateRequest({
         targetVersion: resolvedSelectedVersion,
+        sourceVersion: installedVersion,
         confirmDowngrade,
         reason,
       });
@@ -354,24 +373,92 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     }
   };
 
+  // Standard orders share the exact same backend authorization path as
+  // Administration. Review is an explicit action, never a polling loop.
+  const reviewStandardUpdate = async () => {
+    if (disabled || !standardEligible || standardRequest.current) return;
+    const controller = new AbortController();
+    standardRequest.current = controller;
+    setStarting(true);
+    setStandardPassword("");
+    try {
+      const { data } = await apiClient.get("/api/clientflow/standard-deployments/availability", { signal: controller.signal });
+      const authority = validateOrderAvailability(data);
+      if (!standardMounted.current || controller.signal.aborted) return;
+      setStandardIntent({ authority, clientId: Number(clientId), sourceVersion: "1.3.47" });
+    } catch (err) {
+      if (standardMounted.current && !controller.signal.aborted) showSnackbar?.({ message: err?.message || "Releaseautorisation kunne ikke kontrolleres", severity: "error" });
+    } finally {
+      if (standardRequest.current === controller) standardRequest.current = null;
+      if (standardMounted.current) setStarting(false);
+    }
+  };
+
+  const closeStandardUpdate = () => {
+    if (starting) return;
+    setStandardIntent(null);
+    setStandardPassword("");
+  };
+
+  const confirmStandardUpdate = async () => {
+    if (disabled || !standardEligible || !standardIntent || !standardPassword || standardRequest.current ||
+        standardIntent.clientId !== Number(clientId)) return;
+    const controller = new AbortController();
+    standardRequest.current = controller;
+    const targets = [{ client_id: standardIntent.clientId, expected_source_version: standardIntent.sourceVersion }];
+    const body = { target_release_id: BASELINE_ID, expected_bundle_sha256: standardIntent.authority.bundle_sha256,
+      expected_revision: standardIntent.authority.revision, targets, confirmed: true, password: standardPassword };
+    setStandardPassword("");
+    setStarting(true);
+    try {
+      const { data } = await apiClient.post("/api/clientflow/standard-deployments", body, { signal: controller.signal });
+      verifyOrderResult(data, targets);
+      if (!standardMounted.current || controller.signal.aborted) return;
+      showSnackbar?.({ message: "ClientFlow 1.4.0-opdatering er bestilt", severity: "success" });
+      // Read the real deployment state; do not synthesize a deployment or
+      // guess download progress from the authorization response.
+      try {
+        const observed = await getActiveClientflowDeployment(clientId);
+        if (standardMounted.current && !controller.signal.aborted && observed?.id === data.deployments[0].deployment_id) {
+          onDeploymentChange?.(observed);
+          setFeedbackVisible(true);
+        }
+      } catch {
+        // The order has succeeded. Reconcile status through the existing
+        // Control Room refresh instead of resubmitting an uncertain request.
+      }
+    } catch (err) {
+      if (standardMounted.current && !controller.signal.aborted) showSnackbar?.({ message: (err?.message || "Bestillingens resultat er ukendt") + " Hent status før et nyt forsøg.", severity: "error" });
+    } finally {
+      body.password = "";
+      if (standardRequest.current === controller) standardRequest.current = null;
+      if (standardMounted.current) {
+        setStarting(false);
+        setStandardIntent(null);
+        onFinished?.();
+      }
+    }
+  };
+
   const startClientFlowUpdate = (event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
     if (disabled) return;
-    // Backend requires an auditable reason for every authorized update,
-    // not only for a downgrade. Never submit without explicit confirmation.
+    if (standardBaseline) { void reviewStandardUpdate(); return; }
+    // Keep an explicit confirmation; ordinary updates generate audit text.
+    setUpdateReason("");
     setUpdateReasonDialogOpen(true);
   };
 
   const confirmClientFlowUpdate = async () => {
     const reason = updateReason.trim();
-    if (!reason || reason.length > 500) return;
+    if ((isDowngrade && !reason) || reason.length > 500) return;
     setUpdateReasonDialogOpen(false);
     setUpdateReason("");
     await executeClientFlowUpdate({ confirmDowngrade: isDowngrade, reason });
   };
 
-  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected || recoveryGateLoading || !!recoveryGateError || recoveryGate?.blocked !== false;
+  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected || recoveryGateLoading || !!recoveryGateError || recoveryGate?.blocked !== false || (standardBaseline && !standardEligible);
   const stateIsError = state === "failed" || state === "recovery_failed";
   const stateIsWarning = state === "cancelled" || state === "rolled_back" || state === "rolling_back";
   const stateIsSuccess = state === "succeeded";
@@ -508,18 +595,32 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
         </Box>
       )}
       <ClientFlowHistoryOnDemand clientId={clientId} />
-      <Dialog open={updateReasonDialogOpen} onClose={() => setUpdateReasonDialogOpen(false)} maxWidth="sm" fullWidth>
+      {standardBaseline && !standardEligible && !sameVersionSelected && !inProgress && (
+        <Alert severity="info" sx={{ mt: 1 }}>Standardrelease 1.4.0 kræver en online, kompatibel klient og superadministrator. Manuel rollback til 1.3 er ikke tilgængelig.</Alert>
+      )}
+      <Dialog open={Boolean(standardIntent)} onClose={closeStandardUpdate} maxWidth="sm" fullWidth>
+        <DialogTitle>Bekræft ClientFlow 1.4.0-opdatering</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>Klient #{standardIntent?.clientId}: 1.3.47 → 1.4.0. Kioskbrowseren kan blive lukket, og klienten genstarter under opdateringen. Bestillingen registreres automatisk i auditloggen.</Alert>
+          <TextField autoFocus fullWidth type="password" autoComplete="current-password" label="Genbekræft din adgangskode" value={standardPassword} onChange={(event) => setStandardPassword(event.target.value)} disabled={starting} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeStandardUpdate} disabled={starting}>Annuller</Button>
+          <Button variant="contained" disabled={disabled || !standardEligible || !standardPassword} onClick={confirmStandardUpdate}>Bestil opdatering</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={updateReasonDialogOpen && !standardBaseline} onClose={() => setUpdateReasonDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{isDowngrade ? "Bekræft ClientFlow-nedgradering" : "Bekræft ClientFlow-opdatering"}</DialogTitle>
         <DialogContent>
           <Alert severity={isDowngrade ? "warning" : "info"} sx={{ mb: 2 }}>
             Du er ved at ændre ClientFlow fra {installedVersion ? `v${installedVersion}` : "en ukendt version"} til v{resolvedSelectedVersion}.
-            {isDowngrade ? " Nedgraderingen logges som en kritisk administratorhandling." : " Angiv en begrundelse, før deploymenten kan autoriseres."}
+            {isDowngrade ? " Nedgraderingen logges som en kritisk administratorhandling." : " Opdateringen registreres automatisk i auditloggen."}
           </Alert>
-          <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={updateReason} onChange={(event) => setUpdateReason(event.target.value)} helperText={`${updateReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />
+          {isDowngrade && <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={updateReason} onChange={(event) => setUpdateReason(event.target.value)} helperText={`${updateReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setUpdateReasonDialogOpen(false)}>Annuller</Button>
-          <Button color={isDowngrade ? "warning" : "primary"} variant="contained" disabled={!updateReason.trim() || starting || inProgress} onClick={confirmClientFlowUpdate}>
+          <Button color={isDowngrade ? "warning" : "primary"} variant="contained" disabled={(isDowngrade && !updateReason.trim()) || starting || inProgress || disabled} onClick={confirmClientFlowUpdate}>
             {isDowngrade ? "Bekræft nedgradering" : "Bestil ClientFlow-opdatering"}
           </Button>
         </DialogActions>
@@ -781,7 +882,7 @@ function getUbuntuPhaseTimestamp(client) {
   );
 }
 
-function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) {
+function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted, clientflowUpdateInProgress = false }) {
   const [starting, setStarting] = React.useState(false);
   const [localStatus, setLocalStatus] = React.useState({
     phase: null,
@@ -803,7 +904,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
   const inProgress = UBUNTU_UPDATE_BUSY_STEPS.has(phase) || !!client?.pending_os_update || starting;
   const otherUpdateInProgress =
     !inProgress &&
-    String(client?.state || "").trim().toLowerCase() === "updating";
+    (clientflowUpdateInProgress || client?.pending_firmware_update === true || String(client?.state || "").trim().toLowerCase() === "updating");
   const finished = phase === "success" || phase === "up_to_date" || phase === "error";
   const ubuntuVersion = client?.ubuntu_version || "ukendt";
   const message = getUbuntuHumanMessage(client, localStatus);
@@ -1041,11 +1142,12 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
             <Typography variant="caption" sx={{ color: MUTED }}>
               Version: {ubuntuVersion}
             </Typography>
-            {updateCount !== null && (
-              <Typography variant="caption" sx={{ color: MUTED }}>
-                Pakker: {updateCount}
-              </Typography>
-            )}
+            <Typography variant="caption" sx={{ color: updateCount === null ? MUTED : updateCount > 0 ? "#fbbf24" : "#22c55e" }}>
+              {updateCount === null ? "Pakkestatus ukendt eller forældet" : `Lokal pakkeliste: ${updateCount} klar`}
+            </Typography>
+            {client?.ubuntu_update_inventory?.checked_at && <Typography variant="caption" sx={{ color: MUTED }}>
+              Kontrolleret: {formatUpdateDateTime(client.ubuntu_update_inventory.checked_at)}
+            </Typography>}
             <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>
               {statusText}
             </Typography>
@@ -1430,8 +1532,9 @@ function getNextScheduleLabel(next, days) {
 }
 
 function getUbuntuUpdateCount(client) {
-  const count = Number.parseInt(String(client?.ubuntu_updates_available ?? ""), 10);
-  return Number.isFinite(count) && count >= 0 ? count : null;
+  const inventory = client?.ubuntu_update_inventory;
+  const count = inventory?.update_count;
+  return inventory?.state === "known" && !inventory.error && Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
 function formatUbuntuUpdates(client) {
@@ -1812,20 +1915,22 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
   );
 }
 
-function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }) {
+function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, otherUpdateInProgress = false }) {
   const { user } = useAuth();
   const isSuperadmin = user?.role === "superadmin";
   const firmware = client?.firmware || null;
   const [starting, setStarting] = React.useState(false);
+  const [confirmation, setConfirmation] = React.useState(null);
   const supported = firmware?.supported === true;
-  const updateCount = Number.isFinite(Number(firmware?.update_count)) ? Number(firmware.update_count) : 0;
+  const updateCount = Number.isSafeInteger(firmware?.update_count) && firmware.update_count >= 0 ? firmware.update_count : null;
   const updateAvailable = firmware?.update_available === true && updateCount > 0;
   const requiresShutdown = firmware?.requires_shutdown === true;
   const inProgress = client?.pending_firmware_update === true || ["requested", "installing"].includes(String(client?.firmware_update_status || ""));
-  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || requiresShutdown || starting || inProgress || client?.pending_os_update === true;
+  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || Boolean(firmware?.error) || firmware?.stale !== false || requiresShutdown || starting || inProgress || otherUpdateInProgress || client?.pending_os_update === true;
 
   const startFirmwareUpdate = async () => {
-    if (disabled || !client?.id) return;
+    if (disabled || !client?.id || confirmation?.clientId !== client.id || confirmation?.checkedAt !== firmware?.checked_at) return;
+    setConfirmation(null);
     setStarting(true);
     try {
       const res = await requestFirmwareUpdate(client.id);
@@ -1840,14 +1945,18 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }
 
   let statusText = "Status ikke rapporteret";
   let statusColor = MUTED;
-  if (supported) {
+  if (supported && firmware?.stale === false && updateCount !== null) {
     if (updateAvailable) {
       statusText = `${updateCount} opdatering${updateCount === 1 ? "" : "er"} tilgængelig${updateCount === 1 ? "" : "e"}`;
       statusColor = "#fbbf24";
     } else {
-      statusText = "Firmware er opdateret";
+      statusText = "Ingen firmwareopdateringer fundet i lokal metadata";
       statusColor = "#22c55e";
     }
+  }
+  if (firmware?.stale === true) {
+    statusText = "Firmwarestatus forældet";
+    statusColor = MUTED;
   }
   if (firmware?.error) {
     statusText = `Firmware-statusfejl: ${firmware.error}`;
@@ -1876,6 +1985,8 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }
           <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>Firmware</Typography>
           <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>{statusText}</Typography>
           <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>{helper}</Typography>
+          {firmware?.checked_at && <Typography variant="caption" sx={{ color: MUTED, display: "block" }}>Senest kontrolleret: {formatUpdateDateTime(firmware.checked_at)}</Typography>}
+          {firmware?.stale === false && !firmware?.error && Array.isArray(firmware?.devices) && firmware.devices.slice(0,32).map((device, index) => <Typography key={device.device_id || index} variant="caption" sx={{ color: MUTED, display: "block" }}>{device.name}: {device.version || "ukendt"}{Array.isArray(device.available_versions) && device.available_versions.length ? ` → ${device.available_versions.join(", ")}` : ""}</Typography>)}
         </Box>
         {isSuperadmin && (
           <Button
@@ -1885,13 +1996,21 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }
             startIcon={starting || inProgress ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />}
             disabled={disabled}
             type="button"
-            onClick={startFirmwareUpdate}
+            onClick={() => setConfirmation({clientId: client.id, checkedAt: firmware?.checked_at})}
             sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}
           >
             {starting || inProgress ? "Opdaterer firmware…" : "Installer firmwareopdateringer"}
           </Button>
         )}
       </Stack>
+      <Dialog open={Boolean(confirmation)} onClose={() => setConfirmation(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Bekræft firmwareopdatering</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning">Klient {client?.name || client?.id}: kioskbrowseren lukkes under installationen. Klienten kan genstarte. Undlad at afbryde strømmen.</Alert>
+          {confirmation?.checkedAt !== firmware?.checked_at && <Alert severity="info" sx={{ mt: 1 }}>Status er ændret. Luk dialogen og kontrollér opdateringerne igen.</Alert>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setConfirmation(null)}>Annullér</Button><Button color="warning" variant="contained" disabled={disabled || confirmation?.clientId !== client?.id || confirmation?.checkedAt !== firmware?.checked_at} onClick={startFirmwareUpdate}>Installer firmware</Button></DialogActions>
+      </Dialog>
     </Box>
   );
 }
@@ -1954,9 +2073,12 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
                 </Alert>
               )}
             <ClientFlowUpdateControl
+              key={client?.id}
               clientId={client?.id}
+              clientOnline={clientOnline}
               clientVersion={client?.client_version}
               pendingOsUpdate={client?.pending_os_update}
+              pendingFirmwareUpdate={client?.pending_firmware_update}
               showSnackbar={showSnackbar}
               onFinished={onDiagnosticsRefresh}
               deployment={clientflowDeployment}
@@ -1967,12 +2089,14 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               clientOnline={clientOnline}
               showSnackbar={showSnackbar}
               onStarted={onUbuntuUpdateStarted}
+              clientflowUpdateInProgress={CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(clientflowDeployment?.state))}
             />
             <FirmwareUpdateControl
               client={client}
               clientOnline={clientOnline}
               showSnackbar={showSnackbar}
               onStarted={onDiagnosticsRefresh}
+              otherUpdateInProgress={CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(clientflowDeployment?.state))}
             />
           </Stack>
         </DataPanel>
@@ -2637,7 +2761,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const networkLevel = networkStatusLevel(client);
   const networkMessage = networkStatusMessage(client);
   const networkUnavailable = isNetworkUnavailable(client);
-  const ubuntuUpdateCount = Number.parseInt(String(client?.ubuntu_updates_available ?? ""), 10);
+  const ubuntuUpdateCount = getUbuntuUpdateCount(client);
   const hasUbuntuUpdates = Number.isFinite(ubuntuUpdateCount) && ubuntuUpdateCount > 0;
   const pendingChromeAction = normalizeText(client?.pending_chrome_action || "none");
   const hasPendingChromeAction = pendingChromeAction && pendingChromeAction !== "none";
@@ -2801,7 +2925,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Fuldskærm", value: client?.browser_fullscreen === "fullscreen" ? "Ja" : client?.browser_fullscreen === "windowed" ? "Nej" : "Ukendt", level: client?.browser_fullscreen === "fullscreen" ? "ok" : client?.browser_fullscreen === "windowed" ? "warn" : "neutral" },
         { label: "Netværk", value: networkMessage, level: networkLevel, wide: true },
         { label: "Display", value: `${displaySummary} · ${statusText(client?.display_resolution_current_output)}`, level: getStatusLevel(client?.display_resolution_status) },
-        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
+        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : ubuntuUpdateCount === null ? "neutral" : "ok" },
       ],
     },
     {
@@ -2963,7 +3087,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       description: "Ubuntu-pakker. ClientFlow-deployments vises i Software-panelet fra den canonical deployment-state-machine.",
       columns: 2,
       rows: [
-        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
+        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : ubuntuUpdateCount === null ? "neutral" : "ok" },
         { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket" },
         { label: "Pending OS update", value: formatDiagnosticBoolean(client?.pending_os_update), boolean: client?.pending_os_update, trueLevel: "info" },
       ],

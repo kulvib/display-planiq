@@ -38,6 +38,7 @@ import {
   getAuthSessionSignal,
   getAuthToken,
   getClientflowDeployments,
+  createReleaseAdministrationRealtimeCapability,
   clientAction,
   openRemoteDesktop,
 } from "../../api";
@@ -343,6 +344,7 @@ const UPDATE_LIVE_FIELDS = [
   "pending_os_update",
   "ubuntu_update_command_id",
   "ubuntu_updates_available",
+  "ubuntu_update_inventory",
   "service_ubuntu_update_status",
   "ubuntu_update_status",
   "ubuntu_update_step",
@@ -354,6 +356,15 @@ const UPDATE_LIVE_FIELDS = [
   "ubuntu_update_progress",
   "ubuntu_update_package_count",
   "ubuntu_update_reboot_required",
+  "firmware",
+  "pending_firmware_update",
+  "firmware_update_status",
+  "firmware_update_message",
+  "firmware_update_error",
+  "firmware_update_started_at",
+  "firmware_update_updated_at",
+  "firmware_update_finished_at",
+  "firmware_update_reboot_required",
   // Local-management is projected by the same System batch that powers the
   // hot read; carrying it here removes the separate 2-second DB poll.
   "local_management_action",
@@ -483,8 +494,8 @@ function formatDashboardUptime(value) {
 }
 
 function formatUbuntuMetric(client) {
-  const raw = client?.ubuntu_updates_available;
-  const count = Number.parseInt(String(raw ?? ""), 10);
+  const inventory = client?.ubuntu_update_inventory;
+  const count = inventory?.state === "known" && !inventory.error ? inventory.update_count : null;
   if (client?.pending_os_update || client?.state === "updating") return "Opdaterer";
   if (!Number.isFinite(count) || count < 0) return "ukendt";
   return count === 0 ? "Ingen" : `${count} klar`;
@@ -1019,28 +1030,27 @@ export default function ClientDetailsPage({
   const [liveUpdateFields, setLiveUpdateFields] = useState(() =>
     pickUpdateFields(client)
   );
-  // ClientFlow deployment state has one owner at the common parent. Both the
-  // Actions and Software controls consume the same snapshot, so they never
-  // poll the deployment table independently. Inactive state is revalidated on
-  // mount/focus only; an active deployment gets one bounded 2.5-second poll.
+  // One deployment snapshot for both Actions and Software. The release
+  // administration wake channel is payload-free, and never authorizes work.
   const [clientflowDeployment, setClientflowDeployment] = useState(null);
-  const deploymentRefreshInFlightRef = useRef(false);
+  const deploymentRefreshInFlightRef = useRef(null);
 
   const refreshClientflowDeployment = useCallback(async () => {
-    if (!client?.id || !isSuperadmin || deploymentRefreshInFlightRef.current) return null;
-    deploymentRefreshInFlightRef.current = true;
+    if (!client?.id || !isSuperadmin || !isPageVisible() || deploymentRefreshInFlightRef.current) return null;
+    const request = new AbortController();
+    deploymentRefreshInFlightRef.current = request;
     try {
-      const rows = await getClientflowDeployments(client.id, { limit: 1 });
-      const latest = Array.isArray(rows) && rows.length ? rows[0] : null;
+      const rows = await getClientflowDeployments(client.id, { limit: 1, signal: request.signal });
+      if (request.signal.aborted || deploymentRefreshInFlightRef.current !== request) return null;
+      if (!Array.isArray(rows)) throw new Error("Ugyldig ClientFlow-status");
+      const latest = rows.length ? rows[0] : null;
       setClientflowDeployment(latest);
       return latest;
     } catch {
-      // A transient read failure must not fabricate "no active deployment".
-      // Keep the last known snapshot; backend action endpoints still enforce
-      // the durable no-concurrent-deployment invariant.
+      // Never fabricate a successful/empty snapshot after a failed read.
       return null;
     } finally {
-      deploymentRefreshInFlightRef.current = false;
+      if (deploymentRefreshInFlightRef.current === request) deploymentRefreshInFlightRef.current = null;
     }
   }, [client?.id, isSuperadmin]);
 
@@ -1061,6 +1071,8 @@ export default function ClientDetailsPage({
     return () => {
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      deploymentRefreshInFlightRef.current?.abort();
+      deploymentRefreshInFlightRef.current = null;
     };
   }, [client?.id, isSuperadmin, refreshClientflowDeployment]);
 
@@ -1068,10 +1080,66 @@ export default function ClientDetailsPage({
   const clientflowDeploymentActive = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(clientflowDeploymentState);
 
   useEffect(() => {
-    if (!client?.id || !isSuperadmin || !clientflowDeploymentActive) return undefined;
-    const timer = window.setInterval(refreshClientflowDeployment, CLIENTFLOW_DEPLOYMENT_POLL_MS);
+    if (!client?.id || !isSuperadmin) return undefined;
+    // Reconcile externally ordered updates even if a wake is lost. No
+    // background polling when hidden, and no separate polling by children.
+    const timer = window.setInterval(() => {
+      if (isPageVisible()) void refreshClientflowDeployment();
+    }, clientflowDeploymentActive ? CLIENTFLOW_DEPLOYMENT_POLL_MS : 60_000);
     return () => window.clearInterval(timer);
   }, [client?.id, isSuperadmin, clientflowDeploymentActive, refreshClientflowDeployment]);
+
+  useEffect(() => {
+    if (!client?.id || !isSuperadmin) return undefined;
+    let scope = null;
+    const start = () => {
+      scope?.cancel();
+      if (!isPageVisible()) return;
+      const current = createRealtimeRequestScope(getAuthSessionSignal());
+      scope = current;
+      const { signal } = current;
+      const run = async () => {
+        let capability = null;
+        let generation = 0;
+        let failures = 0;
+        while (!signal.aborted) {
+          try {
+            if (!capability) {
+              const issued = await createReleaseAdministrationRealtimeCapability(signal);
+              if (signal.aborted) break;
+              capability = issued?.capability;
+              generation = Number(issued?.generation);
+              if (!capability || !Number.isSafeInteger(generation) || generation < 0) throw new Error("Release-capability mangler");
+              await refreshClientflowDeployment();
+            }
+            if (signal.aborted) break;
+            const wake = await requestControlRoomRealtimeWait(capability, generation, 25, signal);
+            if (signal.aborted) break;
+            const next = Number(wake?.generation);
+            if (!Number.isSafeInteger(next) || next < 0) throw new Error("Ugyldig release-generation");
+            if (next < generation) { capability = null; continue; }
+            failures = 0;
+            if (wake?.changed === true || next > generation) {
+              generation = next;
+              if (!await waitForRealtimeRetry(750, signal)) break;
+              await refreshClientflowDeployment();
+            }
+          } catch (error) {
+            capability = null;
+            if (signal.aborted || error?.status === 403) break;
+            if (!await waitForRealtimeRetry(realtimeRetryDelayMs(++failures, error), signal)) break;
+          }
+        }
+      };
+      void run();
+    };
+    start();
+    document.addEventListener("visibilitychange", start);
+    return () => {
+      document.removeEventListener("visibilitychange", start);
+      scope?.cancel();
+    };
+  }, [client?.id, isSuperadmin, refreshClientflowDeployment]);
   // Action-confirmation genbruger den allerede eksisterende 1-sekunds hot poll
   // i stedet for at starte en ekstra full-client DB poll hvert 1,5 sekund.
   // receivedAt=0 betyder, at initial-snapshot aldrig må bekræfte en ny handling.

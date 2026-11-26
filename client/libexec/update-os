@@ -23,7 +23,9 @@ fi
 # Runtime Ubuntu maintenance intentionally follows the same conservative
 # non-removing policy as factory readiness. New dependencies are allowed, but
 # already installed packages must not be removed implicitly by this action.
-"$APT_GET" -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 update
+"$APT_GET" -o DPkg::Lock::Timeout=120 -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update
+# Advisory timestamp from a successful strict refresh.
+/usr/bin/touch /var/lib/clientflow/ubuntu-index-refresh
 "$APT_GET" \
   -o DPkg::Lock::Timeout=120 \
   -o Dpkg::Options::=--force-confdef \

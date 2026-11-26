@@ -111,11 +111,7 @@ def test_agent_socket_is_bound_to_live_control_credential_not_old_jwt(monkeypatc
 
 
 def test_root_owned_unexpired_viborg1_grant_is_accepted(monkeypatch):
-    import json
-    import os
-    import stat
     import time
-    from types import SimpleNamespace
 
     boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     marker = {
@@ -127,15 +123,7 @@ def test_root_owned_unexpired_viborg1_grant_is_accepted(monkeypatch):
         "expires_mono": time.monotonic() + 90,
     }
 
-    class Marker:
-        def lstat(self):
-            data = (json.dumps(marker) + "\n").encode("ascii")
-            return SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o644, st_size=len(data))
-
-        def read_text(self, encoding="ascii"):
-            return json.dumps(marker) + "\n"
-
-    monkeypatch.setattr(forwarder, "GUARD_MARKER", Marker())
+    monkeypatch.setattr(forwarder, "_read_guard_marker", lambda: dict(marker))
     monkeypatch.setattr(forwarder.socket, "gethostname", lambda: "viborg1-NUC14MNK-B2")
     forwarder.ensure_native_rdp_guard(client_id=3)
 
@@ -156,6 +144,15 @@ def test_root_owned_unexpired_viborg1_grant_is_accepted(monkeypatch):
     marker["client_id"] = 99
     with pytest.raises(forwarder.NativeRdpNotApproved):
         forwarder.ensure_native_rdp_guard(client_id=3)
+    marker["hostname"] = "client-99"
+    monkeypatch.setattr(forwarder.socket, "gethostname", lambda: "client-99")
+    forwarder.ensure_native_rdp_guard(client_id=99)
+    for invalid in (True, 0, "99", 100):
+        with pytest.raises(forwarder.NativeRdpNotApproved):
+            forwarder.ensure_native_rdp_guard(client_id=invalid)
+    marker["schema"] = True
+    with pytest.raises(forwarder.NativeRdpNotApproved):
+        forwarder.ensure_native_rdp_guard(client_id=99)
 
 
 def test_physical_guard_never_leaks_secrets_and_binds_to_existing_expiry(

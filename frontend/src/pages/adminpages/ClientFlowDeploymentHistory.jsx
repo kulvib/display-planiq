@@ -1,6 +1,6 @@
 import * as React from "react";
-import { Alert, Box, Chip, Divider, Stack, Typography } from "@mui/material";
-import { DEPLOYMENT_STEPS, deploymentPresentation } from "./clientflowDeploymentHistory.mjs";
+import { Alert, Box, Button, Chip, Divider, Stack, Typography } from "@mui/material";
+import { CANCELLABLE_STATES, DEPLOYMENT_STEPS, deploymentPresentation } from "./clientflowDeploymentHistory.mjs";
 
 function dateLabel(value) {
   if (!value) return "–";
@@ -10,7 +10,7 @@ function dateLabel(value) {
 }
 
 /** Pure view of canonical backend state. No network calls, timers or synthetic percentages. */
-export default function ClientFlowDeploymentHistory({ rows = [], showClient = true }) {
+export default function ClientFlowDeploymentHistory({ rows = [], showClient = true, onCancel, busy = false }) {
   if (!rows.length) return <Typography color="text.secondary">Ingen ClientFlow-deployments registreret.</Typography>;
   return (
     <Stack spacing={2}>
@@ -23,6 +23,9 @@ export default function ClientFlowDeploymentHistory({ rows = [], showClient = tr
                 {showClient ? `${item.client_name || `Klient #${item.client_id}`} · ` : ""}ClientFlow {item.target_version}
               </Typography>
               <Chip size="small" color={state.color} label={state.label} variant="outlined" />
+              {onCancel && CANCELLABLE_STATES.has(item.state) && (
+                <Button size="small" color="warning" disabled={busy} onClick={() => onCancel(item)} sx={{ ml: "auto" }}>Annullér opdatering</Button>
+              )}
             </Stack>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", my: 0.5 }}>
               Bestilt {dateLabel(item.requested_at)} · senest ændret {dateLabel(item.state_updated_at)}

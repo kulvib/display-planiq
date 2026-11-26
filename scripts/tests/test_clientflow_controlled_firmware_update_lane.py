@@ -15,7 +15,8 @@ def test_firmware_awareness_is_system_domain_read_only_telemetry() -> None:
     models = read("backend/service1/models.py")
     assert 'FWUPDMGR = Path("/usr/bin/fwupdmgr")' in agent
     assert 'FIRMWARE_STATUS_TTL_SECONDS' in agent
-    assert '"firmware": firmware_cache.snapshot()' in agent
+    assert 'firmware = firmware_cache.snapshot()' in agent
+    assert '"firmware": firmware' in agent
     assert 'system_payload.get("firmware")' in clients
     assert 'firmware: Optional[Dict[str, Any]] = None' in models
 

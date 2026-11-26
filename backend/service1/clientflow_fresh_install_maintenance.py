@@ -29,6 +29,10 @@ def require_fresh_install_not_suspended() -> None:
     )
     try:
         catalog = load_catalog()
+        if catalog.get("catalog_sequence", 0) >= 1250:
+            # The baseline fresh-install cutover needs its own verified
+            # installation evidence. A forward-update grant is not that proof.
+            raise HTTPException(status_code=503, detail="ClientFlow 1.4 nyinstallation afventer særskilt godkendelse")
         if catalog.get("default_install_version") == "1.3.44":
             require_1245_physical_acceptance()
     except (ClientFlowCatalogError, ClientFlowStableRolloutDenied) as exc:

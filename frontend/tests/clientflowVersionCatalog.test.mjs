@@ -51,11 +51,13 @@ test("canonical deployment events have Danish audit labels", () => {
   assert.match(auditSource, /ClientFlow-version bestilt \(historisk\)/);
 });
 
-test("Control Room always requires an explicit reason before any ClientFlow deployment", () => {
+test("Control Room confirms every deployment but requires human reason only for downgrade", () => {
   assert.match(infoSource, /setUpdateReasonDialogOpen\(true\)/);
   assert.match(infoSource, /buildClientflowUpdateRequest\(\{/);
   assert.match(infoSource, /await executeClientFlowUpdate\(\{ confirmDowngrade: isDowngrade, reason \}\)/);
-  assert.match(infoSource, /disabled=\{!updateReason\.trim\(\) \|\| starting \|\| inProgress\}/);
+  assert.match(infoSource, /disabled=\{\(isDowngrade && !updateReason\.trim\(\)\) \|\| starting \|\| inProgress \|\| disabled\}/);
+  assert.match(infoSource, /\{isDowngrade && <TextField autoFocus fullWidth multiline minRows=\{3\} label="Begrundelse"/);
+  assert.match(infoSource, /sourceVersion: installedVersion/);
   assert.match(infoSource, /Bekræft ClientFlow-opdatering/);
   assert.doesNotMatch(infoSource, /executeClientFlowUpdate\(\);/);
 });
@@ -94,4 +96,20 @@ test("malformed or missing release catalog must be rejected, not interpreted as 
     { latest_stable: "", releases: [] }]) {
     assert.throws(() => normalizeClientflowReleaseCatalog(invalid), /ugyldigt format/);
   }
+});
+
+
+test("1.4 Control Room uses the same standard order authority as administration", () => {
+  assert.match(infoSource, /if \(standardBaseline\) \{ void reviewStandardUpdate\(\); return; \}/);
+  assert.match(infoSource, /if \(standardBaseline \|\| !clientId/);
+  assert.match(infoSource, /apiClient\.get\("\/api\/clientflow\/standard-deployments\/availability"/);
+  assert.match(infoSource, /validateOrderAvailability\(data\)/);
+  assert.match(infoSource, /apiClient\.post\("\/api\/clientflow\/standard-deployments", body/);
+  assert.match(infoSource, /verifyOrderResult\(data, targets\)/);
+  assert.match(infoSource, /expected_bundle_sha256: standardIntent\.authority\.bundle_sha256/);
+  assert.match(infoSource, /standardIntent\.clientId !== Number\(clientId\)/);
+  assert.match(infoSource, /getActiveClientflowDeployment\(clientId\)/);
+  assert.match(infoSource, /key=\{client\?\.id\}/);
+  assert.match(infoSource, /clientOnline === true/);
+  assert.match(auditSource, /clientflow_standard_deployment_authorized/);
 });

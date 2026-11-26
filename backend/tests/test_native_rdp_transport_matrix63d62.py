@@ -103,6 +103,10 @@ class Socket:
 ])
 def test_native_binary_mixed_transport_matrix(monkeypatch, browser_https, agent_https):
     async def exercise():
+        from service1 import remote_desktop_v2 as policy
+        monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
+        monkeypatch.setattr(policy, "_load_native_release_eligibility", lambda _: "physical_test_eligible")
+        assert policy.authorize_native_rdp_client(3, force=True)
         monkeypatch.setenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", "true")
         user = SimpleNamespace(id=42, token_version=7, is_active=True, is_superadmin=True)
         credential = SimpleNamespace(id="credential", token_version=5)

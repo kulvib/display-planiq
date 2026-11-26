@@ -90,7 +90,11 @@ export default function MaintenanceAdministration() {
       apply(next);
     } catch (err) {
       if (controller.signal.aborted || err?.name === "AbortError") return;
-      if (!preserveError && seqRef.current === seq) setError(err?.message || "Kunne ikke hente vedligeholdelsesstatus");
+      if (seqRef.current === seq) {
+        setState(null); // Stale status must never enable a new mutation.
+        setPendingEnabled(null);
+        if (!preserveError) setError(err?.message || "Kunne ikke hente vedligeholdelsesstatus");
+      }
     } finally {
       if (!controller.signal.aborted && seqRef.current === seq) setLoading(false);
     }
@@ -102,6 +106,9 @@ export default function MaintenanceAdministration() {
   }, [load]);
 
   const performUpdate = React.useCallback(async (enabled, password) => {
+    if (state === null || loading || saving) return;
+    ++seqRef.current;
+    controllerRef.current?.abort();
     setSaving(true);
     setConfirmError("");
     setError("");
@@ -128,7 +135,7 @@ export default function MaintenanceAdministration() {
     } finally {
       setSaving(false);
     }
-  }, [apply, expectedEnd, load, message]);
+  }, [apply, expectedEnd, load, loading, message, saving, state]);
 
   const statusKnown = state !== null;
   return (
@@ -157,8 +164,8 @@ export default function MaintenanceAdministration() {
       )}
       <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
         <Stack spacing={2}>
-          <TextField label="Besked til brugerne" value={message} onChange={(e) => setMessage(e.target.value)} disabled={!statusKnown || saving} slotProps={{ htmlInput: { maxLength: 500 } }} />
-          <TextField type="datetime-local" label="Forventet åbning" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} disabled={!statusKnown || saving} slotProps={{ inputLabel: { shrink: true } }} />
+          <TextField label="Besked til brugerne" value={message} onChange={(e) => setMessage(e.target.value)} disabled={!statusKnown || saving || loading} slotProps={{ htmlInput: { maxLength: 500 } }} />
+          <TextField type="datetime-local" label="Forventet åbning" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} disabled={!statusKnown || saving || loading} slotProps={{ inputLabel: { shrink: true } }} />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
             {statusKnown && (state.enabled ? (
               <Button variant="contained" color="success" disabled={saving || loading} onClick={() => { setConfirmError(""); setPendingEnabled(false); }}>Åbn PlanIQ Display igen</Button>

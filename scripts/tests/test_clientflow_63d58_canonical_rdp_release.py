@@ -142,15 +142,15 @@ def test_build_rejects_mismatched_root_helper_before_packaging(tmp_path):
     import shutil
     repo = tmp_path / "repo"
     for name in builder.NATIVE_RDP_ROOT_SOURCES:
-        target = repo / "scripts" / name
+        target = repo / builder.NATIVE_RDP_ROOT_SOURCE_DIR / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "scripts" / name, target)
+        shutil.copy2(ROOT / builder.NATIVE_RDP_ROOT_SOURCE_DIR / name, target)
     for name in ("entrypoint.py", "scripts/__init__.py"):
         target = repo / "client/libexec/native-rdp" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "client/libexec/native-rdp" / name, target)
     builder._validate_native_rdp_root_pins(repo)
-    helper = repo / "scripts" / builder.NATIVE_RDP_ROOT_SOURCES[0]
+    helper = repo / builder.NATIVE_RDP_ROOT_SOURCE_DIR / builder.NATIVE_RDP_ROOT_SOURCES[0]
     helper.write_bytes(helper.read_bytes() + b"\n")
     with pytest.raises(ValueError, match="root helper pin mismatch"):
         builder._validate_native_rdp_root_pins(repo)
@@ -186,3 +186,127 @@ def test_livestream_runtime_wheel_exact_members(tmp_path):
         write_wheel(**{scenario: "livestream_fmp4_capture.py"})
         with pytest.raises(ValueError, match="Livestream runtime wheel"):
             builder.validate_livestream_wheel(ROOT, wheel)
+
+
+@pytest.mark.parametrize("relative", (
+    *transaction._TEMPORARY_LIVESTREAM_PATHS,
+    "/run/systemd/system/clientflow-livestream-producer.service.d/63d77-hls.conf",
+    "/run/systemd/system/clientflow-livestream-uploader.service.d/63d77-hls.conf",
+    "/etc/systemd/system/clientflow-livestream-uploader.service.d/63d77-hls.conf",
+    "/run/clientflow-63d54-operator/shadow",
+))
+def test_temporary_media_blocks_before_activation_intent_or_target_disable(tmp_path, monkeypatch, relative):
+    layout = transaction.Layout(tmp_path)
+    marker = layout.path(relative)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.symlink_to(tmp_path / "missing")
+    previous = "clientflow-1.3.47-seq-1248"
+    target = "clientflow-1.4.0-seq-1250"
+    state = {"installed": {target: {}}, "active_release_id": previous}
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _: previous)
+    monkeypatch.setattr(transaction, "_activation_intent", lambda *a, **k: pytest.fail("intent mutated"))
+    monkeypatch.setattr(transaction, "_disable_target", lambda *a, **k: pytest.fail("target disabled"))
+    with pytest.raises(transaction.TransactionError, match="Temporary (RDP|Livestream)"):
+        transaction._activate_release(layout, state, target, "test")
+    assert marker.is_symlink()
+
+
+def test_livestream_dropin_directory_symlink_is_rejected(tmp_path):
+    layout = transaction.Layout(tmp_path)
+    folder = layout.path("/run/systemd/system/clientflow-livestream-producer.service.d")
+    folder.parent.mkdir(parents=True)
+    folder.symlink_to(tmp_path / "missing")
+    with pytest.raises(transaction.TransactionError, match="Temporary Livestream override"):
+        transaction._assert_no_temporary_livestream_override(layout)
+
+
+def _installed_rdp_identity(root, client_id=37):
+    import json
+    from clientflow_release import transaction as txn
+    release_id = "clientflow-1.4.0-seq-1250"
+    layout = txn.Layout(root)
+    release = layout.releases / release_id
+    release.mkdir(parents=True)
+    layout.state_root.mkdir(parents=True)
+    layout.lock_file.touch(mode=0o600)
+    identity_dir = root / "etc/clientflow"
+    identity_dir.mkdir(parents=True)
+    def write(path, value, mode=0o600):
+        path.write_text(json.dumps(value))
+        path.chmod(mode)
+    write(identity_dir / "identity.json", {"schema_version": 1, "client_id": client_id,
+                                         "kiosk_user": "clientflow-kiosk"})
+    manifest = {"release_id": release_id, "version": "1.4.0", "release_sequence": 1250,
+                "release_approval": {"reference": "fixture-approved", "candidate_sha256": "b"*64},
+                "source": {"commit": "c"*40}}
+    write(release / "release-manifest.json", manifest, 0o444)
+    write(release / "release-ready.json", {"release_id": release_id, "version": "1.4.0",
+                                          "release_sequence": 1250}, 0o444)
+    state = txn._initial_state()
+    state.update(active_release_id=release_id, highest_release_sequence=1250)
+    state["installed"][release_id] = {"version": "1.4.0", "release_sequence": 1250,
+        "activated_at": "fixture", "bundle_sha256": "a"*64, "bundle_size": 100,
+        "release_approval_reference": "fixture-approved", "release_candidate_sha256": "b"*64,
+        "source_commit": "c"*40, "manifest_sha256": txn._manifest_digest(manifest)}
+    txn.save_state(layout, state)
+    layout.active.symlink_to(release)
+    return layout, release, state
+
+
+@pytest.mark.parametrize("client_id", [3, 37, 1001])
+def test_root_installed_identity_is_not_hostname_or_pilot_id_bound(tmp_path, client_id):
+    _, release, _ = _installed_rdp_identity(tmp_path, client_id)
+    assert entry.verify_installed_identity(release, root=tmp_path) == client_id
+
+
+@pytest.mark.parametrize("failure", ["wrong_identity", "writable_identity", "symlink_identity",
+                                      "uncommitted", "staged", "wrong_manifest", "maintenance",
+                                      "missing_lock", "active_mismatch", "wrong_bundle"])
+def test_root_installed_identity_fails_closed(tmp_path, failure):
+    import json
+    from clientflow_release import transaction as txn
+    layout, release, state = _installed_rdp_identity(tmp_path)
+    identity = tmp_path / "etc/clientflow/identity.json"
+    if failure == "wrong_identity":
+        identity.write_text(json.dumps({"schema_version": 1, "client_id": 37,
+                                        "CLIENT_ID": 3, "kiosk_user": "clientflow-kiosk"}))
+    elif failure == "writable_identity":
+        identity.chmod(0o666)
+    elif failure == "symlink_identity":
+        original = identity.with_name("original.json")
+        identity.rename(original)
+        identity.symlink_to(original)
+    elif failure == "uncommitted":
+        state["activation_intent"] = {"release_id": release.name}
+    elif failure == "staged":
+        state["staged_release_id"] = "clientflow-1.4.1-seq-1251"
+    elif failure == "wrong_manifest":
+        path = release / "release-manifest.json"
+        value = json.loads(path.read_text())
+        value["source"]["commit"] = "d"*40
+        path.unlink()
+        path.write_text(json.dumps(value))
+        path.chmod(0o444)
+    elif failure == "maintenance":
+        marker = layout.state_root.parent / "install-coordinator/state.json"
+        marker.parent.mkdir()
+        marker.write_text("{}")
+    elif failure == "missing_lock":
+        layout.lock_file.unlink()
+    elif failure == "active_mismatch":
+        layout.active.unlink()
+        layout.active.symlink_to(layout.releases / "nonexistent")
+    elif failure == "wrong_bundle":
+        state["installed"][release.name]["bundle_sha256"] = "unknown"
+    txn.save_state(layout, state)
+    with pytest.raises((RuntimeError, OSError)):
+        entry.verify_installed_identity(release, root=tmp_path)
+
+
+def test_root_installed_identity_does_not_wait_for_active_transaction(tmp_path):
+    import fcntl
+    layout, release, _ = _installed_rdp_identity(tmp_path)
+    with layout.lock_file.open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            entry.verify_installed_identity(release, root=tmp_path)

@@ -395,3 +395,74 @@ python -m pytest -q \
 ```
 
 A release/install change is not accepted as physically validated until the relevant Ubuntu installation/update and frozen-domain regressions have been run.
+
+
+## 1.4.0 / 1250 baseline transition (staged, not approved by this document)
+
+The new source identity is separate from the active release catalog. Until the
+1250 bytes are reproducibly built, approved, published and physically tested,
+the old approved catalog and its recovery dependencies remain intact.
+
+The retirement review is deliberately split into independent inventories:
+
+- `scripts/audit_clientflow_140_retirement.py`: read-only central Render
+  PostgreSQL and artifact-store dependency review after baseline acceptance.
+- `clientflow-release-transaction release-inventory`: explicit local root
+  inspection, using the existing transaction lock. It distinguishes protected
+  release directories from review-only entries and flags journal mismatches.
+  It does not verify every payload byte, report a deployment outcome, mutate
+  the journal, remove a directory or authorize deletion.
+
+A successful snapshot is not permission to prune. Preserve the active,
+previous and staged releases, unresolved controller transactions and recovery
+evidence until the relevant installation and reboot have been accepted.
+Never lower the persisted highest release sequence during cleanup.
+Manual signed downgrade remains disabled for this first 1.4 baseline.
+
+Historical source-freeze reports, changed-file lists, approval evidence and
+test fixtures are historical records, not current installation instructions.
+Consolidate operational instructions here and retain version-specific evidence
+until source/test references and release provenance have been checked. Do not
+remove files merely because their names contain an older version.
+
+### 1250 pre-cutover physical pilot
+
+The 1250 pilot is separate from the ordinary post-acceptance standard orders.
+The source-stage `EXPECTED_APPROVAL_SHA256 = None` in
+`backend/service1/clientflow_pilot_1250.py` deliberately blocks both pilot
+availability and authorization. After reproducible main build, approval and
+immutable archive, a reviewed follow-up commit must pin the exact actual
+approval JSON and the Render store must contain those exact signed bytes.
+No guessed hash or synthetic fixture may be used for this purpose.
+
+The pilot may then be reviewed through
+`GET /api/clientflow/standard-deployments/pilot/availability`, and explicitly
+ordered through `POST /api/clientflow/standard-deployments/pilot/authorize`.
+It is limited to Viborg1 (client ID 3), fresh canonical 1.3.47 and Ubuntu
+26.04, with all legacy, fleet and fresh-install holds closed. The operator
+must first physically prepare Viborg1 using the verified
+`scripts/clientflow_63d83b_prepare_viborg1.py` procedure and attest that
+preparation; this is not a substitute for the local activation guards.
+The order is one-shot and uses the existing signed artifact and updater
+transaction. It does not promote the catalog or record physical acceptance.
+
+### Post-activation boot boundary
+
+For forward updates handled by the 1.4 controller, successful activation is
+not terminal. The deployment stays in health_check until a durable, exact
+deployment-bound reboot request has crossed a kernel boot-ID boundary and
+the immutable release tree and required services/sockets are verified.
+The request is at most once; a lost or failed request requires operator
+review, not an automatic reboot loop. The shared installation lock stays
+owned until the proven outcome. Chrome is inhibited during the active
+release maintenance phases. The first 1248-to-1250 update is executed by
+1248 code and therefore needs a separately witnessed physical reboot;
+its earlier backend succeeded event is not evidence of post-boot health.
+
+For the first baseline transition the new active transaction helper offers
+`baseline-boot-evidence --expected-release-id clientflow-1.4.0-seq-1250 --expected-bundle-sha256` before the operator's reboot,
+then the same command with `--previous-boot-id` from that first observation.
+It checks the exact active 1250 provenance, absence of temporary media overrides
+and existing release health contract under a shared transaction lock. The report
+is supporting evidence only; it does not assert physical UI/media acceptance,
+automatic reboot, backend approval or deletion authorization.

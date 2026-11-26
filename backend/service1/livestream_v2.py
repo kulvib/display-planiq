@@ -15,6 +15,8 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
+import stat
 import threading
 import time
 from typing import Any, Optional
@@ -42,7 +44,10 @@ from .livestream_v2_models import (
     LivestreamV2Viewer,
     utcnow,
 )
-from .routers.livestream_media import HLS_DIR, safe_client_dir, bind_manifest_generation
+from .routers.livestream_media import (
+    HLS_DIR, safe_client_dir, generation_media_name, is_generation_media_name,
+    namespace_manifest_media,
+)
 
 DOMAIN = "livestream"
 ACTIVE_GENERATION_STATES = {"starting", "running", "stopping"}
@@ -60,6 +65,11 @@ VIEWER_IDLE_SWEEP_SECONDS = max(600, int(os.getenv("LIVESTREAM_V2_VIEWER_IDLE_SW
 MEDIA_STALE_SECONDS = max(15, int(os.getenv("LIVESTREAM_V2_MEDIA_STALE_SECONDS", "45")))
 COMMAND_MAX_ATTEMPTS = max(1, int(os.getenv("LIVESTREAM_V2_COMMAND_MAX_ATTEMPTS", "5")))
 MAX_HLS_FILE_BYTES = 64 * 1024 * 1024
+MAX_HLS_MANIFEST_BYTES = 64 * 1024
+MAX_HLS_CLIENT_BYTES = 128 * 1024 * 1024
+MAX_HLS_CLIENT_FILES = 96
+HLS_READER_GRACE_SECONDS = 30
+HLS_DISK_RESERVE_BYTES = 256 * 1024 * 1024
 CLIENT_TOKEN_TTL_SECONDS = min(max(60, int(os.getenv("LIVESTREAM_V2_CLIENT_TOKEN_TTL_SECONDS", "600"))), 3600)
 TOKEN_ISSUER = os.getenv("LIVESTREAM_V2_TOKEN_ISSUER", "clientflow-api").strip() or "clientflow-api"
 
@@ -800,6 +810,7 @@ def ensure_current_generation(
 
 
 def generation_started(session: Session, *, client_id: int, generation_id: str) -> LivestreamV2Generation:
+    _lock_client(session, client_id)
     generation = ensure_current_generation(
         session,
         client_id=client_id,
@@ -1299,6 +1310,7 @@ def _clear_hls_media(client_id: int) -> None:
             name == "index.m3u8"
             or name == "init.mp4"
             or _SEGMENT_RE.fullmatch(name)
+            or is_generation_media_name(name)
             or re.fullmatch(r"segment_\d+\.(?:ts|mp4)", name)
         ):
             try:
@@ -1328,6 +1340,86 @@ def validate_manifest(payload: bytes) -> None:
             raise HTTPException(status_code=400, detail="HLS-manifest indeholder ugyldig reference")
 
 
+def _stored_media_name(name: str) -> bool:
+    return bool(is_generation_media_name(name) or name == "init.mp4"
+                or _SEGMENT_RE.fullmatch(name) or re.fullmatch(r"segment_\d+\.(?:ts|mp4)", name))
+
+
+def _playlist_references(payload: bytes) -> set[str]:
+    if len(payload) > MAX_HLS_MANIFEST_BYTES:
+        raise HTTPException(413, "Livestreammanifest er for stort")
+    try:
+        lines = payload.decode("utf-8").splitlines()
+    except UnicodeError as exc:
+        raise HTTPException(400, "Ugyldigt Livestreammanifest") from exc
+    references = set()
+    for line in lines:
+        line = line.strip()
+        if line.startswith("#EXT-X-MAP:"):
+            match = re.match(r'^#EXT-X-MAP:URI="([^"]+)"', line)
+            if match is None:
+                raise HTTPException(400, "Ugyldig HLS initialisering")
+            line = match.group(1)
+        elif not line or line.startswith("#"):
+            continue
+        if not _stored_media_name(line):
+            raise HTTPException(400, "Ugyldig HLS reference")
+        references.add(line)
+    if len(references) > 31:
+        raise HTTPException(400, "For mange HLS referencer")
+    return references
+
+
+def _current_playlist_references(directory: Path) -> set[str]:
+    path = directory / "index.m3u8"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return set()
+    with os.fdopen(fd, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_HLS_MANIFEST_BYTES:
+            raise HTTPException(409, "Ugyldig eksisterende HLS playliste")
+        return _playlist_references(stream.read(MAX_HLS_MANIFEST_BYTES + 1))
+
+
+def _retain_hls_window(directory: Path, *, storage_name: str, payload: bytes,
+                       new_references: set[str], now: float) -> None:
+    """Called under the client row lock before atomic publication.
+
+    Protect the currently served playlist and newly published references.
+    Keep a grace window for readers of earlier playlists; never evict fresh
+    media to make an oversized upload fit. Unknown files are not touched.
+    """
+    protected = _current_playlist_references(directory) | new_references
+    files = {}
+    for path in directory.iterdir():
+        if path.name != "index.m3u8" and not _stored_media_name(path.name):
+            continue
+        try:
+            meta = path.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(meta.st_mode):
+            raise HTTPException(409, "Ugyldig HLS lagerfil")
+        files[path.name] = (path, meta)
+    if any(name not in files or files[name][1].st_size <= 0 for name in new_references):
+        raise HTTPException(409, "HLS manifest refererer til manglende medier")
+    for name, (path, meta) in tuple(files.items()):
+        if (name != "index.m3u8" and name != storage_name and name not in protected
+                and now - meta.st_mtime >= HLS_READER_GRACE_SECONDS):
+            path.unlink(missing_ok=True)
+            del files[name]
+    existing_size = files[storage_name][1].st_size if storage_name in files else 0
+    projected = sum(meta.st_size for _, meta in files.values()) - existing_size + len(payload)
+    count = len(files) + (storage_name not in files)
+    if projected > MAX_HLS_CLIENT_BYTES or count > MAX_HLS_CLIENT_FILES:
+        raise HTTPException(507, "Livestreamlagerets klientgrænse er nået")
+    # Account for temporary atomic replacement before the old inode is released.
+    if shutil.disk_usage(directory).free < HLS_DISK_RESERVE_BYTES + len(payload):
+        raise HTTPException(507, "Livestreamlagerets diskreserve er nået")
+
+
 def write_hls_file(
     session: Session,
     *,
@@ -1338,25 +1430,44 @@ def write_hls_file(
     sha256: str,
     sequence: int,
 ) -> Path:
+    # Serialize publication against start/stop/supersession. The row lock
+    # is released by the existing upload transaction commit.
+    _lock_client(session, client_id)
     generation = ensure_current_generation(
         session,
         client_id=client_id,
         generation_id=generation_id,
         allowed_states={"starting", "running"},
     )
-    if len(payload) > MAX_HLS_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="Livestreamfil er for stor")
+    if not payload or len(payload) > MAX_HLS_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="Livestreamfil er tom eller for stor")
     actual = hashlib.sha256(payload).hexdigest()
     if not secrets.compare_digest(actual, str(sha256 or "").lower()):
         raise HTTPException(status_code=400, detail="Livestreamfil SHA-256 matcher ikke")
     safe_name = safe_hls_filename(filename)
+    new_references = set()
     if safe_name == "index.m3u8":
+        if len(payload) > MAX_HLS_MANIFEST_BYTES:
+            raise HTTPException(413, "Livestreammanifest er for stort")
         validate_manifest(payload)
-        payload = bind_manifest_generation(payload, generation_id)
+        try:
+            payload = namespace_manifest_media(payload, generation_id)
+        except (ValueError, UnicodeError) as exc:
+            raise HTTPException(status_code=400, detail="Ugyldig HLS-mediereference") from exc
+        new_references = _playlist_references(payload)
+        if not any(not name.endswith("init.mp4") for name in new_references):
+            raise HTTPException(400, "Livestreammanifest mangler segmenter")
+        storage_name = safe_name
+    else:
+        storage_name = generation_media_name(generation_id, safe_name)
     directory = Path(safe_client_dir(str(client_id)))
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / safe_name
-    tmp = directory / f".{safe_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+    if not stat.S_ISDIR(directory.lstat().st_mode):
+        raise HTTPException(409, "Ugyldigt Livestreamlager")
+    _retain_hls_window(directory, storage_name=storage_name, payload=payload,
+                       new_references=new_references, now=time.time())
+    path = directory / storage_name
+    tmp = directory / f".{storage_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
     try:
         with open(tmp, "wb") as handle:
             handle.write(payload)

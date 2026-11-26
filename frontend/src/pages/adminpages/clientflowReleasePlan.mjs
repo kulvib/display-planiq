@@ -1,5 +1,5 @@
 /** Pure planning helpers: no method creates a deployment or authorizes a release. */
-import { validateDeploymentHistory } from "./clientflowDeploymentHistory.mjs";
+import { validateDeploymentHistory, validateActiveDeployments } from "./clientflowDeploymentHistory.mjs";
 
 export const MAX_PLAN_CLIENTS = 25;
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -38,6 +38,13 @@ const APPROVED_PILOTS = Object.freeze({
     approved_bundle_size: 223692800,
     approval_reference: "CF-1.3.46-1247-20261119-22a8a873-d60d63ba",
   }),
+  "clientflow-1.3.47-seq-1248": Object.freeze({
+    version: "1.3.47", sequence: 1248,
+    source_commit: "c0d5a092efe0c4e8638866ad98621481d6f5d0e8",
+    approved_bundle_sha256: "9ca8852ba29153f2ec40b58d18007c738a03f9569f14762486fc1953c59eb6ff",
+    approved_bundle_size: 223692800,
+    approval_reference: "CF-1.3.47-1248-20261121-c0d5a092-f8240014",
+  }),
 });
 
 /** Source-pinned GitHub approval is NOT Render publication or client permission. */
@@ -53,7 +60,7 @@ export function validateStagedPilotCandidate(candidate, activeReleaseId) {
       ["render_store_publication_verified", "physical_pilot_accepted",
        "deployment_authorized", "fleet_authorized", "fresh_install_authorized",
        "database_cutover_authorized"].some((field) => candidate[field] !== false)) {
-    throw new Error("1246/1247-arkivstatus er ugyldig eller angiver uautoriseret installation");
+    throw new Error("1246/1247/1248-arkivstatus er ugyldig eller angiver uautoriseret installation");
   }
   return candidate;
 }
@@ -81,6 +88,9 @@ export function validateReleasePlanningResponse(data) {
   }
   validateReleaseReadiness(data.release_readiness, data.stable_release_id, data.revision);
   validateDeploymentHistory(data.recent_deployments, { allowMissing: true });
+  if (data.active_deployments !== undefined || data.active_deployments_complete !== undefined) {
+    validateActiveDeployments(data.active_deployments, data.active_deployments_complete);
+  }
   if (data.staged_pilot_candidate !== undefined) {
     validateStagedPilotCandidate(data.staged_pilot_candidate, data.stable_release_id);
   }
@@ -154,4 +164,20 @@ export function validatePlanningPreview(body, selectedIds, sourceVersion, target
     throw new Error("Planens serverkontrol var ufuldstændig eller ændret. Opdater siden.");
   }
   return body;
+}
+
+
+// Compare reported versions to the selected standard, not to an unsigned
+// candidate. A newer report is not evidence that the standard is installed.
+export function fleetVersionStatus(client, stableVersion) {
+  const version = client?.reported_version;
+  if (!VERSION.test(version || "") || !VERSION.test(stableVersion || "")) return "unknown";
+  if (version === stableVersion) return "standard";
+  return isOlderRelease(version, stableVersion) ? "older" : "newer";
+}
+
+export function summarizeReleaseFleet(clients, stableVersion) {
+  const counts = { total: clients.length, standard: 0, older: 0, newer: 0, unknown: 0 };
+  for (const client of clients) counts[fleetVersionStatus(client, stableVersion)] += 1;
+  return counts;
 }

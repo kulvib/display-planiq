@@ -1096,12 +1096,30 @@ def _apply_status_runtime_snapshot(client: Client, presence: ClientPresence) -> 
         _set_runtime_read_attr(client, field, value)
 
 
+def _update_check_fresh(value: object, max_age_seconds: int) -> bool:
+    stamp = _normalise_reported_utc(value)
+    return stamp is not None and -60 <= (utcnow() - stamp).total_seconds() <= max_age_seconds
+
+
 def _apply_presence_for_read(client: Client, presence: ClientPresence) -> None:
     _set_runtime_read_attr(client, "presence", presence.public_dict())
     _apply_status_runtime_snapshot(client, presence)
     system_payload = presence.system.status_payload if isinstance(presence.system.status_payload, dict) else {}
     firmware = system_payload.get("firmware") if isinstance(system_payload.get("firmware"), dict) else None
-    _set_runtime_read_attr(client, "firmware", dict(firmware) if firmware is not None else None)
+    if firmware is not None:
+        firmware = dict(firmware)
+        firmware["stale"] = not _update_check_fresh(firmware.get("checked_at"), 22500)
+    _set_runtime_read_attr(client, "firmware", firmware)
+    ubuntu = system_payload.get("ubuntu_update_inventory")
+    ubuntu = dict(ubuntu) if isinstance(ubuntu, dict) and ubuntu.get("schema_version") == 1 else None
+    if ubuntu is not None:
+        if not _update_check_fresh(ubuntu.get("checked_at"), 1800) or not _update_check_fresh(ubuntu.get("index_checked_at"), 172800):
+            ubuntu["state"] = "stale"
+        count = ubuntu.get("update_count")
+        known = ubuntu.get("state") == "known" and not ubuntu.get("error") and type(count) is int and count >= 0
+        ubuntu["update_count"] = count if known else None
+    _set_runtime_read_attr(client, "ubuntu_update_inventory", ubuntu)
+    _set_runtime_read_attr(client, "ubuntu_updates_available", ubuntu.get("update_count") if ubuntu is not None else None)
 
 
 def _prepare_client_read(client: Client, presence: ClientPresence) -> Client:
@@ -1564,6 +1582,11 @@ def create_control_room_realtime_capability(
     return issue_ui_realtime_capability(user, client_id=client_id)
 
 
+@router.post("/clients/release-administration-realtime/capability")
+def create_release_admin_realtime_capability(user=Depends(get_current_superadmin_user)):
+    return issue_ui_realtime_capability(user, release_admin=True)
+
+
 @router.get("/clients/control-room-realtime/wait")
 def wait_control_room_realtime(
     after: int = Query(default=0, ge=0),
@@ -1830,6 +1853,16 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "ubuntu_update_progress": getattr(client, "ubuntu_update_progress", None),
         "ubuntu_update_package_count": getattr(client, "ubuntu_update_package_count", None),
         "ubuntu_update_reboot_required": getattr(client, "ubuntu_update_reboot_required", None),
+        # The existing System status/command projection already owns these.
+        "firmware": getattr(client, "firmware", None),
+        "pending_firmware_update": getattr(client, "pending_firmware_update", False),
+        "firmware_update_status": getattr(client, "firmware_update_status", None),
+        "firmware_update_message": getattr(client, "firmware_update_message", None),
+        "firmware_update_error": getattr(client, "firmware_update_error", None),
+        "firmware_update_started_at": getattr(client, "firmware_update_started_at", None),
+        "firmware_update_updated_at": getattr(client, "firmware_update_updated_at", None),
+        "firmware_update_finished_at": getattr(client, "firmware_update_finished_at", None),
+        "firmware_update_reboot_required": getattr(client, "firmware_update_reboot_required", None),
         # Local-management is already projected from the same latest System
         # command batch above. Expose it on the hot read without another DB
         # query so the UI does not need a second 2-second polling endpoint.
@@ -1852,7 +1885,8 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
         "service_livestream_status": getattr(client, "service_livestream_status", None),
         "service_selfupdate_status": getattr(client, "service_selfupdate_status", None),
         "service_ubuntu_update_status": getattr(client, "service_ubuntu_update_status", None),
-        "ubuntu_updates_available": getattr(client, "ubuntu_updates_available", 0) or 0,
+        "ubuntu_updates_available": getattr(client, "ubuntu_updates_available", None),
+        "ubuntu_update_inventory": getattr(client, "ubuntu_update_inventory", None),
         "last_boot_at": getattr(client, "last_boot_at", None),
         "last_boot_id": getattr(client, "last_boot_id", None),
         "last_power_event": getattr(client, "last_power_event", None),
@@ -2267,7 +2301,10 @@ async def trigger_firmware_update(
     firmware = system_payload.get("firmware") if isinstance(system_payload.get("firmware"), dict) else {}
     if firmware.get("supported") is not True:
         raise HTTPException(status_code=409, detail="Klienten rapporterer ikke understøttet fwupd firmwarehåndtering")
-    if firmware.get("update_available") is not True or int(firmware.get("update_count") or 0) <= 0:
+    if firmware.get("error") or not _update_check_fresh(firmware.get("checked_at"), 22500):
+        raise HTTPException(status_code=409, detail="Firmwarestatus er forældet eller kunne ikke verificeres")
+    count = firmware.get("update_count")
+    if firmware.get("update_available") is not True or type(count) is not int or count <= 0 or count > 32:
         raise HTTPException(status_code=409, detail="Der er ingen firmware-opdateringer tilgængelige")
     if firmware.get("requires_shutdown") is True:
         raise HTTPException(
@@ -2338,10 +2375,12 @@ def get_ubuntu_updates(id: int, session=Depends(get_session), user=Depends(get_c
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     _require_client_read_access(user, client)
+    _apply_presence_for_read(client, load_client_presence(session, client))
     projection = os_update_projection(session, id)
     return {
         "client_id": client.id,
-        "ubuntu_updates_available": client.ubuntu_updates_available or 0,
+        "ubuntu_updates_available": client.ubuntu_updates_available,
+        "ubuntu_update_inventory": getattr(client, "ubuntu_update_inventory", None),
         "pending_os_update": projection["pending_os_update"],
         "ubuntu_version": client.ubuntu_version,
         "ubuntu_update_status": projection["ubuntu_update_status"],

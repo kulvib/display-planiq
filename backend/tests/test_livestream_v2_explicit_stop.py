@@ -371,6 +371,9 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
         self.seed_running_with_viewer()
         with Session(self.engine) as session:
             payload = b"#EXTM3U\n#PLANIQ-GENERATION:11111111-2222-3333-4444-555555555555\n#EXTINF:1,\nsegment-000000000.ts\n"
+            media = b"fixture-media"
+            livestream_v2.write_hls_file(session, client_id=self.CLIENT_ID, generation_id=self.GENERATION_ID,
+                filename="segment-000000000.ts", payload=media, sha256=hashlib.sha256(media).hexdigest(), sequence=0)
             path = livestream_v2.write_hls_file(
                 session, client_id=self.CLIENT_ID, generation_id=self.GENERATION_ID,
                 filename="index.m3u8", payload=payload,
@@ -378,7 +381,115 @@ class LivestreamV2ExplicitStopTests(unittest.TestCase):
             )
             self.assertEqual(manifest_generation(path.read_bytes()), self.GENERATION_ID)
             self.assertEqual(path.read_bytes().count(b"#PLANIQ-GENERATION:"), 1)
-            self.assertIn(b"segment-000000000.ts", path.read_bytes())
+            self.assertIn(f"g-{self.GENERATION_ID}-segment-000000000.ts".encode(), path.read_bytes())
+
+    def test_generation_media_names_cannot_alias_after_restart(self):
+        import hashlib
+        from fastapi import HTTPException
+        from service1.routers.livestream_media import manifest_generation, is_public_hls_filename
+        self.seed_running_with_viewer()
+        with Session(self.engine) as session:
+            def upload(generation, name, data):
+                return livestream_v2.write_hls_file(
+                    session, client_id=self.CLIENT_ID, generation_id=generation,
+                    filename=name, payload=data, sha256=hashlib.sha256(data).hexdigest(),
+                    sequence=0,
+                )
+
+            segment = "segment-000000000.ts"
+            manifest = b"#EXTM3U\n#EXTINF:1,\nsegment-000000000.ts\n"
+            old_file = upload(self.GENERATION_ID, segment, b"old media")
+            index = upload(self.GENERATION_ID, "index.m3u8", manifest)
+            old_playlist = index.read_bytes()
+            new, _ = livestream_v2.request_restart(
+                session, self.CLIENT_ID, source="test_resolution_change",
+            )
+            session.flush()
+            new_file = upload(new.id, segment, b"new media")
+            upload(new.id, "index.m3u8", manifest)
+            self.assertNotEqual(old_file, new_file)
+            self.assertEqual(old_file.read_bytes(), b"old media")
+            self.assertEqual(new_file.read_bytes(), b"new media")
+            self.assertIn(old_file.name.encode(), old_playlist)
+            self.assertIn(new_file.name.encode(), index.read_bytes())
+            self.assertEqual(manifest_generation(index.read_bytes()), new.id)
+            self.assertTrue(is_public_hls_filename(new_file.name))
+            self.assertFalse(is_public_hls_filename(".stream_generation.json"))
+            self.assertFalse(is_public_hls_filename("../" + new_file.name))
+            with self.assertRaises(HTTPException) as stale:
+                upload(self.GENERATION_ID, segment, b"late old upload")
+            self.assertEqual(stale.exception.status_code, 409)
+            self.assertEqual(new_file.read_bytes(), b"new media")
+            livestream_v2._clear_hls_media(self.CLIENT_ID)
+            self.assertFalse(old_file.exists())
+            self.assertFalse(new_file.exists())
+            self.assertFalse(index.exists())
+
+    def test_rolling_retention_preserves_current_playlist_and_grace(self):
+        import hashlib
+        from fastapi import HTTPException
+        self.seed_running_with_viewer()
+        with Session(self.engine) as session:
+            def upload(name, payload):
+                return livestream_v2.write_hls_file(session, client_id=self.CLIENT_ID,
+                    generation_id=self.GENERATION_ID, filename=name, payload=payload,
+                    sha256=hashlib.sha256(payload).hexdigest(), sequence=0)
+            current = upload("segment-000000001.ts", b"current")
+            old = upload("segment-000000002.ts", b"old")
+            recent = upload("segment-000000003.ts", b"recent")
+            index = upload("index.m3u8", b"#EXTM3U\n#EXTINF:1,\nsegment-000000001.ts\n")
+            os.utime(current, (1, 1))
+            os.utime(old, (1, 1))
+            unrelated = current.parent / "operator-file"
+            unrelated.write_bytes(b"untouched")
+            newest = upload("segment-000000004.ts", b"new")
+            self.assertTrue(current.exists())
+            self.assertFalse(old.exists())
+            self.assertTrue(recent.exists())
+            self.assertTrue(newest.exists())
+            self.assertEqual(unrelated.read_bytes(), b"untouched")
+            original = index.read_bytes()
+            with self.assertRaises(HTTPException) as missing:
+                upload("index.m3u8", b"#EXTM3U\n#EXTINF:1,\nsegment-000000099.ts\n")
+            self.assertEqual(missing.exception.status_code, 409)
+            self.assertEqual(index.read_bytes(), original)
+            with patch.object(livestream_v2, "MAX_HLS_CLIENT_FILES", 4):
+                with self.assertRaises(HTTPException) as capacity:
+                    upload("segment-000000005.ts", b"new")
+                self.assertEqual(capacity.exception.status_code, 507)
+            self.assertTrue(current.exists())
+            self.assertTrue(recent.exists())
+
+
+    def test_upload_reservations_bound_concurrent_clients_and_bytes(self):
+        from fastapi import HTTPException
+        route = livestream_v2_router
+        with patch.object(route, "_upload_reservations", {}):
+            for cid in range(1, 9):
+                route._reserve_upload(cid, 1024)
+            for cid in (1, 9):
+                with self.assertRaises(HTTPException) as denied:
+                    route._reserve_upload(cid, 1024)
+                self.assertEqual(denied.exception.status_code, 429)
+            route._upload_reservations.clear()
+            route._reserve_upload(1, route.MAX_HLS_UPLOAD_RESERVED_BYTES)
+            with self.assertRaises(HTTPException):
+                route._reserve_upload(2, 1)
+
+
+    def test_manifest_initialization_reference_is_generation_bound(self):
+        from service1.routers.livestream_media import namespace_manifest_media
+        content = b'#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:1,\nsegment-000000000.m4s\n'
+        result = namespace_manifest_media(content, self.GENERATION_ID)
+        self.assertIn(f'URI="g-{self.GENERATION_ID}-init.mp4"'.encode(), result)
+        self.assertIn(f"g-{self.GENERATION_ID}-segment-000000000.m4s".encode(), result)
+        for tag in (
+            b'#EXT-X-MAP:URI="../init.mp4"',
+            b'#EXT-X-KEY:METHOD=AES-128,URI="https://invalid.example/key"',
+            b'#EXT-X-MEDIA:TYPE=AUDIO,URI="https://invalid.example/audio"',
+        ):
+            with self.assertRaises(ValueError):
+                namespace_manifest_media(b"#EXTM3U\n" + tag + b"\nsegment-000000000.ts\n", self.GENERATION_ID)
 
 
 if __name__ == "__main__":

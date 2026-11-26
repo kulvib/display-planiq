@@ -36,9 +36,12 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     if sequence_gap == 2:
         # Exact security-replacement exception: immutable 1.3.27/1228 was
         # rejected before catalog promotion due CVE-2026-101918.
-        assert catalog_sequence == 1227
-        assert source_sequence == 1229
-        assert version == "1.3.28"
+        # 1249 was an unpublished candidate; 1250 is the new baseline.
+        # Neither sequence gap may imply approval or publication.
+        assert (catalog_sequence, source_sequence, version) in {
+            (1227, 1229, "1.3.28"),
+            (1248, 1250, "1.4.0"),
+        }
     else:
         assert sequence_gap in {0, 1}
     assert len(source_tuple) == 3
@@ -70,7 +73,7 @@ def test_51f_source_build_identity_is_monotonic_and_catalog_never_leads_it() -> 
     assert selected_tuple <= source_tuple
     # 1240 remains revoked; 1241 and 1242 are update-only and never the default.
     # The default 1239 selector must never silently become an update target.
-    assert source_sequence == 1249 and catalog_sequence == 1248 and historical_sequence == 1243
+    assert source_sequence == 1250 and catalog_sequence == 1248 and historical_sequence == 1243
     assert selected_tuple < source_tuple
     pilot = catalog["releases"][1]
     assert pilot["release_sequence"] == 1241

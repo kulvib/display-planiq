@@ -1,4 +1,4 @@
-"""Viborg1 GNOME Desktop Sharing -> PlanIQ authenticated binary WSS tunnel.
+"""Canonical GNOME Desktop Sharing -> PlanIQ authenticated binary WSS tunnel.
 
 No RDP listener, no bridge-side RDP credentials, no public RDP port.
 The optional pilot is disabled until a root-owned, boot-ephemeral guard marker
@@ -32,30 +32,39 @@ class NativeRdpNotApproved(RuntimeError):
     pass
 
 
+def _read_guard_marker() -> dict:
+    parent = GUARD_MARKER.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022:
+        raise NativeRdpNotApproved("RDP-godkendelseskataloget er ugyldigt")
+    fd = os.open(GUARD_MARKER, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) != 0o644 or not 0 < info.st_size <= 1024):
+            raise NativeRdpNotApproved("RDP-godkendelsesfilen er ugyldig")
+        raw = stream.read(1025)
+    if len(raw) > 1024:
+        raise NativeRdpNotApproved("RDP-godkendelsesfilen er for stor")
+    return json.loads(raw.decode("ascii"))
+
+
 def ensure_native_rdp_guard(*, client_id: int) -> None:
     """Validate a root-owned grant bound to GNOME pilot's wall+monotonic expiry.
 
-    Reject stale post-watchdog files, a reboot, symlinks, wrong identity or
-    any non-Viborg1 client. The unprivileged agent can only READ the grant.
+    Reject stale post-watchdog files, a reboot, symlinks and wrong identity.
+    The unprivileged agent can only READ the root-owned grant.
     """
-    if client_id != 3 or socket.gethostname() != "viborg1-NUC14MNK-B2":
-        raise NativeRdpNotApproved("Kun Viborg1 er godkendt til GNOME RDP-pilot")
+    if type(client_id) is not int or client_id <= 0:
+        raise NativeRdpNotApproved("Ugyldig RDP-klientidentitet")
     try:
-        info = GUARD_MARKER.lstat()
-        if (
-            not stat.S_ISREG(info.st_mode) or info.st_uid != 0
-            or stat.S_IMODE(info.st_mode) != 0o644
-            or info.st_size > 1024
-        ):
-            raise NativeRdpNotApproved("RDP-godkendelsesfilen er ugyldig")
-        state = json.loads(GUARD_MARKER.read_text(encoding="ascii"))
+        state = _read_guard_marker()
         if not isinstance(state, dict) or set(state) != {
             "schema", "hostname", "client_id", "boot_id", "expires_wall", "expires_mono"
         }:
             raise NativeRdpNotApproved("RDP-godkendelsens format er ugyldigt")
         boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         if (
-            state["schema"] != 1
+            type(state["schema"]) is not int or state["schema"] != 1
             or state["hostname"] != socket.gethostname()
             or type(state["client_id"]) is not int or state["client_id"] != client_id
             or state["boot_id"] != boot_id

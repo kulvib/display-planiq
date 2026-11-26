@@ -15,8 +15,15 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_pins_match_immutable_renewable_source_tree():
     assert pilot.COMMIT == "4e840bcbfa57abfe89765e95a6bbc66c6e1d5d8c"
     assert len(pilot.PINS) == 16
+    # The canonical runtime evolved after the immutable renewable pilot.
+    # Preserve the reviewed historical bytes as inert test data.
+    historic = {
+        "client/runtime/clientflow_runtime/native_rdp_forwarder.py": "63d54-native_rdp_forwarder.py.txt",
+        "client/runtime/clientflow_runtime/native_rdp_autologin.py": "63d54-native_rdp_autologin.py.txt",
+    }
     for path, expected in pilot.PINS.items():
-        raw = (ROOT / path).read_bytes()
+        source = ROOT / "scripts/tests/fixtures" / historic[path] if path in historic else ROOT / path
+        raw = source.read_bytes()
         assert hashlib.sha256(raw).hexdigest() == expected
         assert pilot.require_pin(path, raw) == raw
         with pytest.raises(pilot.Stop, match="SOURCE_SHA_MISMATCH"):

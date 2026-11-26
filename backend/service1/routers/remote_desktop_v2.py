@@ -22,7 +22,7 @@ import time
 from typing import Any, Optional
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
@@ -36,7 +36,8 @@ from ..models import Client, User
 from ..http_ws_relay import close_relay, create_relay, get_relay, require_relay_scope
 from ..remote_desktop_v2 import (
     authorize_remote_desktop_session,
-    native_rdp_client_admitted,
+    authorize_native_rdp_client,
+    native_rdp_pilot_admitted,
     bearer_token,
     close_remote_desktop_session,
     record_remote_desktop_event,
@@ -821,7 +822,7 @@ async def _handle_control_agent_message(
         # Neither Render nor Postgres should ever see a GNOME plaintext secret.
         request_id = str(message.get("request_id") or "")
         if (
-            input_websocket is not None or not native_rdp_client_admitted(client_id) or not re.fullmatch(
+            input_websocket is not None or not re.fullmatch(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
                 request_id,
             ) or browser.native_rdp_autologin_pending != request_id
@@ -842,6 +843,17 @@ async def _handle_control_agent_message(
             return
         browser.native_rdp_autologin_pending = None
         browser.native_rdp_autologin_expires_at = 0.0
+        if message_type == "native_rdp_autologin_envelope" and (
+                not authorize_native_rdp_client(client_id, force=True)
+                or (managed_channel is None and not native_rdp_pilot_admitted(client_id))):
+            message_type = "native_rdp_autologin_denied"
+            if managed_channel is not None:
+                # A failed cancellation write cannot preserve local admission.
+                try:
+                    await _send_agent(managed_channel, {"type": "native_rdp_autologin_cancel",
+                        "session_id": session_id, "request_id": request_id})
+                except Exception:
+                    logger.warning("Native RDP cancellation delivery failed")
         if message_type == "native_rdp_autologin_denied":
             if managed_channel is not None:
                 browser.native_idle = None
@@ -1457,11 +1469,6 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
                                         "session_id": session_id, "request_id": request_id})
         return
     if message_type == "native_rdp_autologin_request":
-        if not native_rdp_client_admitted(client_id):
-            await _send_browser(session_id, client_id, {
-                "type": "native_rdp_autologin_denied"
-            })
-            return
         browser = await _browser_for_session(session_id, client_id)
         if browser is None:
             return
@@ -1485,6 +1492,12 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             return
         now = time.monotonic()
         managed = message.get("managed") is True
+        if (not authorize_native_rdp_client(client_id, force=True)
+                or (not managed and not native_rdp_pilot_admitted(client_id))):
+            await _send_browser(session_id, client_id, {
+                "type": "native_rdp_autologin_denied", "request_id": request_id,
+            })
+            return
         if (getattr(browser, "native_rdp_managed_request_id", None) is not None
                 or (browser.native_rdp_autologin_pending is not None
                     and now < browser.native_rdp_autologin_expires_at)):
@@ -2077,6 +2090,22 @@ def remote_desktop_browser_download(client_id: int, transfer_id: str, request: R
     response.headers["X-ClientFlow-File-SHA256"] = transfer.sha256
     response.headers["X-ClientFlow-File-Size"] = str(transfer.size_bytes)
     return response
+
+
+@router.get("/remote-desktop/clients/{client_id}/native-release-eligibility")
+def native_release_eligibility(client_id: int, request: Request, response: Response):
+    """Explicit superadmin-only inspection; never allocates a native session."""
+    from ..native_rdp_admission import ADMITTED_RELEASE_MODES, release_eligibility
+    user = _require_superadmin(_get_http_user(request))
+    if not _platform_client_accessible(client_id, user):
+        raise HTTPException(status_code=404, detail="Klient ikke fundet")
+    response.headers["Cache-Control"] = "no-store"
+    with Session(engine) as session:
+        reason = release_eligibility(session, client_id=client_id)
+    return {"client_id": client_id, "release_eligible": reason == "eligible",
+            "reason": reason,
+            # Advisory capability; the managed request separately authorizes.
+            "native_transport_admitted": reason in ADMITTED_RELEASE_MODES}
 
 
 @router.get("/remote-desktop/clients/{client_id}/status")

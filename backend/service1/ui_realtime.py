@@ -20,6 +20,10 @@ import jwt
 from fastapi import HTTPException, status
 
 from .auth import SECRET_KEY
+from .realtime_wakeup import (
+    RELEASE_ADMIN_WAKE_DOMAIN, RELEASE_ADMIN_WAKE_KEY,
+    current_generation as wake_generation, wait_for_change,
+)
 
 ISSUER = "clientflow-ui-realtime"
 AUDIENCE = "clientflow-ui-realtime"
@@ -85,8 +89,10 @@ def notify_ui_fleet_order_changed(organization_ids: set[int]) -> int:
 
 
 def issue_ui_realtime_capability(
-    principal: object, *, client_id: int | None = None
+    principal: object, *, client_id: int | None = None, release_admin: bool = False
 ) -> dict[str, Any]:
+    if release_admin and (not getattr(principal, "is_superadmin", False) or client_id is not None):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Releaseadministration kræver superadministrator")
     global_scope, organization_id = _scope_for_principal(principal)
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=TTL_SECONDS)
@@ -102,6 +108,7 @@ def issue_ui_realtime_capability(
         # Server-side authorization for a client scope is required at issuance.
         # The wait endpoint intentionally needs no database session.
         "client_id": client_id,
+        "release_admin": release_admin,
         "iat": int(now.timestamp()),
         "nbf": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
@@ -112,8 +119,11 @@ def issue_ui_realtime_capability(
         "capability": token,
         "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         "ttl_seconds": TTL_SECONDS,
-        "generation": current_generation(
-            global_scope=global_scope, organization_id=organization_id, client_id=client_id
+        "generation": (
+            wake_generation(RELEASE_ADMIN_WAKE_DOMAIN, RELEASE_ADMIN_WAKE_KEY)
+            if release_admin else current_generation(
+                global_scope=global_scope, organization_id=organization_id, client_id=client_id
+            )
         ),
     }
 
@@ -139,10 +149,14 @@ def verify_ui_realtime_capability(token: str | None) -> dict[str, Any]:
     scoped_client = claims.get("client_id")
     if scoped_client is not None and (type(scoped_client) is not int or scoped_client <= 0):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ugyldigt realtime-klientscope")
+    if claims.get("release_admin") is True and (not claims.get("global_scope") or scoped_client is not None):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ugyldigt releaseadministrationsscope")
     return claims
 
 
 def wait_for_ui_change(*, claims: dict[str, Any], after: int, timeout: float) -> int:
+    if claims.get("release_admin") is True:
+        return wait_for_change(RELEASE_ADMIN_WAKE_DOMAIN, RELEASE_ADMIN_WAKE_KEY, after, timeout)
     global_scope = bool(claims.get("global_scope"))
     organization_id = claims.get("organization_id")
     organization_id = int(organization_id) if organization_id is not None else None

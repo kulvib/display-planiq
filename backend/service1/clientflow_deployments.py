@@ -12,6 +12,7 @@ from .clientflow_release_security_policy import (
     ClientFlowReleaseSecurityDenied,
     require_centrally_eligible_release,
 )
+from .realtime_wakeup import queue_release_admin_wakeup
 from .clientflow_update_models import (
     CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES,
     CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES,
@@ -147,6 +148,8 @@ def append_event(
         payload=dict(payload or {}),
     )
     session.add(event)
+    if event_type != "observation":
+        queue_release_admin_wakeup(session)
     return event
 
 

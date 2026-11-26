@@ -96,8 +96,14 @@ def test_security_and_three_release_guard_regressions_rejected(tmp_path):
     assert not inspect_source(repo)["source_stage_ready"]
     shutil.copy2(ROOT / "client/systemd/clientflow-system-broker.service", broker)
     resolver = repo / "backend/service1/clientflow_releases.py"
-    resolver.write_text(resolver.read_text().replace('if data["catalog_sequence"] >= 1244:',
-                                                    'if data["catalog_sequence"] >= 1245:'))
+    original = resolver.read_text()
+    assert inspect_source(repo)["source_stage_ready"]
+    weakened = original.replace('if data["catalog_sequence"] >= 1244:',
+                                'if data["catalog_sequence"] >= 1245:').replace(
+        'if 1244 <= data["catalog_sequence"] < 1250:',
+        'if 1245 <= data["catalog_sequence"] < 1250:')
+    assert weakened != original
+    resolver.write_text(weakened)
     assert not inspect_source(repo)["source_stage_ready"]
 
 

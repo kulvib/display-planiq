@@ -19,6 +19,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
+ReadWritePaths=/var/lib/clientflow/update-status
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

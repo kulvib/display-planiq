@@ -225,9 +225,9 @@ def test_workflows_run_same_strict_handoff_gate_before_attestation_and_manual_ap
 
 
 def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1248():
-    assert (ROOT / 'client/VERSION').read_text().strip() == '1.3.48'
+    assert (ROOT / 'client/VERSION').read_text().strip() == '1.4.0'
     inputs = json.loads((ROOT / 'client/release/release-input.json').read_text())
-    assert inputs['release_sequence'] == 1249
+    assert inputs['release_sequence'] == 1250
     cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
     assert cat['catalog_sequence'] == 1248

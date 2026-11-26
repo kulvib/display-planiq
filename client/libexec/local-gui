@@ -14,10 +14,11 @@ process.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import stat
 import subprocess
@@ -45,6 +46,7 @@ VERSION_PATH = Path(os.getenv("CLIENTFLOW_VERSION_PATH", "/opt/clientflow/active
 RELEASE_INPUT_PATH = Path(os.getenv("CLIENTFLOW_RELEASE_INPUT_PATH", "/opt/clientflow/active/release/release-input.json"))
 STATUS_SYNC_PATH = Path(os.getenv("CLIENTFLOW_STATUS_SYNC_PATH", "/var/lib/clientflow/status/last-success.json"))
 UPDATE_MAINTENANCE_PATH = Path("/var/lib/clientflow/update-maintenance/state.json")
+UPDATE_STATUS_PATH = Path("/var/lib/clientflow/update-status/summary.json")
 RELEASE_STATUS_DIR = Path("/var/lib/clientflow/release-status")
 RELEASE_STATUS_PATH = RELEASE_STATUS_DIR / "state.json"
 GUI_MODE = str(os.getenv("CLIENTFLOW_GUI_MODE") or "active").strip().lower()
@@ -224,9 +226,69 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _local_system_info() -> dict[str, str]:
+    result = {"ubuntu_version": "Ukendt", "disk_free": "Ukendt", "memory_used": "Ukendt"}
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                result["ubuntu_version"] = line.split("=", 1)[1].strip('"')[:120]
+                break
+    except OSError:
+        pass
+    try:
+        disk = shutil.disk_usage("/")
+        result["disk_free"] = f"{disk.free / 2**30:.1f} / {disk.total / 2**30:.1f} GiB"
+    except OSError:
+        pass
+    try:
+        memory = {}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, _, raw = line.partition(":")
+            if key in {"MemTotal", "MemAvailable"}:
+                memory[key] = int(raw.split()[0]) * 1024
+        total, available = memory["MemTotal"], memory["MemAvailable"]
+        if 0 <= available <= total and total > 0:
+            result["memory_used"] = f"{(total - available) / 2**30:.1f} / {total / 2**30:.1f} GiB"
+    except (OSError, ValueError, KeyError, IndexError):
+        pass
+    return result
+
+
+def _fresh_update_timestamp(value: object, max_age: int) -> bool:
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            return False
+        return -60 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= max_age
+    except (ValueError, TypeError):
+        return False
+
+
+def _update_inventory_display(value: object, *, firmware: bool = False) -> tuple[str, str]:
+    if not isinstance(value, dict):
+        return "Status ukendt", COLOR_GRAY
+    if value.get("error") and value.get("state") != "stale":
+        return "Kontrol ikke gennemført", COLOR_ORANGE
+    if not _fresh_update_timestamp(value.get("checked_at"), 22500 if firmware else 1800):
+        return "Status forældet / ukendt", COLOR_GRAY
+    if firmware:
+        if value.get("supported") is not True:
+            return "Ikke tilgængelig", COLOR_GRAY
+    elif value.get("state") != "known" or not _fresh_update_timestamp(value.get("index_checked_at"), 172800):
+        return "Pakkeliste forældet / ukendt", COLOR_GRAY
+    count = value.get("update_count")
+    if type(count) is not int or count < 0:
+        return "Status ukendt", COLOR_GRAY
+    if value.get("requires_shutdown") is True:
+        return f"{count} klar · lokal nedlukning", COLOR_ORANGE
+    if value.get("requires_reboot") is True:
+        return f"{count} klar · genstart kræves", COLOR_ORANGE
+    return (f"{count} klar", COLOR_ORANGE) if count else ("Ingen fundet (lokal cache)", COLOR_GREEN)
+
+
 def _trusted_release_maintenance() -> dict[str, str] | None:
     """Only paint root-controlled release phases; no installation authority."""
-    phases = {"preparing", "staging", "activating", "post_activation_check",
+    phases = {"preparing", "staging", "activating", "post_activation_check", "rebooting", "post_boot_check",
               "rolling_back", "recovery_required", "completed", "rolled_back", "cancelled"}
     try:
         try:
@@ -483,6 +545,9 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         ("Navn / Lokation", "name_locality"),
         ("Backend-status", "backend"),
         ("ClientFlow version", "version"),
+        ("Ubuntu version", "ubuntu_version"),
+        ("Ledig diskplads", "disk_free"),
+        ("RAM i brug", "memory_used"),
         ("Backend sync", "backend_sync"),
         ("Kalender service", "calendar_service"),
         ("Browser Guard", "browser_guard"),
@@ -491,6 +556,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         ("Remote desktop", "remote_desktop"),
         ("ClientFlow update", "update"),
         ("Ubuntu update", "ubuntu_update"),
+        ("Firmware update", "firmware_update"),
         ("Vedligeholdelse", "maintenance"),
         ("Livestream", "livestream"),
         ("Oppetid", "uptime"),
@@ -1235,7 +1301,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 self._set("backend", "Ikke registreret", COLOR_RED)
                 backend_approved = False
 
-            self._set("version", _version_display(), COLOR_GREEN)
+            version = _version_display()
+            self._set("version", version, COLOR_GRAY if version == "v-" else COLOR_GREEN)
+            for key, value in _local_system_info().items():
+                self._set(key, value, COLOR_GRAY if value == "Ukendt" else None)
             if PREACTIVATION_MODE:
                 for key in (
                     "backend_sync",
@@ -1247,6 +1316,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                     "livestream",
                     "update",
                     "ubuntu_update",
+                    "firmware_update",
                     "maintenance",
                 ):
                     self._set(key, "Ikke aktiveret", COLOR_GRAY)
@@ -1278,8 +1348,13 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 else:
                     value, color = self._ready_unit("clientflow-updater.timer")
                     self._set("update", value, color)
-                value, color = self._ready_unit("clientflow-system-broker.socket")
+                inventory = _read_json(UPDATE_STATUS_PATH)
+                if inventory.get("schema_version") != 1:
+                    inventory = {}
+                value, color = _update_inventory_display(inventory.get("ubuntu"))
                 self._set("ubuntu_update", value, color)
+                value, color = _update_inventory_display(inventory.get("firmware"), firmware=True)
+                self._set("firmware_update", value, color)
             # Read-only, root-owned marker. The local GUI remains visible while
             # Chrome is intentionally closed; no new local privileged control.
             maintenance = _read_json(UPDATE_MAINTENANCE_PATH)
@@ -1320,7 +1395,7 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 "preparing", "staging", "activating", "post_activation_check", "rolling_back",
             }
             maintenance_color = (COLOR_RED if maintenance_phase in {"recovery_required", "rolled_back"} else
-                                 COLOR_ORANGE if maintenance_busy else COLOR_GREEN)
+                                 COLOR_BLUE if maintenance_busy else COLOR_GREEN)
             self._set("maintenance", f"{maintenance_label}: {maintenance_text}" if maintenance_phase else maintenance_text,
                       maintenance_color)
             self._set("uptime", _uptime())

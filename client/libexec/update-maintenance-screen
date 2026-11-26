@@ -75,6 +75,8 @@ RELEASE_ID = re.compile(r'clientflow-[0-9]+\.[0-9]+\.[0-9]+-seq-[0-9]+\Z')
 RELEASE_PHASES = {
     'activating': ('Aktiverer ClientFlow', 'Kioskmiljøet skiftes sikkert til ny release'),
     'post_activation_check': ('Kontrollerer ClientFlow', 'Verificerer den nye release efter aktivering'),
+    'rebooting': ('Genstarter ClientFlow', 'Klienten genstarter for at afslutte installationen'),
+    'post_boot_check': ('Kontrollerer ClientFlow', 'Verificerer den nye release efter genstart'),
     'rolling_back': ('Gendanner ClientFlow', 'Går sikkert tilbage til tidligere release'),
     'recovery_required': ('Teknisk kontrol kræves', 'ClientFlow-release kræver teknisk gennemgang'),
 }

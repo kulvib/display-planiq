@@ -21,6 +21,8 @@ PHASE_MESSAGES = {
     'staging': 'Verificeret ClientFlow-release klargøres',
     'activating': 'ClientFlow-release aktiveres; kiosk kan være midlertidigt lukket',
     'post_activation_check': 'Kontrollerer ClientFlow efter aktivering',
+    'rebooting': 'Genstarter ClientFlow-klienten',
+    'post_boot_check': 'Kontrollerer ClientFlow efter genstart',
     'rolling_back': 'Gendanner tidligere ClientFlow-release',
     'recovery_required': 'ClientFlow-opdatering kræver teknisk kontrol',
     'completed': 'ClientFlow-opdateringen er bekræftet gennemført',
@@ -106,4 +108,16 @@ def public_snapshot() -> dict[str, Any] | None:
         'operation_id': data['deployment_id'],
         'target_release_id': data['target_release_id'],
         'revision': data['revision'], 'updated_at': data['updated_at'],
+    }
+
+
+def kiosk_hold() -> bool:
+    """Display-only inhibit; never grants release or power authority."""
+    try:
+        data = _trusted_data()
+    except (OSError, UntrustedReleaseStatus):
+        return True
+    return data is not None and data['phase'] in {
+        'activating', 'post_activation_check', 'rebooting', 'post_boot_check',
+        'rolling_back', 'recovery_required',
     }

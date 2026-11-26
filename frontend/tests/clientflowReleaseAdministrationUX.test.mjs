@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import {
-  MAX_PLAN_CLIENTS, planVersionGroups, preparePlan, validateReleasePlanningResponse, validatePlanningPreview, validateReleaseReadiness,
+  MAX_PLAN_CLIENTS, planVersionGroups, preparePlan, validateReleasePlanningResponse, validatePlanningPreview, validateReleaseReadiness, summarizeReleaseFleet, fleetVersionStatus,
 } from "../src/pages/adminpages/clientflowReleasePlan.mjs";
 
 const body = {
@@ -110,4 +110,73 @@ test("63D readiness gate cannot be converted into implicit deployment permission
   }
   assert.match(fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8"),
     /Release readiness – obligatoriske gates/);
+});
+
+
+test("release administration automatically reconciles actual events without interval polling", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
+  assert.match(ui, /createReleaseAdministrationRealtimeCapability\(signal\)/);
+  assert.match(ui, /waitForControlRoomRealtime\(capability, generation, 25, signal\)/);
+  assert.match(ui, /createRealtimeRequestScope\(getAuthSessionSignal\(\)\)/);
+  assert.match(ui, /if \(submitting \|\| intent\)/);
+  assert.match(ui, /document\.visibilityState === "hidden"/);
+  assert.match(ui, /Automatisk status aktiv/);
+  assert.doesNotMatch(ui, /setInterval\(|Brug Opdater øverst/);
+});
+
+
+test("1248 exact source-only pilot summary can be displayed but cannot authorize installation", () => {
+  const candidate = {
+    schema_version: 1, phase: "approved_github_archive_source_staged_only",
+    release_id: "clientflow-1.3.47-seq-1248", version: "1.3.47", sequence: 1248,
+    source_commit: "c0d5a092efe0c4e8638866ad98621481d6f5d0e8",
+    approved_bundle_sha256: "9ca8852ba29153f2ec40b58d18007c738a03f9569f14762486fc1953c59eb6ff",
+    approved_bundle_size: 223692800, approval_reference: "CF-1.3.47-1248-20261121-c0d5a092-f8240014",
+    active_release_id: body.stable_release_id, pilot_client_id: 3,
+    github_artifact_approval_pinned: true, active_catalog_promoted: true,
+    render_store_publication_verified: false, physical_pilot_accepted: false,
+    deployment_authorized: false, fleet_authorized: false, fresh_install_authorized: false,
+    database_cutover_authorized: false,
+  };
+  assert.equal(validateReleasePlanningResponse(clone({staged_pilot_candidate: candidate})).staged_pilot_candidate.release_id, candidate.release_id);
+  for (const mutation of [{deployment_authorized: true}, {approved_bundle_sha256: "0".repeat(64)}, {pilot_client_id: 4}]) {
+    assert.throws(() => validateReleasePlanningResponse(clone({staged_pilot_candidate: {...candidate, ...mutation}})));
+  }
+});
+
+test("active deployments are validated independently of historical rows", () => {
+  const row = {id:"07aba6a1-9454-4563-8ae3-4dd05c3d6bd4", client_id:3,
+    target_version:"1.3.47", target_release_id:"clientflow-1.3.47-seq-1248",
+    state:"downloading", requested_at:"2026-11-18T21:10:19Z", state_updated_at:"2026-11-18T21:10:19Z", completed_at:null};
+  assert.equal(validateReleasePlanningResponse(clone({active_deployments:[row], active_deployments_complete:true})).active_deployments.length, 1);
+  assert.throws(() => validateReleasePlanningResponse(clone({active_deployments:[row]})));
+  assert.throws(() => validateReleasePlanningResponse(clone({active_deployments:[row,{...row,id:"17aba6a1-9454-4563-8ae3-4dd05c3d6bd4"}],active_deployments_complete:true})));
+  assert.throws(() => validateReleasePlanningResponse(clone({active_deployments:[{...row,state:"cancelled",completed_at:row.requested_at}],active_deployments_complete:true})));
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
+  assert.match(ui, /cancelClientflowDeployment\(row\.id/);
+  assert.doesNotMatch(ui, /requestClientflowDeployment\(/);
+  assert.match(ui, /Tekniske releasedetaljer og historiske pilotplaner/);
+  assert.match(ui, /active_deployments_complete === true/);
+});
+
+
+test("fleet distinguishes standard, older, newer and unknown without inferring approval", () => {
+  const clients = [...body.available_clients, {id: 7, name:"Newer", reported_version:"1.3.47"}];
+  assert.deepEqual(summarizeReleaseFleet(clients, "1.3.44"), {total:5,standard:1,older:2,newer:1,unknown:1});
+  assert.equal(fleetVersionStatus(clients[4], "1.3.44"), "newer");
+  assert.equal(fleetVersionStatus(clients[0], ""), "unknown");
+});
+
+
+test("1250 pilot uses explicit review and reauthentication, not the legacy plan", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
+  const panel = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowBaselinePilotPanel.jsx", import.meta.url), "utf8");
+  assert.match(ui, /<ClientFlowBaselinePilotPanel status=\{status\} onAuthorized=\{refresh\}/);
+  assert.match(panel, /client\.get\(PATH \+ "\/availability"/);
+  assert.match(panel, /client\.post\(PATH \+ "\/authorize", body/);
+  assert.match(panel, /confirmed_prepared:true,password/);
+  assert.match(panel, /expected_bundle_sha256:authority\.bundle_sha256/);
+  assert.match(panel, /status\.fleet_open === false/);
+  assert.match(panel, /authority\.revision !== status\.revision/);
+  assert.doesNotMatch(panel, /setInterval\(/);
 });

@@ -675,6 +675,30 @@ def _assert_no_temporary_rdp_override(layout: Layout) -> None:
             raise TransactionError("Temporary RDP agent override must be rolled back before activation")
 
 
+_TEMPORARY_LIVESTREAM_PATHS = (
+    "/run/clientflow-63d77-hls",
+    "/run/clientflow-63d76-livestream",
+    "/run/clientflow-63d72f-hls",
+)
+
+
+def _assert_no_temporary_livestream_override(layout: Layout) -> None:
+    for name in _TEMPORARY_LIVESTREAM_PATHS:
+        path = layout.path(name)
+        if path.exists() or path.is_symlink():
+            raise TransactionError("Temporary Livestream source must be rolled back before activation")
+    for base in ("/run/systemd/system", "/etc/systemd/system"):
+        for unit in ("clientflow-livestream-producer.service", "clientflow-livestream-uploader.service"):
+            folder = layout.path(base + "/" + unit + ".d")
+            if folder.is_symlink() or (folder.is_dir() and any(folder.glob("63d*.conf"))):
+                raise TransactionError("Temporary Livestream override must be rolled back before activation")
+
+
+def _assert_no_temporary_media_override(layout: Layout) -> None:
+    _assert_no_temporary_rdp_override(layout)
+    _assert_no_temporary_livestream_override(layout)
+
+
 def _managed_unit_paths(layout: Layout) -> list[Path]:
     """Return release-owned ClientFlow units, never temporary bootstrap units.
 
@@ -694,7 +718,7 @@ def _managed_unit_paths(layout: Layout) -> list[Path]:
 
 
 def _remove_managed_units(layout: Layout) -> None:
-    _assert_no_temporary_rdp_override(layout)
+    _assert_no_temporary_media_override(layout)
     if _native_rdp_physical_pending(layout):
         raise TransactionError("RDP physical cleanup pending; preserve guard and watchdog")
     for path in _managed_unit_paths(layout):
@@ -922,6 +946,7 @@ def _quiesce_native_rdp(layout: Layout) -> None:
 
 
 def _quiesce_runtime(layout: Layout, *, require_target: bool = True) -> None:
+    _assert_no_temporary_livestream_override(layout)
     if layout.root != Path("/"):
         return
     _quiesce_native_rdp(layout)
@@ -1321,6 +1346,9 @@ def _activate_release(
     if current == release_id and state.get("active_release_id") == release_id and state.get("activation_intent") is None:
         return {"status": "already_active", "release_id": release_id}
 
+    # Reject temporary test layers before a durable activation intent or any
+    # target/service mutation. The updater never executes local pilot scripts.
+    _assert_no_temporary_media_override(layout)
     intent, _created = _activation_intent(
         layout,
         state,
@@ -1591,6 +1619,86 @@ def activate_release(
 
 
 
+def prepare_post_boot_recovery(
+    *, expected_failed_release_id: str, expected_previous_release_id: str,
+    expected_release_approval_reference: str, expected_bundle_sha256: str,
+    deployment_id: str, requested_boot_id: str, failed_boot_id: str,
+    layout: Layout = Layout(),
+) -> None:
+    """Durably authorize only recovery of the original in-place deployment.
+
+    The first legacy-to-baseline transition is deliberately excluded. No
+    service mutation occurs here; recover_failed_update performs the same
+    independently verified predecessor restoration as activation recovery.
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Post-boot recovery kræver root")
+    failed = _validate_release_id(expected_failed_release_id)
+    previous = _validate_release_id(expected_previous_release_id)
+    approval = _validate_approval(expected_release_approval_reference)
+    previous_seq = int(previous.rsplit("-seq-", 1)[1])
+    if not 1250 <= previous_seq < int(failed.rsplit("-seq-", 1)[1]):
+        raise TransactionError("Post-boot recovery kræver en kompatibel tidligere release")
+    try:
+        if any(str(uuid.UUID(value)) != value for value in (deployment_id, requested_boot_id, failed_boot_id)):
+            raise ValueError("noncanonical UUID")
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise TransactionError("Post-boot recovery har ugyldig deployment- eller bootidentitet") from exc
+    if requested_boot_id == failed_boot_id or not _SHA256_RE.fullmatch(expected_bundle_sha256):
+        raise TransactionError("Post-boot recovery mangler boot- eller bundlebevis")
+
+    with TransactionLock(layout):
+        root = (install_coordinator.DEFAULT_ROOT if layout.root == Path("/")
+                else layout.path("/var/lib/clientflow/install-coordinator"))
+        binding = {"schema_version": 1, "owner": "update_clientflow", "operation_id": deployment_id}
+        if install_coordinator.snapshot(root=root) != binding:
+            raise TransactionError("Post-boot recovery matcher ikke installationslåsen")
+        state = load_state(layout)
+        record = state["installed"].get(failed)
+        prior = state["installed"].get(previous)
+        if (state.get("active_release_id") != failed or state.get("previous_release_id") != previous
+                or state.get("staged_release_id") is not None
+                or not isinstance(record, dict) or not isinstance(prior, dict)
+                or record.get("bundle_sha256") != expected_bundle_sha256
+                or record.get("release_approval_reference") != approval):
+            raise TransactionError("Post-boot recovery matcher ikke lokal releasejournal")
+        intent = state.get("activation_intent")
+        if intent is not None:
+            if (not isinstance(intent, dict)
+                    or intent.get("release_id") != failed or intent.get("previous_release_id") != previous
+                    or intent.get("release_approval_reference") != approval
+                    or intent.get("post_boot_deployment_id") != deployment_id
+                    or intent.get("post_boot_failed_id") != failed_boot_id
+                    or intent.get("post_boot_requested_id") != requested_boot_id
+                    or _read_active_release_id(layout) not in {failed, previous}):
+                raise TransactionError("Post-boot recovery har en anden aktiv journal")
+            return
+        if (_read_active_release_id(layout) != failed
+                or layout.path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip() != failed_boot_id):
+            raise TransactionError("Post-boot recovery matcher ikke det fejlede boot")
+        activated = next((event for event in reversed(state["history"])
+                          if isinstance(event, dict) and event.get("event") == "activated"), None)
+        if (not activated or activated.get("release_id") != failed
+                or activated.get("previous_release_id") != previous
+                or activated.get("release_approval_reference") != approval):
+            raise TransactionError("Post-boot recovery mangler dokumenteret activation")
+        _canonical_activation_approval(layout, state, previous,
+                                       expected_approval_reference=prior.get("release_approval_reference") or "")
+        manifest = load_secure_json(layout.releases / previous / "release-manifest.json",
+                                    max_bytes=8 * 1024 * 1024, forbidden_mode_bits=0o022)
+        _validate_prepared_release_tree(layout.releases / previous, manifest)
+        state["activation_intent"] = {
+            "release_id": failed, "previous_release_id": previous,
+            "release_approval_reference": approval, "started_at": _now(),
+            "post_boot_deployment_id": deployment_id, "post_boot_failed_id": failed_boot_id,
+            "post_boot_requested_id": requested_boot_id,
+        }
+        _append_history(state, "post_boot_rollback_requested", release_id=failed,
+                        previous_release_id=previous, release_approval_reference=approval,
+                        deployment_id=deployment_id, failed_boot_id=failed_boot_id)
+        save_state(layout, state)
+
+
 def recover_failed_update(
     *,
     expected_failed_release_id: str,
@@ -1620,10 +1728,21 @@ def recover_failed_update(
             intent.get("release_id") != failed,
             intent.get("previous_release_id") != previous,
             intent.get("release_approval_reference") != approval,
-            state.get("active_release_id") != previous,
-            state.get("staged_release_id") != failed,
-            state.get("previous_release_id") is not None,
         )):
+            raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
+        post_boot = intent.get("post_boot_deployment_id")
+        if post_boot is not None:
+            root = (install_coordinator.DEFAULT_ROOT if layout.root == Path("/")
+                    else layout.path("/var/lib/clientflow/install-coordinator"))
+            if (state.get("active_release_id") != failed or state.get("previous_release_id") != previous
+                    or state.get("staged_release_id") is not None
+                    or install_coordinator.snapshot(root=root) != {
+                        "schema_version": 1, "owner": "update_clientflow", "operation_id": post_boot,
+                    }):
+                raise TransactionError("Post-boot recovery har mistet sin autoriserede installationslås")
+        elif any((state.get("active_release_id") != previous,
+                  state.get("staged_release_id") != failed,
+                  state.get("previous_release_id") is not None)):
             raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
         if not isinstance(state.get("installed"), dict) or not {previous, failed}.issubset(state["installed"]):
             raise TransactionError("Recovery kræver begge installerede releases")
@@ -1637,7 +1756,14 @@ def recover_failed_update(
                    and event.get("release_id") == failed
                    and event.get("previous_release_id") == previous
                    and event.get("release_approval_reference") == approval]
-        if not anchors or not any(
+        if post_boot is not None:
+            if not any(isinstance(event, dict) and event.get("event") == "post_boot_rollback_requested"
+                       and event.get("deployment_id") == post_boot
+                       and event.get("failed_boot_id") == intent.get("post_boot_failed_id")
+                       and event.get("release_id") == failed and event.get("previous_release_id") == previous
+                       and event.get("release_approval_reference") == approval for event in history):
+                raise TransactionError("Post-boot recovery mangler dokumenteret fejl")
+        elif not anchors or not any(
             isinstance(event, dict)
             and event.get("event") == "automatic_rollback_failed"
             and event.get("release_id") == failed
@@ -1946,6 +2072,223 @@ def status(layout: Layout = Layout()) -> dict[str, Any]:
         state = dict(state)
         state["active_symlink_release_id"] = _read_active_release_id(layout)
         return state
+
+
+
+def baseline_boot_evidence(*, expected_release_id: str, expected_bundle_sha256: str, previous_boot_id: str | None = None,
+                           layout: Layout = Layout()) -> dict[str, Any]:
+    """Read the exact installed baseline before/after an operator-observed reboot.
+
+    This is supporting local evidence only, not a physical acceptance, a
+    reboot request, a backend success event, or permission to delete releases.
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Bootkontrol kræver root")
+    if not isinstance(expected_bundle_sha256, str) or not _SHA256_RE.fullmatch(expected_bundle_sha256):
+        raise TransactionError("Forventet bundle-SHA256 er ugyldig")
+    release_id = _validate_release_id(expected_release_id)
+    expected_version, sequence_text = release_id.removeprefix("clientflow-").split("-seq-")
+    expected_sequence = int(sequence_text)
+    owner = 0 if layout.root == Path("/") else os.geteuid()
+    for path in (layout.install_root, layout.releases, layout.state_root):
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
+            raise TransactionError("Ubetroet releasekatalog")
+    def boot_id():
+        value = layout.path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        try:
+            if str(uuid.UUID(value)) != value:
+                raise ValueError("noncanonical boot ID")
+        except ValueError as exc:
+            raise TransactionError("Kernel boot-ID er ugyldigt") from exc
+        return value
+
+    if previous_boot_id is not None:
+        try:
+            if str(uuid.UUID(previous_boot_id)) != previous_boot_id:
+                raise ValueError("noncanonical previous boot ID")
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise TransactionError("Tidligere boot-ID er ugyldigt") from exc
+    fd = os.open(layout.lock_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_mode & 0o077:
+            raise TransactionError("Ubetroet transaktionslås")
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        current_lock = layout.lock_file.lstat()
+        if (info.st_dev, info.st_ino) != (current_lock.st_dev, current_lock.st_ino):
+            raise TransactionError("Transaktionslåsen er udskiftet")
+        boot = boot_id()
+        if previous_boot_id == boot:
+            raise TransactionError("Genstart er endnu ikke observeret")
+        state = load_state(layout)
+        record = state["installed"].get(release_id)
+        if (state.get("active_release_id") != release_id
+                or _read_active_release_id(layout) != release_id
+                or state.get("activation_intent") is not None
+                or state.get("staged_release_id") is not None
+                or not isinstance(record, dict)
+                or record.get("bundle_sha256") != expected_bundle_sha256):
+            raise TransactionError("Aktiv release matcher ikke verificeret bundle og journal")
+        manifest = load_secure_json(layout.releases / release_id / "release-manifest.json",
+                                    max_bytes=8 * 1024 * 1024, forbidden_mode_bits=0o022)
+        if (manifest.get("release_id") != release_id
+                or manifest.get("version") != expected_version
+                or manifest.get("release_sequence") != expected_sequence
+                or record.get("manifest_sha256") != _manifest_digest(manifest)):
+            raise TransactionError("Release-manifest matcher ikke den lokale journal")
+        provenance = _manifest_provenance(manifest, bundle_size=record.get("bundle_size"),
+                                          bundle_sha256=expected_bundle_sha256)
+        _assert_record_provenance(record, provenance)
+        _assert_no_temporary_media_override(layout)
+        _health_check(layout, release_id, timeout=120)
+        if boot_id() != boot:
+            raise TransactionError("Boot-ID ændret under releaseverifikation")
+        return {"release_id": release_id, "version": expected_version, "release_sequence": expected_sequence,
+                "bundle_sha256": expected_bundle_sha256, "source_commit": provenance["source_commit"],
+                "boot_id": boot, "previous_boot_id": previous_boot_id,
+                "boot_changed_from_operator_reference": previous_boot_id is not None,
+                "release_health_verified": True, "temporary_media_overrides_absent": True,
+                "physical_acceptance": False, "deletion_authorized": False}
+    finally:
+        os.close(fd)
+
+
+def release_inventory(layout: Layout = Layout()) -> dict[str, Any]:
+    """Advisory inspection under the existing transaction lock.
+
+    No lock creation, chmod, state rewrite, service action or deletion. The
+    snapshot cannot authorize pruning: the controller, backend, and recovery
+    dependencies must independently be quiesced before any future mutation.
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Releaseinventar kræver root")
+    owner = 0 if layout.root == Path("/") else os.geteuid()
+    for directory in (layout.install_root, layout.releases, layout.state_root):
+        meta = directory.lstat()
+        if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != owner or meta.st_mode & 0o022:
+            raise TransactionError("Usikkert release- eller statekatalog")
+    fd = os.open(layout.lock_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        meta = os.fstat(fd)
+        if not stat.S_ISREG(meta.st_mode) or meta.st_uid != owner or meta.st_mode & 0o077:
+            raise TransactionError("Usikker eksisterende transaktionslås")
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        current_lock = layout.lock_file.lstat()
+        if (current_lock.st_dev, current_lock.st_ino) != (meta.st_dev, meta.st_ino):
+            raise TransactionError("Transaktionslåsen er udskiftet")
+        if not layout.state_file.is_file():
+            raise TransactionError("Releasejournal mangler")
+        state = load_state(layout)
+        installed = state["installed"]
+        if len(installed) > 128:
+            raise TransactionError("Releasejournal overskrider inventargrænsen")
+        for release_id, record in installed.items():
+            _validate_release_id(release_id)
+            if not isinstance(record, dict):
+                raise TransactionError("Ugyldig releasejournalpost")
+        active = _read_active_release_id(layout)
+        protected = {}
+        blockers = []
+
+        def protect(release_id, reason):
+            if release_id is not None:
+                _validate_release_id(release_id)
+                protected.setdefault(release_id, []).append(reason)
+
+        for key in ("active_release_id", "previous_release_id", "staged_release_id"):
+            protect(state.get(key), key)
+        protect(active, "active_symlink")
+        if active is None or active != state.get("active_release_id"):
+            blockers.append("active_state_not_confirmed")
+        if state.get("staged_release_id") is not None:
+            blockers.append("staged_release_present")
+        intent = state.get("activation_intent")
+        if intent is not None:
+            if not isinstance(intent, dict):
+                raise TransactionError("Ugyldigt activation-intent")
+            protect(intent.get("release_id"), "activation_target")
+            protect(intent.get("previous_release_id"), "activation_previous")
+            blockers.append("activation_intent_present")
+        receipts = state.get("rollback_reports", {})
+        if not isinstance(receipts, dict):
+            raise TransactionError("Ugyldig rollbackjournal")
+        for receipt in receipts.values():
+            if not isinstance(receipt, dict):
+                raise TransactionError("Ugyldig rollbackjournalpost")
+            protect(receipt.get("to_release_id"), "rollback_receipt")
+        if receipts:
+            blockers.append("rollback_receipts_require_review")
+
+        controller_path = layout.path("/var/lib/clientflow/update-controller/state.json")
+        try:
+            controller = load_secure_json(controller_path, max_bytes=1024 * 1024)
+        except (OSError, RuntimeError, ValueError):
+            controller = None
+        if not isinstance(controller, dict) or controller.get("schema_version") != 1:
+            blockers.append("controller_state_not_verified")
+        elif controller.get("phase") != "idle" or controller.get("deployment") is not None:
+            blockers.append("controller_not_idle")
+            protect(controller.get("previous_release_id"), "controller_previous")
+            deployment = controller.get("deployment")
+            if isinstance(deployment, dict):
+                protect(deployment.get("target_release_id"), "controller_target")
+
+        rows = []
+        observed = set()
+        with os.scandir(layout.releases) as entries:
+            for entry in entries:
+                if len(rows) >= 128:
+                    raise TransactionError("Releasekatalog overskrider inventargrænsen")
+                name = entry.name
+                if not _RELEASE_ID_RE.fullmatch(name):
+                    blockers.append("noncanonical_store_entry")
+                    rows.append({"release_id": None, "classification": "unrecognized", "manifest_matches_journal": False})
+                    continue
+                observed.add(name)
+                record = installed.get(name)
+                info = entry.stat(follow_symlinks=False)
+                matches = False
+                if (stat.S_ISDIR(info.st_mode) and info.st_uid == owner
+                        and not info.st_mode & 0o022 and isinstance(record, dict)):
+                    try:
+                        manifest = load_secure_json(Path(entry.path) / "release-manifest.json", forbidden_mode_bits=0o022)
+                        matches = (
+                            manifest.get("release_id") == name
+                            and manifest.get("version") == record.get("version")
+                            and manifest.get("release_sequence") == record.get("release_sequence")
+                            and _manifest_digest(manifest) == record.get("manifest_sha256")
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        matches = False
+                if not matches:
+                    blockers.append("unverified_release_directory")
+                rows.append({
+                    "release_id": name,
+                    "classification": "protected" if name in protected else "review_only" if matches else "unverified",
+                    "manifest_matches_journal": matches,
+                    "protection_reasons": protected.get(name, []),
+                })
+        if set(installed) - observed or set(protected) - observed:
+            blockers.append("journal_or_protected_release_missing")
+        rows.sort(key=lambda row: row["release_id"] or "")
+        return {
+            "mode": "read_only_local_inventory",
+            "active_release_id": active,
+            "previous_release_id": state.get("previous_release_id"),
+            "staged_release_id": state.get("staged_release_id"),
+            "registered_count": len(installed),
+            "directory_count": len(rows),
+            "releases": rows,
+            "blockers": sorted(set(blockers)),
+            "full_payload_integrity_verified": False,
+            "backend_dependency_review_required": True,
+            "physical_reboot_recovery_acceptance_required": True,
+            "deletion_authorized": False,
+            "automatic_cleanup_enabled": False,
+        }
+    finally:
+        os.close(fd)
 
 
 def install_stable_updater_host(

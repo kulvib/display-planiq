@@ -571,6 +571,7 @@ class ClientRead(ClientBase):
     ubuntu_update_package_count: Optional[int] = None
     ubuntu_update_reboot_required: Optional[bool] = None
     firmware: Optional[Dict[str, Any]] = None
+    ubuntu_update_inventory: Optional[Dict[str, Any]] = None
     pending_firmware_update: Optional[bool] = False
     firmware_update_status: Optional[str] = "ready"
     firmware_update_message: Optional[str] = None

@@ -31,7 +31,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   const launchInProgressRef = useRef(false);
   const lastActivitySentRef = useRef(-Infinity);
   const [autoPendingRequestId, setAutoPendingRequestId] = useState(null);
-  const automatic = import.meta.env.VITE_NATIVE_RDP_AUTOLOGIN === "true" && Number(clientId) === 3;
+  // The parent renders this viewer only for a server-admitted native client.
+  const automatic = Number.isSafeInteger(Number(clientId)) && Number(clientId) > 0;
   const [boot, setBoot] = useState(null);
   const [attempt, setAttempt] = useState(0);
   const [status, setStatus] = useState("Klar til forbindelse");
@@ -193,7 +194,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     try {
       await verifyWasm();
       if (operationRef.current !== operation) return;
-      const handle = await createNativeRdpAutologin(sessionId);
+      const handle = await createNativeRdpAutologin(sessionId, Number(clientId));
       if (operationRef.current !== operation) return;
       autoLoginRef.current = handle;
       setAutoPendingRequestId(handle.request.request_id);
@@ -212,7 +213,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
       setWorking(false);
       setStatus("Forbindelsen kunne ikke oprettes. Prøv igen.");
     }
-  }, [automatic, sessionId, working, requestAutologin, verifyWasm, cancelManaged, onDesiredChange]);
+  }, [automatic, clientId, sessionId, working, requestAutologin, verifyWasm, cancelManaged, onDesiredChange]);
 
   useEffect(() => {
     if (!automatic || !desired || !sessionId || working || autoAttemptedRef.current) return undefined;

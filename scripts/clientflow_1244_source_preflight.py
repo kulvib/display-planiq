@@ -61,8 +61,12 @@ def inspect_source(repo: Path) -> dict:
         "schema_version": 1, "enabled": False, "keys": [],
     })
     catalog_code = source("backend/service1/clientflow_releases.py")
-    check("new_policy_only_after_1244_catalog_promotion", all(token in catalog_code for token in (
-        'if data["catalog_sequence"] >= 1244:',
+    # The 1250 baseline has its own strict single-release policy. Keep the
+    # historical lower bound at 1244; never accept a shifted or absent guard.
+    legacy_gate = ('if data["catalog_sequence"] >= 1244:' in catalog_code
+                   or ('if 1244 <= data["catalog_sequence"] < 1250:' in catalog_code
+                       and 'validate_baseline_catalog(data)' in catalog_code))
+    check("new_policy_only_after_1244_catalog_promotion", legacy_gate and all(token in catalog_code for token in (
         'policy.get("max_selectable_versions") != 3',
         'not 1 <= len(releases) <= 3',
         'sequences[-1] != data["catalog_sequence"]',

@@ -118,7 +118,7 @@ async def request_sealed_native_rdp_login(
 @asynccontextmanager
 async def open_managed_native_rdp_login(*, client_id, session_id, request_id, public_key):
     """Keep the guarded physical lease only while this local socket lives."""
-    if client_id != 3:
+    if type(client_id) is not int or client_id <= 0:
         raise AutologinUnavailable("UNSUPPORTED_RDP_CLIENT")
     _validate_binding(session_id)
     _validate_binding(request_id)

@@ -18,7 +18,7 @@ from .filesystem import atomic_write_json, fsync_directory
 
 DEFAULT_PATH = Path('/var/lib/clientflow/release-status/state.json')
 PHASES = frozenset({
-    'preparing', 'staging', 'activating', 'post_activation_check',
+    'preparing', 'staging', 'activating', 'post_activation_check', 'rebooting', 'post_boot_check',
     'rolling_back', 'recovery_required', 'completed', 'rolled_back', 'cancelled',
 })
 _RELEASE = re.compile(r'clientflow-[0-9]+\.[0-9]+\.[0-9]+-seq-[0-9]+\Z')
@@ -38,6 +38,9 @@ def _check_directory(path: Path) -> None:
     if (not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022
             or (info.st_uid != 0 if os.geteuid() == 0 else info.st_uid != os.geteuid())):
         raise ReleasePublicStatusError('Ubetroet release-statuskatalog')
+    # The controller uses UMask=0077; the directory must be traversable by kiosk/Status.
+    if os.geteuid() == 0:
+        os.chmod(path.parent, 0o755)
     if path.exists() or path.is_symlink():
         info = path.lstat()
         if (not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022

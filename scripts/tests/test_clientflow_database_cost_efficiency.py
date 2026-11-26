@@ -152,7 +152,14 @@ def test_frontend_always_on_database_polls_are_visibility_aware():
     assert "getActiveClientflowDeployment" not in actions
     assert "refreshDeployment" not in actions
     assert "if (isPageVisible()) refreshClientflowDeployment();" in details_page
-    assert "!clientflowDeploymentActive" in details_page
+    # One shared owner: only visible tabs may read, with a slow idle fallback
+    # to recover lost notifications for deployments ordered elsewhere.
+    assert "if (!client?.id || !isSuperadmin || !isPageVisible() || deploymentRefreshInFlightRef.current) return null;" in details_page
+    assert "if (isPageVisible()) void refreshClientflowDeployment();" in details_page
+    assert "CLIENTFLOW_DEPLOYMENT_POLL_MS = 2500" in details_page
+    assert "clientflowDeploymentActive ? CLIENTFLOW_DEPLOYMENT_POLL_MS : 60_000" in details_page
+    assert "createReleaseAdministrationRealtimeCapability(signal)" in details_page
+    assert "scope?.cancel();" in details_page
     # Configuration/Diagnostics must not add their own full-client intervals.
     # Their state rides on the already visibility-aware /chrome-status reconciliation.
     assert "const DETAIL_HOT_FIELDS = [" in details_page

@@ -8,13 +8,19 @@ behind the same API with shared ephemeral infrastructure (for example Valkey).
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 import asyncio
 import threading
 import time
 from typing import Final
 
-_ALLOWED_DOMAINS: Final = frozenset({"display", "system", "livestream"})
+# Internal UI-only topic, never a ClientFlow agent credential domain.
+RELEASE_ADMIN_WAKE_DOMAIN: Final = "release_admin"
+RELEASE_ADMIN_WAKE_KEY: Final = 1
+_RELEASE_VERSION_CACHE_LIMIT: Final = 4096
+# Notification deduplication only, never authorization or version authority.
+_RELEASE_VERSION_CACHE: OrderedDict[int, tuple[str, str | None]] = OrderedDict()
+_ALLOWED_DOMAINS: Final = frozenset({"display", "system", "livestream", RELEASE_ADMIN_WAKE_DOMAIN})
 _CONDITION = threading.Condition()
 _GENERATIONS: dict[tuple[str, int], int] = defaultdict(int)
 # Each async wake waiter belongs to its event loop. Registration and publication
@@ -119,11 +125,33 @@ def queue_wakeup_after_commit(session, *, domain: str, client_id: int) -> None:
     pending.add(_key(domain, client_id))
 
 
+def queue_release_admin_wakeup(session) -> None:
+    """One payload-free release administration invalidation per transaction."""
+    queue_wakeup_after_commit(session, domain=RELEASE_ADMIN_WAKE_DOMAIN, client_id=RELEASE_ADMIN_WAKE_KEY)
+
+
+def queue_release_version_observation(session, *, client_id: int, credential_id: str, agent_version: str | None) -> None:
+    """Capture only the version/credential fingerprint of a canonical Status write."""
+    observations = session.info.setdefault("release_admin_version_observations", {})
+    observations[int(client_id)] = (str(credential_id), agent_version)
+
+
 def publish_session_wakeups(session) -> None:
     pending = set(session.info.pop("clientflow_command_wakeups", set()))
+    observations = session.info.pop("release_admin_version_observations", {})
+    with _CONDITION:
+        for client_id, fingerprint in observations.items():
+            previous = _RELEASE_VERSION_CACHE.get(client_id)
+            if previous != fingerprint:
+                pending.add((RELEASE_ADMIN_WAKE_DOMAIN, RELEASE_ADMIN_WAKE_KEY))
+            _RELEASE_VERSION_CACHE[client_id] = fingerprint
+            _RELEASE_VERSION_CACHE.move_to_end(client_id)
+        while len(_RELEASE_VERSION_CACHE) > _RELEASE_VERSION_CACHE_LIMIT:
+            _RELEASE_VERSION_CACHE.popitem(last=False)
     for domain, client_id in pending:
         notify_command_available(domain, client_id)
 
 
 def discard_session_wakeups(session) -> None:
     session.info.pop("clientflow_command_wakeups", None)
+    session.info.pop("release_admin_version_observations", None)

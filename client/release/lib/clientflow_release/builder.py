@@ -114,6 +114,8 @@ def _tar_add_bytes(archive: tarfile.TarFile, name: str, data: bytes, *, mode: in
 
 
 # Exactly these reviewed root helpers enter the canonical payload.
+# Historical scripts remain unchanged for recovery evidence.
+NATIVE_RDP_ROOT_SOURCE_DIR = Path("client/native-rdp-root")
 NATIVE_RDP_ROOT_SOURCES = (
     "clientflow_63d29_persistent_rdp_guard.py",
     "clientflow_63d30_local_rdp_pilot.py",
@@ -206,7 +208,7 @@ def _validate_native_rdp_root_pins(repo: Path) -> None:
         raise ValueError("Canonical native RDP pin inventory mismatch")
     for name, expected in pins.items():
         source = (repo / "client/libexec/native-rdp/scripts" / name
-                  if name == "__init__.py" else repo / "scripts" / name)
+                  if name == "__init__.py" else repo / NATIVE_RDP_ROOT_SOURCE_DIR / name)
         if source.is_symlink() or not source.is_file():
             raise ValueError("Canonical native RDP root helper missing")
         size, digest = sha256_file(source)
@@ -249,7 +251,7 @@ def _create_payload(
         for path in _iter_files(source_root):
             sources.append((path, target_root / path.relative_to(source_root).as_posix()))
     for name in NATIVE_RDP_ROOT_SOURCES:
-        source = repo / "scripts" / name
+        source = repo / NATIVE_RDP_ROOT_SOURCE_DIR / name
         if source.is_symlink() or not source.is_file():
             raise ValueError("Canonical native RDP root helper missing")
         sources.append((source, PurePosixPath(root) / "client-runtime/libexec/native-rdp/scripts" / name))
