@@ -1,16 +1,19 @@
 import * as React from "react";
 import {
-  Alert, Box, Button, Checkbox, Chip, CircularProgress, Dialog,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Checkbox, Chip, CircularProgress, Dialog,
   DialogActions, DialogContent, DialogTitle, Divider, MenuItem, Paper,
   Stack, TextField, Typography,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import client from "../../api/client";
-import { assertActiveAuthSession, getAuthSessionSignal, createReleaseAdministrationRealtimeCapability, waitForControlRoomRealtime } from "../../api";
+import { assertActiveAuthSession, getAuthSessionSignal, createReleaseAdministrationRealtimeCapability, waitForControlRoomRealtime, cancelClientflowDeployment } from "../../api";
 import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../../utils/controlRoomRealtimeLifecycle.mjs";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
 import ClientFlowPilot1247Panel from "./ClientFlowPilot1247Panel";
 import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
+import ClientFlowFleetOverview from "./ClientFlowFleetOverview";
+import { CANCELLABLE_STATES } from "./clientflowDeploymentHistory.mjs";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
   validateReleasePlanningResponse, validatePlanningPreview,
@@ -40,7 +43,7 @@ function clientLabel(value) {
   return [value.name, value.locality].filter(Boolean).join(" · ");
 }
 
-/** Deliberately INERT planning UI. No release approval, client update or rollback API is invoked. */
+/** Actual status and cancellation; historical planning never authorizes a deployment. */
 export default function ClientFlowReleaseAdministration() {
   const [status, setStatus] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
@@ -56,6 +59,7 @@ export default function ClientFlowReleaseAdministration() {
   const [intent, setIntent] = React.useState(null);
   const [password, setPassword] = React.useState("");
   const [dialogError, setDialogError] = React.useState("");
+  const [activeVisibleCount, setActiveVisibleCount] = React.useState(20);
   const controllerRef = React.useRef(null);
   const [liveStatus, setLiveStatus] = React.useState("connecting");
 
@@ -188,6 +192,9 @@ export default function ClientFlowReleaseAdministration() {
   const unknownCount = available.filter((value) => !value.reported_version).length;
   const release = status?.available_releases[0];
   const seq = status?.stable_release_id?.match(/-seq-(\d+)$/)?.[1] || "–";
+  const activeRows = status?.active_deployments ?? EMPTY_CLIENTS;
+  const activeComplete = status?.active_deployments_complete === true;
+  const activeIds = React.useMemo(() => new Set(activeRows.map((row) => row.id)), [activeRows]);
 
   const changeVersion = (value) => {
     setSourceVersion(value);
@@ -243,6 +250,12 @@ export default function ClientFlowReleaseAdministration() {
     setPassword("");
     setIntent({ action, wave });
   };
+  const openCancelDeployment = (row) => {
+    if (!activeComplete || submitting || loading || !CANCELLABLE_STATES.has(row.state)) return;
+    if (!activeRows.some((item) => item.id === row.id && CANCELLABLE_STATES.has(item.state))) return;
+    setDialogError("");
+    setIntent({ action: "cancel-deployment", deployment: row });
+  };
   const closeDialog = () => {
     if (submitting) return;
     setIntent(null);
@@ -251,12 +264,18 @@ export default function ClientFlowReleaseAdministration() {
   };
   const confirmAction = async (event) => {
     event.preventDefault();
-    if (!status || submitting || !intent || !password) return;
+    if (!status || submitting || !intent || (intent.action !== "cancel-deployment" && !password)) return;
     setSubmitting(true);
     setDialogError("");
     setMessage("");
     try {
-      if (intent.action === "create") {
+      if (intent.action === "cancel-deployment") {
+        const row = activeRows.find((item) => item.id === intent.deployment.id);
+        if (!activeComplete || !row || !CANCELLABLE_STATES.has(row.state)) throw new Error("Opdateringen kan ikke længere annulleres. Hent ny status.");
+        const result = await cancelClientflowDeployment(row.id, "Annulleret af superadministrator i releaseadministrationen");
+        if (result?.id !== row.id || result?.state !== "cancelled") throw new Error("Annulleringen er ikke bekræftet. Hent ny status.");
+        setMessage("Opdateringen er annulleret af backend.");
+      } else if (intent.action === "create") {
         const data = preparePlan(available, selectedIds, sourceVersion, status.stable_version, expiry);
         await client.post(`${RELEASE_PATH}/drafts`, {
           ...data, expected_revision: status.revision, password,
@@ -287,7 +306,7 @@ export default function ClientFlowReleaseAdministration() {
           <Box sx={{ flex: "1 1 320px", minWidth: 0 }}>
             <Typography variant="h5" fontWeight={900}>ClientFlow · Releases</Typography>
             <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              Overblik over godkendte releases og klienter. Inaktive bølgeplaner og særskilt kontrolleret Viborg1-pilot.
+              Gældende release, klientversioner og faktiske opdateringer.
             </Typography>
           </Box>
           <Box sx={{ ml: "auto", flexShrink: 0 }}>
@@ -300,9 +319,34 @@ export default function ClientFlowReleaseAdministration() {
       {!status ? (loading ? <Box sx={{ p: 3 }}><CircularProgress aria-label="Henter releaseadministration" /></Box>
         : <Alert severity="error">Release- og klientdata er ikke verificeret. Alle handlinger er spærret.</Alert>) : (
         <>
+          <ClientFlowFleetOverview clients={available} release={release} stableVersion={status.stable_version} activeRows={activeRows} activeComplete={activeComplete} />
+          <Paper elevation={0} sx={panelSx}>
+            <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Seneste 20 registrerede deployments – adskilt fra de inaktive planer.
+              Status følger backendens faktiske hændelser. Ingen kunstig downloadprocent.
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }} aria-live="polite">
+              {liveStatus === "active" ? "Automatisk status aktiv" : liveStatus === "paused" ? "Automatisk status midlertidigt sat på pause" : liveStatus === "connecting" ? "Opretter live status …" : "Automatisk status afbrudt – Opdater kan bruges manuelt"}
+            </Typography>
+            <Typography fontWeight={750} sx={{ mt: 1, mb: 1 }}>Aktive opdateringer {activeComplete ? `(${activeRows.length})` : ""}</Typography>
+            {!activeComplete && <Alert severity="warning" sx={{ mb: 1 }}>Den fulde aktive status er ikke tilgængelig. Ingen annullering kan bestilles her.</Alert>}
+            {activeComplete && activeRows.length === 0 ? <Typography color="text.secondary">Ingen aktive opdateringer.</Typography> :
+              <ClientFlowDeploymentHistory rows={activeRows.slice(0, activeVisibleCount)} onCancel={activeComplete ? openCancelDeployment : undefined} busy={submitting || loading} />}
+            {activeRows.length > activeVisibleCount && <Button onClick={() => setActiveVisibleCount((count) => count + 20)}>Vis flere aktive opdateringer</Button>}
+            <Divider sx={{ my: 2 }} />
+            <Typography fontWeight={750} sx={{ mb: 1 }}>Seneste historik</Typography>
+            <ClientFlowDeploymentHistory rows={(status.recent_deployments ?? []).filter((row) => !activeIds.has(row.id))} />
+          </Paper>
+          <Accordion disableGutters defaultExpanded={false} sx={panelSx}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography fontWeight={850}>Tekniske releasedetaljer og historiske pilotplaner</Typography>
+            </AccordionSummary>
+            <AccordionDetails sx={{ p: 0 }}>
+            <Stack spacing={2.2}>
           <Alert severity="info">
             <strong>Almindelige planer er inaktive.</strong> En plan godkender aldrig installation eller rollback.
-            Kun en særskilt, præcist godkendt 1246- eller 1247-pilot på Viborg1 kan efter genbekræftelse bestille én installation.
+            Kun en særskilt, præcist godkendt tidligere godkendt pilot på Viborg1 kan efter genbekræftelse bestille én installation.
             Nyinstallation, fleet, rollback og DB-cutover er fortsat spærret.
           </Alert>
           <Paper elevation={0} sx={panelSx}>
@@ -433,20 +477,9 @@ export default function ClientFlowReleaseAdministration() {
           <ClientFlowPilot1246Panel status={status} onAuthorized={refresh} />
           <ClientFlowPilot1247Panel status={status} onAuthorized={refresh} />
           <Paper elevation={0} sx={panelSx}>
-            <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              Seneste 20 registrerede deployments – adskilt fra de inaktive planer.
-              Status følger backendens faktiske hændelser. Ingen kunstig downloadprocent.
-            </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }} aria-live="polite">
-              {liveStatus === "active" ? "Automatisk status aktiv" : liveStatus === "paused" ? "Automatisk status midlertidigt sat på pause" : liveStatus === "connecting" ? "Opretter live status …" : "Automatisk status afbrudt – Opdater kan bruges manuelt"}
-            </Typography>
-            <ClientFlowDeploymentHistory rows={status.recent_deployments ?? []} />
-          </Paper>
-          <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>3. Udrulning og rollback</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              Bølgeudrulning, rollback og nyinstallation kræver særskilt godkendelse og er endnu ikke aktiveret. Den isolerede Viborg1-pilot ovenfor er den eneste nye installationsvej.
+              Bølgeudrulning, rollback og nyinstallation kræver særskilt godkendelse og er endnu ikke aktiveret. Tidligere pilotforløb vises nedenfor eller ovenfor som historisk dokumentation.
             </Typography>
             <Stack direction={{ xs: "column", sm: "row" }} gap={1.5}>
               <Button variant="contained" disabled>Start opdatering til valgte klienter · spærret</Button>
@@ -482,11 +515,14 @@ export default function ClientFlowReleaseAdministration() {
               })}
             </Stack>
           </Paper>
+            </Stack>
+            </AccordionDetails>
+          </Accordion>
         </>
       )}
       <Dialog open={Boolean(intent)} onClose={closeDialog} fullWidth maxWidth="sm">
         <Box component="form" onSubmit={confirmAction}>
-          <DialogTitle>{intent?.action === "create" ? "Bekræft inaktiv plan" : ACTIONS[intent?.action]?.label}</DialogTitle>
+          <DialogTitle>{intent?.action === "cancel-deployment" ? "Annullér ClientFlow-opdatering" : intent?.action === "create" ? "Bekræft inaktiv plan" : ACTIONS[intent?.action]?.label}</DialogTitle>
           <DialogContent>
             {intent?.action === "create" && status && (
               <Stack sx={{ mt: 0.5, mb: 2 }} spacing={0.6}>
@@ -495,13 +531,13 @@ export default function ClientFlowReleaseAdministration() {
                 <Typography variant="body2" color="text.secondary">{selectedIds.length === 1 ? "Pilotplan" : "Kontrolleret bølgeplan"} · udløber om {expiry} time(r)</Typography>
               </Stack>
             )}
-            <Alert severity="info" sx={{ mb: 2 }}>Kun administrativ planlægning. Ingen installation, releasegodkendelse eller rollback.</Alert>
+            {intent?.action === "cancel-deployment" ? <Alert severity="warning" sx={{ mb: 2 }}>{intent.deployment.client_name || `Klient #${intent.deployment.client_id}`} · ClientFlow {intent.deployment.target_version}. Backend tillader kun annullering før aktivering. Dette er ikke rollback.</Alert> : <Alert severity="info" sx={{ mb: 2 }}>Kun administrativ planlægning. Ingen installation, releasegodkendelse eller rollback.</Alert>}
             {dialogError && <Alert severity="error" sx={{ mb: 2 }}>{dialogError}</Alert>}
-            <TextField autoFocus fullWidth type="password" label="Genbekræft din adgangskode" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            {intent?.action !== "cancel-deployment" && <TextField autoFocus fullWidth type="password" label="Genbekræft din adgangskode" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />}
           </DialogContent>
           <DialogActions>
             <Button onClick={closeDialog} disabled={submitting}>Tilbage</Button>
-            <Button type="submit" variant="contained" disabled={!password || submitting}>{submitting ? "Gemmer …" : "Bekræft planhandling"}</Button>
+            <Button type="submit" variant="contained" disabled={submitting || (intent?.action !== "cancel-deployment" && !password)}>{submitting ? "Gemmer …" : intent?.action === "cancel-deployment" ? "Bekræft annullering" : "Bekræft planhandling"}</Button>
           </DialogActions>
         </Box>
       </Dialog>

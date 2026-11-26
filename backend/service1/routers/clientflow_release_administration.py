@@ -392,8 +392,8 @@ def read_release_administration(
         .order_by(ClientFlowDeployment.requested_at.desc(), ClientFlowDeployment.id.desc())
         .limit(20)
     ).all()
-    recent_deployments = [
-        {
+    def deployment_summary(item, name):
+        return {
             "id": item.id,
             "client_id": item.client_id,
             "client_name": name,
@@ -407,9 +407,20 @@ def read_release_administration(
             "failure_code": item.failure_code,
             "failure_message": (item.failure_message or "")[:240] or None,
         }
-        for item, name in deployment_rows
-    ]
+    recent_deployments = [deployment_summary(item, name) for item, name in deployment_rows]
+    # Active work is independent of the last 20 historical entries. The
+    # partial unique active-client index bounds this to one row per client.
+    # An oversized inventory must not be presented as complete.
+    active_rows = session.exec(
+        select(ClientFlowDeployment, Client.name)
+        .join(Client, ClientFlowDeployment.client_id == Client.id)
+        .where(ClientFlowDeployment.completed_at.is_(None))
+        .order_by(ClientFlowDeployment.requested_at, ClientFlowDeployment.id)
+        .limit(1001)
+    ).all()
     return {
+        "active_deployments": [deployment_summary(item, name) for item, name in active_rows[:1000]],
+        "active_deployments_complete": len(active_rows) <= 1000,
         "recent_deployments": recent_deployments,
         "available_clients": available_clients,
         "client_inventory_complete": len(inventory_rows) <= 1000,

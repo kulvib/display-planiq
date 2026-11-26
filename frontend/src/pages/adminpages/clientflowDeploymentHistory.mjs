@@ -7,6 +7,7 @@ export const DEPLOYMENT_STEPS = Object.freeze([
   { state: "activating", label: "Aktiverer" },
   { state: "health_check", label: "Kontrollerer" },
 ]);
+export const CANCELLABLE_STATES = new Set(["authorized", "downloading", "verified", "staged"]);
 export const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "rolled_back", "recovery_failed"]);
 export const ALL_STATES = new Set([...DEPLOYMENT_STEPS.map((s) => s.state), ...TERMINAL_STATES, "rolling_back"]);
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -44,6 +45,20 @@ export function validateDeploymentHistory(rows, { limit = 20, allowMissing = fal
       throw new Error("Deploymenthistorik indeholder en ugyldig eller modstridende status");
     }
     seen.add(row.id);
+  }
+  return rows;
+}
+
+
+export function validateActiveDeployments(rows, complete) {
+  if (typeof complete !== "boolean") throw new Error("Aktiv opdateringsstatus er ufuldstændig");
+  validateDeploymentHistory(rows, { limit: 1000 });
+  const clientIds = new Set();
+  for (const row of rows) {
+    if (TERMINAL_STATES.has(row.state) || clientIds.has(row.client_id)) {
+      throw new Error("Aktiv opdateringsstatus er modstridende");
+    }
+    clientIds.add(row.client_id);
   }
   return rows;
 }

@@ -202,6 +202,8 @@ def test_default_closed_status_and_draft_does_not_create_deployment(environment)
     assert before.status_code == 200, before.text
     policy = before.json()
     assert policy["recent_deployments"] == []
+    assert policy["active_deployments"] == []
+    assert policy["active_deployments_complete"] is True
     assert policy["phase"] == "additive_draft_only"
     assert policy["authorization_active"] is False
     assert policy["fleet_open"] is False
@@ -664,3 +666,39 @@ def test_62a_two_client_preview_groups_by_valid_reported_version(environment):
     session.add(status)
     session.commit()
     assert http.post("/api/clientflow/release-administration/preview", json=request).status_code == 409
+
+
+def test_active_deployment_is_visible_even_outside_recent_history(environment):
+    from datetime import timedelta
+    from uuid import uuid4
+
+    http, session = environment
+    start = datetime(2026, 11, 15, 12, 0)
+    active_id = str(uuid4())
+    for i in range(22):
+        active = i == 0
+        moment = start + timedelta(minutes=i)
+        session.add(ClientFlowDeployment(
+            id=active_id if active else str(uuid4()),
+            client_id=3,
+            target_release_id="clientflow-1.3.47-seq-1248",
+            target_version="1.3.47",
+            target_release_sequence=1248,
+            bundle_sha256="a" * 64,
+            bundle_size=1,
+            release_approval_reference="isolated-test",
+            requested_at=moment,
+            state_updated_at=moment,
+            state="downloading" if active else "cancelled",
+            completed_at=None if active else moment,
+        ))
+    session.commit()
+    response = http.get("/api/clientflow/release-administration")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert len(data["recent_deployments"]) == 20
+    assert active_id not in {row["id"] for row in data["recent_deployments"]}
+    assert data["active_deployments_complete"] is True
+    assert [row["id"] for row in data["active_deployments"]] == [active_id]
+    assert data["active_deployments"][0]["state"] == "downloading"
+    assert data["authorization_active"] is False
