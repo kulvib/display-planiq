@@ -85,6 +85,8 @@ def test_baseline_boot_evidence_requires_same_release_and_real_boot_change(tmp_p
     manifest = {"release_id": ACTIVE, "version": "1.4.0", "release_sequence": 1250,
                 "release_approval": {"reference": "fixture-only", "candidate_sha256": "b"*64},
                 "source": {"commit": "c"*40}}
+    # Replace the fixture inode rather than writing through a read-only manifest.
+    (layout.releases / ACTIVE / "release-manifest.json").unlink()
     write(layout.releases / ACTIVE / "release-manifest.json", manifest, 0o444)
     state["installed"][ACTIVE].update(manifest_sha256=txn._manifest_digest(manifest),
         bundle_sha256=sha, bundle_size=100, release_approval_reference="fixture-only",
@@ -97,15 +99,17 @@ def test_baseline_boot_evidence_requires_same_release_and_real_boot_change(tmp_p
     # The full integrity and systemd check has its own existing contracts.
     checked = []
     monkeypatch.setattr(txn, "_health_check", lambda *a, **k: checked.append(a[1]))
-    report = txn.baseline_boot_evidence(expected_bundle_sha256=sha, layout=layout)
+    report = txn.baseline_boot_evidence(expected_release_id=ACTIVE, expected_bundle_sha256=sha, layout=layout)
     assert report["boot_id"] == before and not report["boot_changed_from_operator_reference"]
     with pytest.raises(TransactionError, match="Genstart"):
-        txn.baseline_boot_evidence(expected_bundle_sha256=sha, previous_boot_id=before, layout=layout)
+        txn.baseline_boot_evidence(expected_release_id=ACTIVE, expected_bundle_sha256=sha, previous_boot_id=before, layout=layout)
     after = str(uuid.uuid4())
     boot.write_text(after)
-    report = txn.baseline_boot_evidence(expected_bundle_sha256=sha, previous_boot_id=before, layout=layout)
+    report = txn.baseline_boot_evidence(expected_release_id=ACTIVE, expected_bundle_sha256=sha, previous_boot_id=before, layout=layout)
     assert report["boot_id"] == after and report["boot_changed_from_operator_reference"]
     assert report["release_health_verified"] and not report["physical_acceptance"] and not report["deletion_authorized"]
     with pytest.raises(TransactionError, match="bundle"):
-        txn.baseline_boot_evidence(expected_bundle_sha256="d"*64, previous_boot_id=before, layout=layout)
+        txn.baseline_boot_evidence(expected_release_id=ACTIVE, expected_bundle_sha256="d"*64, previous_boot_id=before, layout=layout)
+    with pytest.raises(TransactionError, match="Aktiv release"):
+        txn.baseline_boot_evidence(expected_release_id=PREVIOUS, expected_bundle_sha256=sha, layout=layout)
     assert checked == [ACTIVE, ACTIVE]

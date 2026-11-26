@@ -1977,7 +1977,7 @@ def status(layout: Layout = Layout()) -> dict[str, Any]:
 
 
 
-def baseline_boot_evidence(*, expected_bundle_sha256: str, previous_boot_id: str | None = None,
+def baseline_boot_evidence(*, expected_release_id: str, expected_bundle_sha256: str, previous_boot_id: str | None = None,
                            layout: Layout = Layout()) -> dict[str, Any]:
     """Read the exact installed baseline before/after an operator-observed reboot.
 
@@ -1988,7 +1988,9 @@ def baseline_boot_evidence(*, expected_bundle_sha256: str, previous_boot_id: str
         raise TransactionError("Bootkontrol kræver root")
     if not isinstance(expected_bundle_sha256, str) or not _SHA256_RE.fullmatch(expected_bundle_sha256):
         raise TransactionError("Forventet bundle-SHA256 er ugyldig")
-    release_id = "clientflow-1.4.0-seq-1250"
+    release_id = _validate_release_id(expected_release_id)
+    expected_version, sequence_text = release_id.removeprefix("clientflow-").split("-seq-")
+    expected_sequence = int(sequence_text)
     owner = 0 if layout.root == Path("/") else os.geteuid()
     for path in (layout.install_root, layout.releases, layout.state_root):
         info = path.lstat()
@@ -2029,14 +2031,14 @@ def baseline_boot_evidence(*, expected_bundle_sha256: str, previous_boot_id: str
                 or state.get("staged_release_id") is not None
                 or not isinstance(record, dict)
                 or record.get("bundle_sha256") != expected_bundle_sha256):
-            raise TransactionError("Aktiv 1250-release matcher ikke verificeret bundle og journal")
+            raise TransactionError("Aktiv release matcher ikke verificeret bundle og journal")
         manifest = load_secure_json(layout.releases / release_id / "release-manifest.json",
                                     max_bytes=8 * 1024 * 1024, forbidden_mode_bits=0o022)
         if (manifest.get("release_id") != release_id
-                or manifest.get("version") != "1.4.0"
-                or manifest.get("release_sequence") != 1250
+                or manifest.get("version") != expected_version
+                or manifest.get("release_sequence") != expected_sequence
                 or record.get("manifest_sha256") != _manifest_digest(manifest)):
-            raise TransactionError("1250-manifest matcher ikke den lokale journal")
+            raise TransactionError("Release-manifest matcher ikke den lokale journal")
         provenance = _manifest_provenance(manifest, bundle_size=record.get("bundle_size"),
                                           bundle_sha256=expected_bundle_sha256)
         _assert_record_provenance(record, provenance)
@@ -2044,7 +2046,7 @@ def baseline_boot_evidence(*, expected_bundle_sha256: str, previous_boot_id: str
         _health_check(layout, release_id, timeout=120)
         if boot_id() != boot:
             raise TransactionError("Boot-ID ændret under releaseverifikation")
-        return {"release_id": release_id, "version": "1.4.0", "release_sequence": 1250,
+        return {"release_id": release_id, "version": expected_version, "release_sequence": expected_sequence,
                 "bundle_sha256": expected_bundle_sha256, "source_commit": provenance["source_commit"],
                 "boot_id": boot, "previous_boot_id": previous_boot_id,
                 "boot_changed_from_operator_reference": previous_boot_id is not None,

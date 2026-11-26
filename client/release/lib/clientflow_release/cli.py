@@ -1365,6 +1365,7 @@ def transaction_main(argv: list[str] | None = None) -> int:
     sub.add_parser("promote-rollback-host")
     sub.add_parser("release-inventory")
     boot = sub.add_parser("baseline-boot-evidence")
+    boot.add_argument("--expected-release-id", required=True)
     boot.add_argument("--expected-bundle-sha256", required=True)
     boot.add_argument("--previous-boot-id")
     sub.add_parser("status")
@@ -1393,7 +1394,8 @@ def transaction_main(argv: list[str] | None = None) -> int:
         )
     elif args.operation == "baseline-boot-evidence":
         _require_root(Layout())
-        result = baseline_boot_evidence(expected_bundle_sha256=args.expected_bundle_sha256,
+        result = baseline_boot_evidence(expected_release_id=args.expected_release_id,
+                                        expected_bundle_sha256=args.expected_bundle_sha256,
                                         previous_boot_id=args.previous_boot_id)
     elif args.operation == "release-inventory":
         _require_root(Layout())

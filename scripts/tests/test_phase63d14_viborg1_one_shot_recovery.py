@@ -13,6 +13,7 @@ from scripts.tests.test_phase63d13_viborg1_recovery_preflight import fixture
 ROOT = Path(__file__).resolve().parents[2]
 # Exact historic approved recovery source, deliberately independent of current release code.
 FIXED_TRANSACTION = ROOT / 'scripts/tests/fixtures/63d14-fixed-transaction.txt'
+FIXED_CONTROLLER = ROOT / 'scripts/tests/fixtures/63d14-fixed-controller.txt'
 
 
 def _script_setup(tmp_path, monkeypatch):
@@ -163,7 +164,7 @@ def test_no_imports_activate_and_no_self_deployment_mutations():
 def test_exact_historic_1246_file_hashes_are_reproducible_from_63d13_diff():
     """63D-13 modified ONLY the intended lock/call sites, not other internals."""
     transaction = FIXED_TRANSACTION.read_text()
-    controller = (ROOT / 'client/release/lib/clientflow_release/update_controller.py').read_text()
+    controller = FIXED_CONTROLLER.read_text()
     historic_txn = transaction.replace(
         '    expected_update_deployment_id: str | None = None,\n', '', 1
     )
@@ -181,7 +182,7 @@ def test_real_original_controller_source_with_reviewed_transaction(tmp_path):
     old_source = tmp_path / 'clientflow_release'
     shutil.copytree(ROOT / 'client/release/lib/clientflow_release', old_source)
     p = old_source / 'update_controller.py'
-    data = p.read_text().replace('                expected_update_deployment_id=snapshot.deployment_id,\n', '', 1)
+    data = FIXED_CONTROLLER.read_text().replace('                expected_update_deployment_id=snapshot.deployment_id,\n', '', 1)
     assert hashlib.sha256(data.encode()).hexdigest() == runner.SHA256_OLD_CONTROLLER
     p.write_text(data)
     code = r'''
@@ -191,7 +192,7 @@ repo=Path(sys.argv[1]); path=Path(sys.argv[2])
 sys.path.insert(0,str(repo/'backend'))
 from scripts.phase63d14_viborg1_one_shot_recovery import load_fixed_transaction, SHA256_OLD_CONTROLLER
 import hashlib
-fixed, old=load_fixed_transaction(repo/'client/release/lib/clientflow_release/transaction.py',path.parent.parent)
+fixed, old=load_fixed_transaction(repo/'scripts/tests/fixtures/63d14-fixed-transaction.txt',path.parent.parent)
 assert old.TransactionError is fixed.TransactionError
 assert old.Layout is fixed.Layout
 assert hashlib.sha256(Path(old.__file__).read_bytes()).hexdigest()==SHA256_OLD_CONTROLLER

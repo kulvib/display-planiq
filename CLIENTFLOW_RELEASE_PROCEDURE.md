@@ -460,7 +460,7 @@ release maintenance phases. The first 1248-to-1250 update is executed by
 its earlier backend succeeded event is not evidence of post-boot health.
 
 For the first baseline transition the new active transaction helper offers
-`baseline-boot-evidence --expected-bundle-sha256` before the operator's reboot,
+`baseline-boot-evidence --expected-release-id clientflow-1.4.0-seq-1250 --expected-bundle-sha256` before the operator's reboot,
 then the same command with `--previous-boot-id` from that first observation.
 It checks the exact active 1250 provenance, absence of temporary media overrides
 and existing release health contract under a shared transaction lock. The report

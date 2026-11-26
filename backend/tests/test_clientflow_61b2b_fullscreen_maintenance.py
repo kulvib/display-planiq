@@ -207,6 +207,16 @@ def test_source_cannot_authorize_client_release_or_bypass_reboot_gate():
     assert 'os.system(' not in source and 'subprocess.' not in source
     runtime = (RUNTIME / 'clientflow_runtime/display_runtime.py').read_text(encoding='utf-8')
     assert '_sync_maintenance_screen()' in runtime
-    assert 'if update_maintenance.is_active():' in runtime
+    assert 'if update_maintenance.is_active() or release_public_status.kiosk_hold():' in runtime
     builder = (ROOT / 'client/release/lib/clientflow_release/builder.py').read_text(encoding='utf-8')
     assert 'client-runtime/libexec/update-maintenance-screen' in builder
+
+
+@pytest.mark.parametrize('os_hold,release_hold', [(True, False), (False, True), (True, True)])
+def test_either_maintenance_authority_blocks_browser_start(monkeypatch, os_hold, release_hold):
+    monkeypatch.setattr(update_maintenance, 'is_active', lambda: os_hold)
+    monkeypatch.setattr(display_runtime.release_public_status, 'kiosk_hold', lambda: release_hold)
+    monkeypatch.setattr(display_runtime.subprocess, 'Popen', lambda *_a, **_kw: pytest.fail('browser start during maintenance'))
+    runtime = _isolated_runtime()
+    runtime._status = lambda *_a, **_kw: None
+    assert runtime.start_browser() == {'started': False, 'blocked': True, 'reason': 'update_maintenance'}
