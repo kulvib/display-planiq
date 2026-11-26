@@ -30,6 +30,7 @@ import {
   createBrowserWsTicket,
   getBrowserWsProtocols,
   getClient,
+  getNativeRdpEligibility,
   getChromeStatus,
   createScopedControlRoomRealtimeCapability,
   waitForControlRoomRealtime,
@@ -212,8 +213,9 @@ export default function RemoteDesktop() {
   const [connected, setConnected] = useState(false);
   const [agentConnected, setAgentConnected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
-  const nativeRdpPilotEnabled = import.meta.env.VITE_NATIVE_RDP_PILOT === "true" && Number(clientId) === 3;
-  const nativeRequested = nativeRdpPilotEnabled;
+  const [nativeAdmission, setNativeAdmission] = useState(null);
+  const nativeAdmissionReady = nativeAdmission?.clientId === Number(clientId) && !nativeAdmission.failed;
+  const nativeRequested = nativeAdmissionReady && nativeAdmission.available === true;
   const nativeRdpMode = nativeRequested;
   // 63D-49: opaque, one-use ECDH ciphertext only. No RDP credentials here.
   const [nativeRdpAutologinMessage, setNativeRdpAutologinMessage] = useState(null);
@@ -369,6 +371,27 @@ export default function RemoteDesktop() {
     };
   }, [clientId]);
 
+  // One explicit authenticated capability read per client page. A failed
+  // read does not open another transport; no polling or build-time ID list.
+  useEffect(() => {
+    if (!clientId) return undefined;
+    const controller = new AbortController();
+    const id = Number(clientId);
+    getNativeRdpEligibility(clientId, { signal: controller.signal }).then(value => {
+      if (controller.signal.aborted) return;
+      if (value?.client_id !== id || typeof value.native_transport_admitted !== "boolean") {
+        throw new Error("Ugyldigt Remote Desktop-adgangssvar");
+      }
+      setNativeAdmission({ clientId: id, available: value.native_transport_admitted, failed: false });
+    }).catch(() => {
+      if (!controller.signal.aborted) {
+        setNativeAdmission({ clientId: id, available: false, failed: true });
+        setError("Remote Desktop-adgang kunne ikke kontrolleres. Genindlæs siden.");
+      }
+    });
+    return () => controller.abort();
+  }, [clientId]);
+
   // Existing scoped UI wake channel; no interval-based geometry polling.
   useEffect(() => {
     setConfirmedDisplay(null);
@@ -509,7 +532,7 @@ export default function RemoteDesktop() {
   }, [startStream]);
 
   const connect = useCallback(async () => {
-    if (!clientId || (nativeRequested && (!window.crossOriginIsolated || idleStoppedRef.current))) return;
+    if (!clientId || !nativeAdmissionReady || (nativeRequested && (!window.crossOriginIsolated || idleStoppedRef.current))) return;
     const attemptId = ++connectAttemptRef.current;
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -981,6 +1004,7 @@ export default function RemoteDesktop() {
     };
   }, [
     clientId,
+    nativeAdmissionReady,
     nativeRequested,
     framePainter,
     markIdleStopped,
@@ -998,6 +1022,7 @@ export default function RemoteDesktop() {
   }, [connect]);
 
   useEffect(() => {
+    if (!nativeAdmissionReady) return undefined;
     if (nativeRequested && !window.crossOriginIsolated) {
       const url = new URL(window.location.href);
       if (url.searchParams.get("native_rdp") !== "1") {
@@ -1051,7 +1076,7 @@ export default function RemoteDesktop() {
       detachPageLifecycle();
       leave();
     };
-  }, [connect, nativeRequested]);
+  }, [connect, nativeAdmissionReady, nativeRequested]);
 
   useEffect(() => {
     if (nativeRequested || !connected || !agentConnected) return undefined;
@@ -1791,6 +1816,18 @@ export default function RemoteDesktop() {
     organizationFromList?.name ||
     (clientOrganizationId ? `Organisation #${clientOrganizationId}` : "Ukendt organisation");
   const clientLocation = client?.locality || client?.location || client?.address || "Ikke angivet";
+
+  if (!nativeAdmissionReady) {
+    return (
+      <Container maxWidth="xl" sx={{ py: 2 }}>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          {nativeAdmission?.clientId === Number(clientId) && nativeAdmission.failed
+            ? <Typography color="error">{error || "Remote Desktop-adgang kunne ikke kontrolleres."}</Typography>
+            : <><CircularProgress size={20} /><Typography>Kontrollerer Remote Desktop-adgang …</Typography></>}
+        </Stack>
+      </Container>
+    );
+  }
 
   return (
     <Container maxWidth={nativeRequested ? false : "xl"} sx={{ py: { xs: 1.25, md: 2 }, color: "#f8fafc", ...(nativeRequested ? { bgcolor: "#020617", minHeight: "100vh" } : {}) }}>

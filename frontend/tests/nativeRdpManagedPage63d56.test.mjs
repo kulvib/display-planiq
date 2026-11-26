@@ -5,7 +5,7 @@ import { test } from "node:test";
 const page = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/RemoteDesktop.jsx", import.meta.url), "utf8");
 const viewer = fs.readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
 test("enabled physical pilot defaults to native WSS, no JPEG fallback", () => {
-  assert.match(page, /const nativeRequested = nativeRdpPilotEnabled;/);
+  assert.match(page, /const nativeRequested = nativeAdmissionReady && nativeAdmission.available === true;/);
   assert.match(page, /nativeRequested \? new WebSocket\(/);
   assert.doesNotMatch(page, /onFallback=|skift til JPEG|GNOME RDP · ny pilot/);
   assert.match(page, /nativeRdpModeRef\.current\) return false/);

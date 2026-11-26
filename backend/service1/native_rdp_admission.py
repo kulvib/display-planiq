@@ -1,18 +1,20 @@
 """Read-only native RDP release eligibility, separate from transport authority.
 
-No credential, session, tunnel or fleet permission is issued here. The active
-pilot gate remains unchanged until the generic host lifecycle is physically
-verified. Query this only on explicit administrator admission checks.
+No credential, session or tunnel is issued here. Fleet eligibility is consumed
+only by authenticated managed-session admission and bounded revalidation.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from sqlmodel import Session, select
 
 from .client_presence import load_client_presence
 from .clientflow_deployments import active_deployment, unacknowledged_recovery_failure
+from .clientflow_release_artifacts import _artifact_path
 from .clientflow_release_admin_models import ClientFlowPhysicalAcceptance, ClientFlowReleaseControl
 from .clientflow_release_security_policy import require_centrally_eligible_release
 from .clientflow_releases import deployment_release_snapshot, load_catalog, resolve_release
@@ -23,6 +25,36 @@ from .clientflow_update_models import ClientFlowDeployment
 from .enrollment_models import ClientEnrollmentReceipt
 from .models import Client, EnrollmentToken
 from .remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
+
+
+def _artifact_fingerprint(path: Path) -> tuple:
+    info = path.lstat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+            info.st_ctime_ns, info.st_mode, info.st_uid)
+
+
+@lru_cache(maxsize=2)
+def _verified_baseline_artifact(path: Path, fingerprint: tuple) -> dict:
+    release = resolve_release(BASELINE_VERSION)
+    if (release.get("release_id") != BASELINE_ID or release.get("version") != BASELINE_VERSION
+            or release.get("release_sequence") != BASELINE_SEQUENCE):
+        raise ValueError("baseline identity mismatch")
+    artifact = deployment_release_snapshot(release)
+    if _artifact_path(BASELINE_ID) != path or _artifact_fingerprint(path) != fingerprint:
+        raise ValueError("artifact changed during verification")
+    return {**artifact, "target_version": BASELINE_VERSION,
+            "target_release_sequence": BASELINE_SEQUENCE}
+
+
+def canonical_baseline_artifact() -> dict:
+    # Do not rehash hundreds of MB on every session recheck. File replacement,
+    # mutation, permission change or deletion invalidates cached verification.
+    path = _artifact_path(BASELINE_ID)
+    fingerprint = _artifact_fingerprint(path)
+    artifact = _verified_baseline_artifact(path, fingerprint)
+    if _artifact_fingerprint(path) != fingerprint:
+        raise ValueError("artifact changed after verification")
+    return dict(artifact)
 
 
 def matches_completed_update(row: Any, *, client_id: int, artifact: dict) -> bool:
@@ -73,7 +105,7 @@ def release_eligibility(session: Session, *, client_id: int) -> str:
         return "cutover_closed"
     try:
         catalog = load_catalog()
-        artifact = deployment_release_snapshot(resolve_release(BASELINE_VERSION))
+        artifact = canonical_baseline_artifact()
         require_centrally_eligible_release(release_id=BASELINE_ID, release_sequence=BASELINE_SEQUENCE)
         acceptances = session.exec(select(ClientFlowPhysicalAcceptance).where(
             ClientFlowPhysicalAcceptance.release_id == BASELINE_ID,

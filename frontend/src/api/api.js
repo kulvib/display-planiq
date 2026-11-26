@@ -761,6 +761,17 @@ export async function waitForControlRoomRealtime(capability, generation, timeout
 }
 
 
+export async function getNativeRdpEligibility(clientId, { signal } = {}) {
+  const res = await apiFetch(buildApiUrl(`/remote-desktop/clients/${encodeURIComponent(clientId)}/native-release-eligibility`), {
+    headers: authHeaders({ Accept: "application/json" }),
+    credentials: "include",
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke kontrollere Remote Desktop-adgang");
+  return readJsonResponse(res);
+}
+
 export async function getClient(id) {
   const res = await apiFetch(`${apiUrl}/api/clients/${id}/`, {
     headers: authHeaders(),

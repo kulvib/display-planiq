@@ -100,7 +100,8 @@ test("63D-49 has no storage, plaintext WSS, cookies or certificate-ignore fallba
   assert.doesNotMatch(src, /(?:localStorage|sessionStorage|indexedDB|document\.cookie|console\.log)/);
   assert.match(src, /AES-GCM/);
   assert.match(src, /HKDF/);
-  assert.match(ui, /VITE_NATIVE_RDP_AUTOLOGIN/);
+  assert.doesNotMatch(ui, /VITE_NATIVE_RDP_AUTOLOGIN|Number\(clientId\) === 3/);
+  assert.match(ui, /createNativeRdpAutologin\(sessionId, Number\(clientId\)\)/);
   assert.match(ui, /onClick=\{startAutomatic\}/);
   assert.doesNotMatch(ui, /TextField|onFallback|Bekræft fysisk billede/);
 });

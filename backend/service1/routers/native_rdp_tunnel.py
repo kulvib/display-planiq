@@ -22,7 +22,8 @@ from sqlmodel import Session
 
 from ..db import engine
 from ..remote_desktop_v2 import (
-    SESSION_SECONDS, native_rdp_transport_allowed, verify_remote_desktop_agent_token,
+    SESSION_SECONDS, authorize_native_rdp_client, native_rdp_pilot_admitted,
+    native_rdp_transport_allowed, verify_remote_desktop_agent_token,
 )
 from ..remote_desktop_session_models import RemoteDesktopSession
 from ..websocket_auth import authenticate_browser_websocket_with_context
@@ -93,13 +94,21 @@ class NativeRdpTunnel:
     agent_to_browser: BinaryFlow = field(default_factory=BinaryFlow)
 
     def authorized_browser(self) -> bool:
-        if not native_rdp_transport_allowed(self.client_id, "browser", _binary_transport(self.browser)):
-            return False
         active = BROWSERS.get(self.session_id)
         if active is None or active.client_id != self.client_id or active.user_id != self.user_id:
             return False
+        if not native_rdp_pilot_admitted(self.client_id) and (
+            not self.managed_request_id
+            or getattr(active, "native_rdp_managed_request_id", None) != self.managed_request_id
+            or not getattr(active, "native_rdp_managed_ready", False)
+            or getattr(active, "native_rdp_managed_channel", None) is not self.control_channel
+            or CONTROL_AGENTS.get(self.client_id) is not self.control_channel
+        ):
+            return False
         current, state = _remote_desktop_browser_auth_state(active)
-        return bool(current is not None and current.is_superadmin and state == "ok")
+        return bool(current is not None and current.is_superadmin and state == "ok"
+                    and authorize_native_rdp_client(self.client_id)
+                    and native_rdp_transport_allowed(self.client_id, "browser", _binary_transport(self.browser)))
 
     def authorized_agent(self) -> bool:
         if self.agent is not None and not native_rdp_transport_allowed(self.client_id, "agent", _binary_transport(self.agent)):
@@ -405,6 +414,8 @@ async def native_rdp_browser_ws(ws: WebSocket, client_id: int, session_id: str) 
         managed_request_id = getattr(active, "native_rdp_managed_request_id", None)
         if managed_request_id is not None:
             valid = valid and active.native_rdp_managed_ready and active.native_rdp_managed_channel is control
+        if not native_rdp_pilot_admitted(client_id) and managed_request_id is None:
+            valid = False
         if valid:
             current, state = _remote_desktop_browser_auth_state(active)
             valid = current is not None and current.is_superadmin and state == "ok"

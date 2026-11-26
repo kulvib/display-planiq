@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from datetime import datetime, timedelta, timezone
 import os
+import time
 import uuid
 from typing import Any, Optional
 
@@ -45,24 +46,77 @@ class NativeRdpTransportPolicy:
     agent_modes: frozenset[str]
 
 
-# Reviewed pilot admission only. Not a local root authority.
-# Do not add fleet identities until the independent root admission contract
-# and installed-release proof are implemented and physically tested.
+# Temporary legacy compatibility for the single existing physical pilot.
+# Every other identity requires exact accepted release and installation evidence.
 NATIVE_RDP_CLIENT_POLICIES = MappingProxyType({
     3: NativeRdpTransportPolicy(frozenset({"wss", "https"}),
                                 frozenset({"wss", "https"})),
 })
 
 
-def native_rdp_client_admitted(client_id: int) -> bool:
+_FLEET_POLICY = NativeRdpTransportPolicy(frozenset({"wss", "https"}), frozenset({"wss", "https"}))
+_NATIVE_ADMISSION_MAX = 128
+_NATIVE_ADMISSION_TTL = 30.0
+_NATIVE_ADMISSION_REFRESH = 12.0
+_FLEET_ADMITTED_AT: dict[int, float] = {}
+
+
+def native_rdp_pilot_admitted(client_id: int) -> bool:
     return type(client_id) is int and client_id in NATIVE_RDP_CLIENT_POLICIES
+
+
+def native_rdp_client_admitted(client_id: int) -> bool:
+    """Pure transport gate; never a DB read on the packet hot path."""
+    if type(client_id) is not int or client_id <= 0:
+        return False
+    if native_rdp_pilot_admitted(client_id):
+        return True
+    checked = _FLEET_ADMITTED_AT.get(client_id)
+    return checked is not None and 0 <= time.monotonic() - checked < _NATIVE_ADMISSION_TTL
+
+
+def _load_native_release_eligibility(client_id: int) -> str:
+    from .db import engine
+    from .native_rdp_admission import release_eligibility
+    with Session(engine) as session:
+        return release_eligibility(session, client_id=client_id)
+
+
+def authorize_native_rdp_client(client_id: int, *, force: bool = False) -> bool:
+    """Use only at authenticated managed-session admission/revalidation.
+
+    The short decision is not a session grant; all user, credential, channel,
+    generation and independent root checks remain mandatory.
+    """
+    if native_rdp_pilot_admitted(client_id):
+        return True
+    if type(client_id) is not int or client_id <= 0:
+        return False
+    now = time.monotonic()
+    checked = _FLEET_ADMITTED_AT.get(client_id)
+    if not force and checked is not None and 0 <= now - checked < _NATIVE_ADMISSION_REFRESH:
+        return True
+    for identity, at in tuple(_FLEET_ADMITTED_AT.items()):
+        if not 0 <= now - at < _NATIVE_ADMISSION_TTL:
+            _FLEET_ADMITTED_AT.pop(identity, None)
+    if client_id not in _FLEET_ADMITTED_AT and len(_FLEET_ADMITTED_AT) >= _NATIVE_ADMISSION_MAX:
+        return False
+    try:
+        approved = _load_native_release_eligibility(client_id) == "eligible"
+    except Exception:
+        approved = False
+    if not approved:
+        _FLEET_ADMITTED_AT.pop(client_id, None)
+        return False
+    _FLEET_ADMITTED_AT[client_id] = time.monotonic()
+    return True
 
 
 def native_rdp_transport_allowed(client_id: int, role: str, mode: str) -> bool:
     """Server policy, separate from identity authorization; no fallback."""
     if not native_rdp_client_admitted(client_id) or mode not in ("wss", "https"):
         return False
-    policy = NATIVE_RDP_CLIENT_POLICIES[client_id]
+    policy = NATIVE_RDP_CLIENT_POLICIES.get(client_id, _FLEET_POLICY)
     if role == "browser":
         allowed = policy.browser_modes
     elif role == "agent":

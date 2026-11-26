@@ -12,8 +12,11 @@ const viewer = readFileSync(
 );
 const child = readFileSync(new URL("../public/native-rdp/viewer.js", import.meta.url), "utf8");
 
-test("Viborg1-only native RDP is disabled unless explicitly enabled", () => {
-  assert.match(frontend, /VITE_NATIVE_RDP_PILOT === "true" && Number\(clientId\) === 3/);
+test("Native RDP is selected only from the authenticated backend capability", () => {
+  assert.match(frontend, /getNativeRdpEligibility\(clientId, \{ signal: controller.signal \}\)/);
+  assert.match(frontend, /const nativeRequested = nativeAdmissionReady && nativeAdmission.available === true/);
+  assert.match(frontend, /if \(!clientId \|\| !nativeAdmissionReady/);
+  assert.doesNotMatch(frontend, /VITE_NATIVE_RDP_PILOT|Number\(clientId\) === 3/);
   assert.match(frontend, /nativeRdpModeRef\.current\) return false/);
   assert.match(frontend, /stopStream\(\)/);
 });
