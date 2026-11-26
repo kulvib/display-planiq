@@ -1042,11 +1042,12 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted, cl
             <Typography variant="caption" sx={{ color: MUTED }}>
               Version: {ubuntuVersion}
             </Typography>
-            {updateCount !== null && (
-              <Typography variant="caption" sx={{ color: MUTED }}>
-                Pakker: {updateCount}
-              </Typography>
-            )}
+            <Typography variant="caption" sx={{ color: updateCount === null ? MUTED : updateCount > 0 ? "#fbbf24" : "#22c55e" }}>
+              {updateCount === null ? "Pakkestatus ukendt eller forældet" : `Lokal pakkeliste: ${updateCount} klar`}
+            </Typography>
+            {client?.ubuntu_update_inventory?.checked_at && <Typography variant="caption" sx={{ color: MUTED }}>
+              Kontrolleret: {formatUpdateDateTime(client.ubuntu_update_inventory.checked_at)}
+            </Typography>}
             <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>
               {statusText}
             </Typography>
@@ -1819,6 +1820,7 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
   const isSuperadmin = user?.role === "superadmin";
   const firmware = client?.firmware || null;
   const [starting, setStarting] = React.useState(false);
+  const [confirmation, setConfirmation] = React.useState(null);
   const supported = firmware?.supported === true;
   const updateCount = Number.isSafeInteger(firmware?.update_count) && firmware.update_count >= 0 ? firmware.update_count : null;
   const updateAvailable = firmware?.update_available === true && updateCount > 0;
@@ -1827,7 +1829,8 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
   const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || Boolean(firmware?.error) || firmware?.stale !== false || requiresShutdown || starting || inProgress || otherUpdateInProgress || client?.pending_os_update === true;
 
   const startFirmwareUpdate = async () => {
-    if (disabled || !client?.id) return;
+    if (disabled || !client?.id || confirmation?.clientId !== client.id || confirmation?.checkedAt !== firmware?.checked_at) return;
+    setConfirmation(null);
     setStarting(true);
     try {
       const res = await requestFirmwareUpdate(client.id);
@@ -1893,13 +1896,21 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
             startIcon={starting || inProgress ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />}
             disabled={disabled}
             type="button"
-            onClick={startFirmwareUpdate}
+            onClick={() => setConfirmation({clientId: client.id, checkedAt: firmware?.checked_at})}
             sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}
           >
             {starting || inProgress ? "Opdaterer firmware…" : "Installer firmwareopdateringer"}
           </Button>
         )}
       </Stack>
+      <Dialog open={Boolean(confirmation)} onClose={() => setConfirmation(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Bekræft firmwareopdatering</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning">Klient {client?.name || client?.id}: kioskbrowseren lukkes under installationen. Klienten kan genstarte. Undlad at afbryde strømmen.</Alert>
+          {confirmation?.checkedAt !== firmware?.checked_at && <Alert severity="info" sx={{ mt: 1 }}>Status er ændret. Luk dialogen og kontrollér opdateringerne igen.</Alert>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setConfirmation(null)}>Annullér</Button><Button color="warning" variant="contained" disabled={disabled || confirmation?.clientId !== client?.id || confirmation?.checkedAt !== firmware?.checked_at} onClick={startFirmwareUpdate}>Installer firmware</Button></DialogActions>
+      </Dialog>
     </Box>
   );
 }

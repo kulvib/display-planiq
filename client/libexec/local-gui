@@ -18,6 +18,7 @@ from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import stat
 import subprocess
@@ -223,6 +224,34 @@ def _read_json(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _local_system_info() -> dict[str, str]:
+    result = {"ubuntu_version": "Ukendt", "disk_free": "Ukendt", "memory_used": "Ukendt"}
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                result["ubuntu_version"] = line.split("=", 1)[1].strip('"')[:120]
+                break
+    except OSError:
+        pass
+    try:
+        disk = shutil.disk_usage("/")
+        result["disk_free"] = f"{disk.free / 2**30:.1f} / {disk.total / 2**30:.1f} GiB"
+    except OSError:
+        pass
+    try:
+        memory = {}
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            key, _, raw = line.partition(":")
+            if key in {"MemTotal", "MemAvailable"}:
+                memory[key] = int(raw.split()[0]) * 1024
+        total, available = memory["MemTotal"], memory["MemAvailable"]
+        if 0 <= available <= total and total > 0:
+            result["memory_used"] = f"{(total - available) / 2**30:.1f} / {total / 2**30:.1f} GiB"
+    except (OSError, ValueError, KeyError, IndexError):
+        pass
+    return result
 
 
 def _fresh_update_timestamp(value: object, max_age: int) -> bool:
@@ -516,6 +545,9 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
         ("Navn / Lokation", "name_locality"),
         ("Backend-status", "backend"),
         ("ClientFlow version", "version"),
+        ("Ubuntu version", "ubuntu_version"),
+        ("Ledig diskplads", "disk_free"),
+        ("RAM i brug", "memory_used"),
         ("Backend sync", "backend_sync"),
         ("Kalender service", "calendar_service"),
         ("Browser Guard", "browser_guard"),
@@ -1269,7 +1301,10 @@ class ClientFlowWindow(Gtk.ApplicationWindow):
                 self._set("backend", "Ikke registreret", COLOR_RED)
                 backend_approved = False
 
-            self._set("version", _version_display(), COLOR_GREEN)
+            version = _version_display()
+            self._set("version", version, COLOR_GRAY if version == "v-" else COLOR_GREEN)
+            for key, value in _local_system_info().items():
+                self._set(key, value, COLOR_GRAY if value == "Ukendt" else None)
             if PREACTIVATION_MODE:
                 for key in (
                     "backend_sync",

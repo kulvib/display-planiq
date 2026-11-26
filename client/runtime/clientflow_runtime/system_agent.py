@@ -81,6 +81,9 @@ def _ubuntu_snapshot() -> dict[str, Any]:
 
 
 class UbuntuStatusCache:
+    def invalidate(self) -> None:
+        self._value = None
+
     def __init__(self) -> None:
         self._value = None
         self._fingerprint = None
@@ -194,6 +197,9 @@ def _firmware_snapshot() -> dict[str, Any]:
 
 
 class FirmwareStatusCache:
+    def invalidate(self) -> None:
+        self._value = None
+
     def __init__(self) -> None:
         self._value: dict[str, Any] | None = None
         self._loaded_at = 0.0
@@ -220,7 +226,7 @@ class FirmwareStatusCache:
         return dict(self._value)
 
 
-def build_handler(transport: DomainTransport):
+def build_handler(transport: DomainTransport, *, invalidate_inventory=None):
     def handle(context: CommandContext) -> dict[str, Any]:
         payload = dict(context.payload)
         try:
@@ -241,6 +247,9 @@ def build_handler(transport: DomainTransport):
             retryable = not in_doubt and context.command_type in {"update_os", "update_firmware"}
             code = "system_command_in_doubt" if in_doubt else "system_broker_error"
             raise CommandRejected(code, message, retryable=retryable) from exc
+        finally:
+            if invalidate_inventory is not None and context.command_type in {"update_os", "update_firmware"}:
+                invalidate_inventory()
     return handle
 
 
@@ -271,9 +280,13 @@ def main() -> int:
             "ubuntu_update_inventory": ubuntu,
         }
 
+    def invalidate_inventory():
+        ubuntu_cache.invalidate()
+        firmware_cache.invalidate()
+
     QueueAgent(
         transport,
-        build_handler(transport),
+        build_handler(transport, invalidate_inventory=invalidate_inventory),
         lease_seconds=300,
         status_payload=status_payload,
         piggyback_status_on_claim=True,
