@@ -172,6 +172,16 @@ function normalizeDayTimes(data) {
   }, {});
 }
 
+function verifiedSeasonTimes(data, organizationId, season) {
+  if (!data || Number(data.organization_id) !== Number(organizationId) || data.season !== season) return false;
+  const source = data.day_times;
+  if (!source || typeof source !== "object" || Array.isArray(source)) return false;
+  return DAY_CONFIG.every(({ key }) => {
+    const day = source[key];
+    return day && (day.status === "off" || (day.status === "on" && isValidTime(day.onTime) && isValidTime(day.offTime) && day.onTime <= day.offTime));
+  });
+}
+
 function serializeDayTimes(dayTimes) {
   return DAY_CONFIG.reduce((acc, day) => {
     const value = dayTimes?.[day.key] || day.fallback;
@@ -301,6 +311,8 @@ export default function OrganizationAdministration() {
 
   const [organizations, setOrganizations] = useState([]);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [organizationReadError, setOrganizationReadError] = useState("");
+  const organizationRead = React.useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [snackbar, setSnackbar] = useState({ open: false, message: "", severity: "success" });
@@ -322,6 +334,8 @@ export default function OrganizationAdministration() {
   const [timesOrganization, setTimesOrganization] = useState(null);
   const [dayTimes, setDayTimes] = useState(() => createDefaultDayTimes());
   const [timesLoading, setTimesLoading] = useState(false);
+  const [timesScope, setTimesScope] = useState(null);
+  const timesRead = React.useRef(0);
   const [timesSaving, setTimesSaving] = useState(false);
   const [applyLoading, setApplyLoading] = useState(false);
   const [overwriteLoading, setOverwriteLoading] = useState(false);
@@ -333,10 +347,13 @@ export default function OrganizationAdministration() {
   const [organizationToDelete, setOrganizationToDelete] = useState(null);
   const [clientsToDelete, setClientsToDelete] = useState([]);
   const [loadingDeleteClients, setLoadingDeleteClients] = useState(false);
+  const [verifiedDeleteId, setVerifiedDeleteId] = useState(null);
+  const deleteRead = React.useRef(0);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
 
   const timesBusy = timesSaving || applyLoading || overwriteLoading;
+  const timesVerified = Boolean(timesScope && timesScope.id === timesOrganization?.id && timesScope.season === selectedSeason);
 
   const showSnackbar = useCallback((message, severity = "success") => {
     setSnackbar({ open: true, message, severity });
@@ -345,22 +362,29 @@ export default function OrganizationAdministration() {
   const closeSnackbar = () => setSnackbar({ open: false, message: "", severity: "success" });
 
   const fetchOrganizations = useCallback(async () => {
+    const request = ++organizationRead.current;
     setLoading(true);
-    setError("");
+    setOrganizationReadError("");
     try {
       const data = await getOrganizations();
-      setOrganizations(Array.isArray(data) ? data.map(normalizeOrg) : []);
+      if (request !== organizationRead.current) return;
+      if (!Array.isArray(data)) throw new Error("Ugyldig organisationsliste.");
+      setOrganizations(data.map(normalizeOrg));
     } catch (err) {
+      if (request !== organizationRead.current) return;
       setOrganizations([]);
-      setError(err?.message || "Kunne ikke hente organisationer.");
+      setOrganizationReadError(err?.message || "Kunne ikke hente organisationer.");
     } finally {
-      setLoading(false);
-      setInitialLoading(false);
+      if (request === organizationRead.current) {
+        setLoading(false);
+        setInitialLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     fetchOrganizations();
+    return () => { organizationRead.current += 1; timesRead.current += 1; deleteRead.current += 1; };
   }, [fetchOrganizations]);
 
   useEffect(() => {
@@ -412,7 +436,7 @@ export default function OrganizationAdministration() {
         organizations.map(async (org) => {
           try {
             const clients = await getOrganizationClients(org.id);
-            next[org.id] = Array.isArray(clients) ? clients.length : 0;
+            next[org.id] = Array.isArray(clients) ? clients.length : null;
           } catch {
             next[org.id] = null;
           }
@@ -583,6 +607,9 @@ export default function OrganizationAdministration() {
   };
 
   const openTimesDialog = async (org) => {
+    const request = ++timesRead.current;
+    const season = selectedSeason;
+    setTimesScope(null);
     setTimesOrganization(org);
     setTimesDialogOpen(true);
     setDayTimes(createDefaultDayTimes());
@@ -590,24 +617,24 @@ export default function OrganizationAdministration() {
     setOverwriteConfirmText("");
     setTimesLoading(true);
     const [timesResult, clientsResult] = await Promise.allSettled([
-      getOrganizationTimes(org.id, selectedSeason),
+      getOrganizationTimes(org.id, season),
       getOrganizationClients(org.id),
     ]);
-    if (timesResult.status === "fulfilled") {
+    if (request !== timesRead.current) return;
+    if (timesResult.status === "fulfilled" && verifiedSeasonTimes(timesResult.value, org.id, season)) {
       setDayTimes(normalizeDayTimes(timesResult.value));
-    } else {
-      setDayTimes(createDefaultDayTimes());
-      showSnackbar("Kunne ikke hente standardtider — viser standardværdier.", "warning");
+      setTimesScope({ id: org.id, season });
     }
-    if (clientsResult.status === "fulfilled") {
-      const clients = Array.isArray(clientsResult.value) ? clientsResult.value : [];
-      setTimesApprovedClientCount(clients.filter((client) => client?.status === "approved").length);
+    if (clientsResult.status === "fulfilled" && Array.isArray(clientsResult.value)) {
+      setTimesApprovedClientCount(clientsResult.value.filter((client) => client?.status === "approved").length);
     }
     setTimesLoading(false);
   };
 
   const closeTimesDialog = () => {
     if (timesBusy) return;
+    timesRead.current += 1;
+    setTimesScope(null);
     setTimesDialogOpen(false);
     setTimesOrganization(null);
     setDayTimes(createDefaultDayTimes());
@@ -617,6 +644,8 @@ export default function OrganizationAdministration() {
   };
 
   const closeTimesDialogAfterSuccess = () => {
+    timesRead.current += 1;
+    setTimesScope(null);
     setTimesDialogOpen(false);
     setTimesOrganization(null);
     setDayTimes(createDefaultDayTimes());
@@ -657,7 +686,7 @@ export default function OrganizationAdministration() {
   };
 
   const saveStandardTimesOnly = async () => {
-    if (!timesOrganization?.id || !selectedSeason) return;
+    if (!timesVerified || timesLoading || timesBusy || !timesOrganization?.id || !selectedSeason) return;
     if (!validateStandardTimes()) return;
 
     setTimesSaving(true);
@@ -674,7 +703,7 @@ export default function OrganizationAdministration() {
   };
 
   const saveAndApplySafely = async () => {
-    if (!timesOrganization?.id || !selectedSeason) return;
+    if (!timesVerified || timesLoading || timesBusy || !timesOrganization?.id || !selectedSeason) return;
     if (!validateStandardTimes()) return;
 
     setApplyLoading(true);
@@ -700,7 +729,7 @@ export default function OrganizationAdministration() {
   };
 
   const openOverwriteDialog = () => {
-    if (!timesOrganization?.id || !selectedSeason) return;
+    if (!timesVerified || timesLoading || timesBusy || timesApprovedClientCount === null || !timesOrganization?.id || !selectedSeason) return;
     if (!validateStandardTimes()) return;
     setOverwriteConfirmText("");
     setOverwriteDialogOpen(true);
@@ -713,7 +742,7 @@ export default function OrganizationAdministration() {
   };
 
   const overwriteAllCalendars = async () => {
-    if (!timesOrganization?.id || !selectedSeason || overwriteConfirmText.trim().toUpperCase() !== "OVERSKRIV") return;
+    if (!timesVerified || timesLoading || timesBusy || timesApprovedClientCount === null || !timesOrganization?.id || !selectedSeason || overwriteConfirmText.trim().toUpperCase() !== "OVERSKRIV") return;
     setOverwriteLoading(true);
     try {
       const result = await replaceOrganizationSeasonCalendars(
@@ -735,6 +764,8 @@ export default function OrganizationAdministration() {
   };
 
   const openDeleteDialog = async (org) => {
+    const request = ++deleteRead.current;
+    setVerifiedDeleteId(null);
     setOrganizationToDelete(org);
     setDeleteConfirmText("");
     setClientsToDelete([]);
@@ -742,17 +773,23 @@ export default function OrganizationAdministration() {
     setLoadingDeleteClients(true);
     try {
       const clients = await getOrganizationClients(org.id);
-      setClientsToDelete(Array.isArray(clients) ? clients : []);
+      if (request !== deleteRead.current) return;
+      if (!Array.isArray(clients)) throw new Error("Ugyldig klientliste");
+      setClientsToDelete(clients);
+      setVerifiedDeleteId(org.id);
     } catch {
+      if (request !== deleteRead.current) return;
       setClientsToDelete([]);
       showSnackbar("Kunne ikke hente tilknyttede klienter.", "warning");
     } finally {
-      setLoadingDeleteClients(false);
+      if (request === deleteRead.current) setLoadingDeleteClients(false);
     }
   };
 
   const closeDeleteDialog = () => {
     if (deleting) return;
+    deleteRead.current += 1;
+    setVerifiedDeleteId(null);
     setDeleteDialogOpen(false);
     setOrganizationToDelete(null);
     setClientsToDelete([]);
@@ -760,7 +797,7 @@ export default function OrganizationAdministration() {
   };
 
   const confirmDeleteOrganization = async () => {
-    if (!organizationToDelete?.id) return;
+    if (deleting || loadingDeleteClients || !organizationToDelete?.id || verifiedDeleteId !== organizationToDelete.id) return;
     if (normalizeText(deleteConfirmText) !== normalizeText(organizationToDelete.name)) return;
 
     setDeleting(true);
@@ -776,7 +813,7 @@ export default function OrganizationAdministration() {
     }
   };
 
-  const canConfirmDelete = normalizeText(deleteConfirmText) === normalizeText(organizationToDelete?.name);
+  const canConfirmDelete = Boolean(organizationToDelete?.id && !loadingDeleteClients && verifiedDeleteId === organizationToDelete.id && normalizeText(deleteConfirmText) === normalizeText(organizationToDelete.name));
 
   return (
     <Box sx={pageShellSx}>
@@ -806,11 +843,11 @@ export default function OrganizationAdministration() {
                 flexWrap: "wrap",
                 justifyContent: { xs: "flex-start", md: "flex-end" }
               }}>
-              <Chip label={`${displayedOrganizations.length} vist`} size="small" sx={compactDarkChipSx("primary")} />
-              <Chip label={`${organizations.length} i alt`} size="small" sx={compactDarkChipSx("neutral")} />
+              <Chip label={organizationReadError ? "Ikke verificeret" : `${displayedOrganizations.length} vist`} size="small" sx={compactDarkChipSx("primary")} />
+              <Chip label={organizationReadError ? "Ukendt antal" : `${organizations.length} i alt`} size="small" sx={compactDarkChipSx("neutral")} />
               <FormControl size="small" sx={{ minWidth: 160 }}>
                 <InputLabel id="organization-season-label">Sæson</InputLabel>
-                <Select labelId="organization-season-label" value={selectedSeason} label="Sæson" onChange={(event) => setSelectedSeason(event.target.value)}>
+                <Select labelId="organization-season-label" value={selectedSeason} label="Sæson" disabled={timesDialogOpen || overwriteDialogOpen} onChange={(event) => setSelectedSeason(event.target.value)}>
                   {seasonOptions.map((season) => (
                     <MenuItem key={season.value} value={season.value}>
                       {season.label}{season.isCurrent ? " · nu" : ""}
@@ -908,7 +945,9 @@ export default function OrganizationAdministration() {
             </Box>
           </Box>
 
-          {initialLoading ? (
+          {organizationReadError ? (
+            <Alert severity="error" action={<Button color="inherit" size="small" onClick={fetchOrganizations} disabled={loading}>Prøv igen</Button>}>Organisationer kunne ikke hentes: {organizationReadError}</Alert>
+          ) : initialLoading ? (
             <Stack direction="row" spacing={1.2} sx={{
               alignItems: "center"
             }}>
@@ -1091,6 +1130,8 @@ export default function OrganizationAdministration() {
               <CircularProgress size={22} />
               <Typography>Henter standardtider…</Typography>
             </Stack>
+          ) : !timesVerified ? (
+            <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => openTimesDialog(timesOrganization)}>Prøv igen</Button>}>Standardtiderne er ikke verificeret. Ingen ændringer kan gemmes.</Alert>
           ) : (
             <Stack spacing={2} sx={{ mt: 0.5 }}>
               <Alert severity="info">
@@ -1115,18 +1156,18 @@ export default function OrganizationAdministration() {
           )}
         </DialogContent>
         <DialogActions sx={{ flexWrap: "wrap", gap: 1 }}>
-          <Button onClick={() => setDayTimes(createDefaultDayTimes())} color="warning" disabled={timesLoading || timesBusy}>
+          <Button onClick={() => setDayTimes(createDefaultDayTimes())} color="warning" disabled={timesLoading || timesBusy || !timesVerified}>
             Nulstil
           </Button>
-          <Button color="error" variant="outlined" onClick={openOverwriteDialog} disabled={timesLoading || timesBusy} startIcon={<DeleteOutlinedIcon />}>
+          <Button color="error" variant="outlined" onClick={openOverwriteDialog} disabled={timesLoading || timesBusy || !timesVerified || timesApprovedClientCount === null} startIcon={<DeleteOutlinedIcon />}>
             Overskriv alle kalendere
           </Button>
           <Box sx={{ flex: 1 }} />
           <Button onClick={closeTimesDialog} disabled={timesBusy}>Annullér</Button>
-          <Button variant="outlined" onClick={saveStandardTimesOnly} disabled={timesLoading || timesBusy} startIcon={<CheckIcon />} loading={timesSaving} loadingPosition="start">
+          <Button variant="outlined" onClick={saveStandardTimesOnly} disabled={timesLoading || timesBusy || !timesVerified} startIcon={<CheckIcon />} loading={timesSaving} loadingPosition="start">
             Gem standardtider
           </Button>
-          <Button variant="contained" onClick={saveAndApplySafely} disabled={timesLoading || timesBusy} startIcon={<CheckIcon />} loading={applyLoading} loadingPosition="start">
+          <Button variant="contained" onClick={saveAndApplySafely} disabled={timesLoading || timesBusy || !timesVerified} startIcon={<CheckIcon />} loading={applyLoading} loadingPosition="start">
             Gem og anvend sikkert
           </Button>
         </DialogActions>
@@ -1171,7 +1212,7 @@ export default function OrganizationAdministration() {
             color="error"
             variant="contained"
             onClick={overwriteAllCalendars}
-            disabled={overwriteLoading || overwriteConfirmText.trim().toUpperCase() !== "OVERSKRIV"}
+            disabled={!timesVerified || timesApprovedClientCount === null || overwriteLoading || overwriteConfirmText.trim().toUpperCase() !== "OVERSKRIV"}
             loading={overwriteLoading}
             loadingPosition="start"
             startIcon={<DeleteOutlinedIcon />}
@@ -1199,7 +1240,7 @@ export default function OrganizationAdministration() {
         <DialogContent>
           <Stack spacing={1.5} sx={{ mt: 0.5 }}>
             <Alert severity="error">
-              Denne handling kan ikke fortrydes. Organisationen og tilknyttede kalender-/standardtider fjernes.
+              Denne handling kan ikke fortrydes. Organisationen, alle tilknyttede klienter (også i papirkurven), kalenderdata og standardtider slettes permanent.
             </Alert>
             {loadingDeleteClients ? (
               <Stack direction="row" spacing={1.2} sx={{
@@ -1208,9 +1249,11 @@ export default function OrganizationAdministration() {
                 <CircularProgress size={22} />
                 <Typography>Henter tilknyttede klienter…</Typography>
               </Stack>
+            ) : verifiedDeleteId !== organizationToDelete?.id ? (
+              <Alert severity="error" action={<Button color="inherit" size="small" onClick={() => openDeleteDialog(organizationToDelete)}>Prøv igen</Button>}>Klientlisten er ikke verificeret. Sletning er spærret.</Alert>
             ) : clientsToDelete.length > 0 ? (
               <Paper elevation={0} sx={{ p: 1.4, maxHeight: 220, overflowY: "auto", borderRadius: 2, border: `1px solid ${COLORS.border}`, background: COLORS.panelSoft }}>
-                <Typography sx={{ fontWeight: 900, mb: 1 }}>Tilknyttede klienter</Typography>
+                <Typography sx={{ fontWeight: 900, mb: 1 }}>Tilknyttede klienter uden for papirkurven</Typography>
                 <Stack spacing={0.6}>
                   {clientsToDelete.map((client) => (
                     <Typography key={client.id} variant="body2" sx={{ color: COLORS.muted }}>
@@ -1220,7 +1263,7 @@ export default function OrganizationAdministration() {
                 </Stack>
               </Paper>
             ) : (
-              <Alert severity="info">Ingen klienter er tilknyttet denne organisation.</Alert>
+              <Alert severity="info">Ingen klienter uden for papirkurven er tilknyttet denne organisation.</Alert>
             )}
             <DialogContentText sx={{ color: COLORS.muted }}>
               Skriv organisationsnavnet for at bekræfte sletning.

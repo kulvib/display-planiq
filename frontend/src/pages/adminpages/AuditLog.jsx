@@ -715,9 +715,11 @@ export default function AuditLog() {
           offset: page * rowsPerPage,
           signal: controller.signal,
         });
-        setLogs(Array.isArray(data) ? data : []);
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data)) throw new Error("Ugyldigt svar fra audit-log");
+        setLogs(data);
       } catch (err) {
-        if (err?.name === "AbortError") return;
+        if (controller.signal.aborted || err?.name === "AbortError") return;
         setError(errorToString(err));
         setLogs([]);
       } finally {
@@ -976,6 +978,7 @@ export default function AuditLog() {
           <Typography variant="body2" sx={{ ...mutedTextSx }}>
             {loading
               ? "Henter audit-log..."
+              : error ? "Audit-log ikke verificeret"
               : logs.length
                 ? `Viser ${firstRowNumber}-${lastRowNumber}${search ? ` · ${visibleLogs.length} matcher søgningen` : ""}`
                 : "Ingen audit-events fundet med de valgte filtre."}
@@ -1028,7 +1031,7 @@ export default function AuditLog() {
                 </TableRow>
               )}
 
-              {!loading && visibleLogs.length === 0 && (
+              {!loading && !error && visibleLogs.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8} align="center" sx={{ py: 5, ...mutedTextSx }}>
                     Ingen rækker at vise.
@@ -1036,7 +1039,7 @@ export default function AuditLog() {
                 </TableRow>
               )}
 
-              {!loading && visibleLogs.map((log) => {
+              {!loading && !error && visibleLogs.map((log) => {
                 const meta = actionMeta(log.action);
                 const critical = logIsCritical(log);
                 return (

@@ -225,7 +225,10 @@ export default function EnrollmentTokensPage() {
   const canManageTokens = isSuperadmin;
 
   const [tokens, setTokens] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [tokenReadError, setTokenReadError] = useState("");
+  const [tokensVerified, setTokensVerified] = useState(false);
+  const tokenRead = React.useRef(0);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [tokenSearch, setTokenSearch] = useState("");
   const [creating, setCreating] = useState(false);
@@ -253,18 +256,26 @@ export default function EnrollmentTokensPage() {
   }, []);
 
   const loadTokens = useCallback(async () => {
+    const request = ++tokenRead.current;
     setLoading(true);
+    setTokensVerified(false);
+    setTokenReadError("");
     try {
       const data = await getEnrollmentTokens();
-      setTokens(Array.isArray(data) ? data : []);
+      if (request !== tokenRead.current) return;
+      if (!Array.isArray(data)) throw new Error("Ugyldig liste over installationskoder");
+      setTokens(data);
+      setTokensVerified(true);
     } catch (err) {
-      showSnackbar(err?.message || "Kunne ikke hente installationskoder", "error");
+      if (request !== tokenRead.current) return;
+      setTokens([]);
+      setTokenReadError(err?.message || "Kunne ikke hente installationskoder");
     } finally {
-      setLoading(false);
+      if (request === tokenRead.current) setLoading(false);
     }
-  }, [showSnackbar]);
+  }, []);
 
-  useEffect(() => { loadTokens(); }, [loadTokens]);
+  useEffect(() => { loadTokens(); return () => { tokenRead.current += 1; }; }, [loadTokens]);
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -329,7 +340,7 @@ export default function EnrollmentTokensPage() {
   }, [expiresInHours, note, loadTokens, showSnackbar]);
 
   const handleRevoke = useCallback(async () => {
-    if (!revokeTarget?.id) return;
+    if (!tokensVerified || !revokeTarget?.id || !tokens.some((token) => token.id === revokeTarget.id && getTokenStatus(token, Date.now()).key === "active")) return;
     setRevokingId(revokeTarget.id);
     try {
       await revokeEnrollmentToken(revokeTarget.id);
@@ -342,7 +353,7 @@ export default function EnrollmentTokensPage() {
     } finally {
       setRevokingId(null);
     }
-  }, [revokeTarget, loadTokens, showSnackbar]);
+  }, [revokeTarget, loadTokens, showSnackbar, tokensVerified, tokens]);
 
   if (!isSuperadmin && !isViewer) {
     return (
@@ -381,6 +392,9 @@ export default function EnrollmentTokensPage() {
           <AdminRefreshButton onClick={loadTokens} loading={loading} ariaLabel="Opdater installationskoder" />
         </Stack>
 
+        {tokenReadError && <Alert severity="error" action={<Button color="inherit" size="small" onClick={loadTokens} disabled={loading}>Prøv igen</Button>}>{tokenReadError}</Alert>}
+        {loading && <Typography color="text.secondary">Henter installationskoder…</Typography>}
+        {tokensVerified && <>
         <TokenSection title="Aktive koder" count={activeTokens.length} emptyText="Ingen aktive installationskoder.">
           {activeTokens.map((token) => (
             <TokenRow
@@ -413,6 +427,7 @@ export default function EnrollmentTokensPage() {
             />
           ))}
         </TokenSection>
+        </>}
       </Stack>
 
       <Dialog open={createOpen} onClose={() => !creating && setCreateOpen(false)} maxWidth="sm" fullWidth>
@@ -493,7 +508,7 @@ export default function EnrollmentTokensPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setRevokeTarget(null)} disabled={!!revokingId}>Annuller</Button>
-          <Button color="error" variant="contained" onClick={handleRevoke} disabled={!!revokingId}>Tilbagekald</Button>
+          <Button color="error" variant="contained" onClick={handleRevoke} disabled={!tokensVerified || !!revokingId || !tokens.some((token) => token.id === revokeTarget?.id && getTokenStatus(token, nowMs).key === "active")}>Tilbagekald</Button>
         </DialogActions>
       </Dialog>
 
