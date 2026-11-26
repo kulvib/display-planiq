@@ -37,6 +37,7 @@ from ..clientflow_release_admin_models import (
     ClientFlowPhysicalAcceptance,
 )
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog, compare_versions
+from ..clientflow_standard_release import BASELINE_ID, BASELINE_VERSION, BASELINE_SEQUENCE, StandardReleaseDenied, validate_baseline_catalog
 from ..db import get_session
 from ..client_domain_models import ClientDomainCredential, ClientDomainStatus
 from ..clientflow_update_models import ClientFlowDeployment
@@ -284,64 +285,7 @@ def _wave_json(row: ClientFlowRolloutWave, client_ids: list[int]) -> dict:
     }
 
 
-@router.get("")
-def read_release_administration(
-    request: Request,
-    response: Response,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_superadmin_user),
-):
-    _require_actor(request, user)
-    _no_store(response)
-    control = _bound_control(session)
-    # A read-only, fail-closed gate matrix reuses the already verified
-    # singleton/catalog; it never creates an extra DB query on kiosk hotpaths.
-    release_readiness = planning_readiness(
-        release_id=control.stable_release_id,
-        bundle_sha256=control.stable_bundle_sha256,
-        catalog=load_catalog(),
-        approval_bundle_sha256=_approved_lock()["approved_bundle_sha256"],
-        control_revision=control.revision,
-        cutover_enabled=control.cutover_enabled,
-        fleet_open=control.fleet_open,
-        fresh_install_open=control.fresh_install_open,
-        physical_acceptance=False,
-        exact_update_only_pilot_catalog=(
-            validated_catalog_mode_1248(active_catalog=load_catalog()) == "update_only_1248_pilot_catalog"
-            if load_catalog().get("catalog_sequence") == 1248
-            else validated_catalog_mode_1247(active_catalog=load_catalog()) == "update_only_1247_pilot_catalog"
-            if load_catalog().get("catalog_sequence") == 1247
-            else validated_catalog_mode(active_catalog=load_catalog()) == "update_only_1246_pilot_catalog"
-        ),
-    )
-    try:
-        staged_pilot = (
-            staged_pilot_summary_1248(active_catalog=load_catalog())
-            if load_catalog().get("catalog_sequence") == 1248
-            else staged_pilot_summary_1247(active_catalog=load_catalog())
-            if load_catalog().get("catalog_sequence") == 1247
-            else staged_pilot_summary(active_catalog=load_catalog())
-        )
-    except (PilotStageDenied, ClientFlowPilot1246Denied,
-            PilotStage1247Denied, ClientFlowPilot1247Denied,
-            PilotStage1248Denied, ClientFlowPilot1248Denied) as exc:
-        raise HTTPException(status_code=503, detail="Pilotkandidatens godkendte kildestatus kan ikke verificeres") from exc
-    waves = session.exec(
-        select(ClientFlowRolloutWave)
-        .order_by(ClientFlowRolloutWave.created_at.desc())
-        .limit(50)
-    ).all()
-    if waves:
-        targets = session.exec(
-            select(ClientFlowRolloutTarget)
-            .where(ClientFlowRolloutTarget.wave_id.in_([w.id for w in waves]))
-            .order_by(ClientFlowRolloutTarget.client_id)
-        ).all()
-    else:
-        targets = []
-    ids: dict[str, list[int]] = {}
-    for target in targets:
-        ids.setdefault(target.wave_id, []).append(target.client_id)
+def _release_inventory(session: Session) -> dict:
     # One bounded, read-only inventory query on explicit superadmin refresh.
     # Client.client_version is a legacy column. The Status agent writes the
     # canonical version to client_domain_status; other Client pages project it
@@ -424,6 +368,100 @@ def read_release_administration(
         "recent_deployments": recent_deployments,
         "available_clients": available_clients,
         "client_inventory_complete": len(inventory_rows) <= 1000,
+    }
+
+
+def _standard_baseline_status(session: Session, catalog: dict) -> dict:
+    # Read-only: do not infer permission from a catalog or a DB flag.
+    # Actual authorization is separately rechecked by the new order endpoint.
+    try:
+        validate_baseline_catalog(catalog)
+    except StandardReleaseDenied as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    control = session.get(ClientFlowReleaseControl, 1)
+    bound = bool(control is not None and control.stable_release_id == BASELINE_ID
+                 and _SHA256.fullmatch(control.stable_bundle_sha256 or ""))
+    return {
+        **_release_inventory(session),
+        "phase": "standard_baseline",
+        "stable_release_id": BASELINE_ID, "stable_version": BASELINE_VERSION,
+        "available_releases": [{"release_id": BASELINE_ID, "version": BASELINE_VERSION,
+                                "status": "stable", "deployment_authorized": False}],
+        "standard_order_review_available": bool(bound and control.cutover_enabled is True
+                                                and control.fleet_open is True),
+        "authorization_active": False,
+        "rollback_available": False,
+        "fresh_install_open": False,
+        "waves": [],
+    }
+
+
+@router.get("")
+def read_release_administration(
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_superadmin_user),
+):
+    _require_actor(request, user)
+    _no_store(response)
+    try:
+        catalog = load_catalog()
+    except ClientFlowCatalogError as exc:
+        raise HTTPException(status_code=503, detail="Releasekatalogets kryptografiske autoritet er utilgængelig") from exc
+    if catalog.get("catalog_sequence") == BASELINE_SEQUENCE:
+        return _standard_baseline_status(session, catalog)
+    control = _bound_control(session)
+    # A read-only, fail-closed gate matrix reuses the already verified
+    # singleton/catalog; it never creates an extra DB query on kiosk hotpaths.
+    release_readiness = planning_readiness(
+        release_id=control.stable_release_id,
+        bundle_sha256=control.stable_bundle_sha256,
+        catalog=load_catalog(),
+        approval_bundle_sha256=_approved_lock()["approved_bundle_sha256"],
+        control_revision=control.revision,
+        cutover_enabled=control.cutover_enabled,
+        fleet_open=control.fleet_open,
+        fresh_install_open=control.fresh_install_open,
+        physical_acceptance=False,
+        exact_update_only_pilot_catalog=(
+            validated_catalog_mode_1248(active_catalog=load_catalog()) == "update_only_1248_pilot_catalog"
+            if load_catalog().get("catalog_sequence") == 1248
+            else validated_catalog_mode_1247(active_catalog=load_catalog()) == "update_only_1247_pilot_catalog"
+            if load_catalog().get("catalog_sequence") == 1247
+            else validated_catalog_mode(active_catalog=load_catalog()) == "update_only_1246_pilot_catalog"
+        ),
+    )
+    try:
+        staged_pilot = (
+            staged_pilot_summary_1248(active_catalog=load_catalog())
+            if load_catalog().get("catalog_sequence") == 1248
+            else staged_pilot_summary_1247(active_catalog=load_catalog())
+            if load_catalog().get("catalog_sequence") == 1247
+            else staged_pilot_summary(active_catalog=load_catalog())
+        )
+    except (PilotStageDenied, ClientFlowPilot1246Denied,
+            PilotStage1247Denied, ClientFlowPilot1247Denied,
+            PilotStage1248Denied, ClientFlowPilot1248Denied) as exc:
+        raise HTTPException(status_code=503, detail="Pilotkandidatens godkendte kildestatus kan ikke verificeres") from exc
+    waves = session.exec(
+        select(ClientFlowRolloutWave)
+        .order_by(ClientFlowRolloutWave.created_at.desc())
+        .limit(50)
+    ).all()
+    if waves:
+        targets = session.exec(
+            select(ClientFlowRolloutTarget)
+            .where(ClientFlowRolloutTarget.wave_id.in_([w.id for w in waves]))
+            .order_by(ClientFlowRolloutTarget.client_id)
+        ).all()
+    else:
+        targets = []
+    ids: dict[str, list[int]] = {}
+    for target in targets:
+        ids.setdefault(target.wave_id, []).append(target.client_id)
+    return {
+        **_release_inventory(session),
         "available_releases": [{
             "release_id": control.stable_release_id,
             "version": "1.3.44", "status": "stable",

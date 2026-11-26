@@ -13,6 +13,8 @@ import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
 import ClientFlowPilot1247Panel from "./ClientFlowPilot1247Panel";
 import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
 import ClientFlowFleetOverview from "./ClientFlowFleetOverview";
+import ClientFlowStandardOrderPanel from "./ClientFlowStandardOrderPanel";
+import { validateStandardBaselineResponse } from "./clientflowStandardOrders.mjs";
 import { CANCELLABLE_STATES } from "./clientflowDeploymentHistory.mjs";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
@@ -75,7 +77,8 @@ export default function ClientFlowReleaseAdministration() {
     try {
       const { data } = await client.get(RELEASE_PATH, { signal: controller.signal });
       if (controller.signal.aborted) return;
-      const checked = validateReleasePlanningResponse(data);
+      const checked = data?.phase === "standard_baseline"
+        ? validateStandardBaselineResponse(data) : validateReleasePlanningResponse(data);
       setStatus(checked);
       setError("");
       const groups = planVersionGroups(checked.available_clients, checked.stable_version);
@@ -323,6 +326,7 @@ export default function ClientFlowReleaseAdministration() {
         : <Alert severity="error">Release- og klientdata er ikke verificeret. Alle handlinger er spærret.</Alert>) : (
         <>
           <ClientFlowFleetOverview clients={available} release={release} stableVersion={status.stable_version} activeRows={activeRows} activeComplete={activeComplete} />
+          {status.phase === "standard_baseline" && <ClientFlowStandardOrderPanel status={status} onAuthorized={refresh} /> }
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -341,7 +345,7 @@ export default function ClientFlowReleaseAdministration() {
             <Typography fontWeight={750} sx={{ mb: 1 }}>Seneste historik</Typography>
             <ClientFlowDeploymentHistory rows={(status.recent_deployments ?? []).filter((row) => !activeIds.has(row.id))} />
           </Paper>
-          <Accordion disableGutters defaultExpanded={false} sx={panelSx}>
+          {status.phase !== "standard_baseline" && <Accordion disableGutters defaultExpanded={false} sx={panelSx}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Typography fontWeight={850}>Tekniske releasedetaljer og historiske pilotplaner</Typography>
             </AccordionSummary>
@@ -520,7 +524,7 @@ export default function ClientFlowReleaseAdministration() {
           </Paper>
             </Stack>
             </AccordionDetails>
-          </Accordion>
+          </Accordion>}
         </>
       )}
       <Dialog open={Boolean(intent)} onClose={closeDialog} fullWidth maxWidth="sm">
