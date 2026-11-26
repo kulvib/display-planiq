@@ -45,7 +45,13 @@ test("Service summary never reports unknown, missing or working statuses as OK",
     ok: 1, issues: 0, unverified: 1, total: 2,
   });
   assert.match(diagnosticsSource, /const serviceLevels = serviceRows\.map\(getRowLevel\)/);
-  assert.match(diagnosticsSource, /level: serviceSummary\.issues \? "error" : serviceSummary\.unverified \? "neutral" : "ok"/);
+  assert.match(diagnosticsSource, /const hasServiceErrors = serviceLevels\.includes\("error"\)/);
+  assert.match(diagnosticsSource, /level: hasServiceErrors \? "error" : serviceSummary\.issues \? "warn" : serviceSummary\.unverified \? "neutral" : "ok"/);
+  // Exercise the exact production tone expression for every severity mix.
+  const expression = diagnosticsSource.match(/level: (hasServiceErrors \? "error" : serviceSummary\.issues \? "warn" : serviceSummary\.unverified \? "neutral" : "ok")/)[1];
+  for (const [levels, expected] of [[["ok"], "ok"], [["neutral"], "neutral"], [["info"], "neutral"], [["warn"], "warn"], [["warn", "error"], "error"]]) {
+    assert.equal(runInNewContext(expression, { hasServiceErrors: levels.includes("error"), serviceSummary: summarizeServiceLevels(levels) }), expected);
+  }
   assert.doesNotMatch(diagnosticsSource, /serviceRows\.length - serviceIssues\.length/);
 });
 

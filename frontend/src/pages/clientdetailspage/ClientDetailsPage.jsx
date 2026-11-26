@@ -25,6 +25,7 @@ const ClientDetailsInfoSection = lazy(() => import("./ClientDetailsInfoSection")
 const ClientDetailsActionsSection = lazy(() => import("./ClientDetailsActionsSection"));
 const ClientDetailsLivestreamSection = lazy(() => import("./ClientDetailsLivestreamSection"));
 const ClientCalendarDialog = lazy(() => import("../calendarpage/ClientCalendarDialog"));
+import { ubuntuInventoryView } from "../../utils/controlRoomPresentation.mjs";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import { isPageVisible } from "../../utils/pageVisibility";
 import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../../utils/controlRoomRealtimeLifecycle.mjs";
@@ -494,11 +495,9 @@ function formatDashboardUptime(value) {
 }
 
 function formatUbuntuMetric(client) {
-  const inventory = client?.ubuntu_update_inventory;
-  const count = inventory?.state === "known" && !inventory.error ? inventory.update_count : null;
-  if (client?.pending_os_update || client?.state === "updating") return "Opdaterer";
-  if (!Number.isFinite(count) || count < 0) return "ukendt";
-  return count === 0 ? "Ingen" : `${count} klar`;
+  if (client?.pending_os_update) return "Opdaterer";
+  return ubuntuInventoryView(client).label;
+
 }
 
 function normalizeDashboardStep(step) {
@@ -791,7 +790,7 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
     <Box
       sx={{
         ...glassPanelSx(theme, isMobile),
-        p: isMobile ? 1.25 : 1.75,
+        p: isMobile ? 1.5 : 2,
         display: "flex",
         alignItems: compactMobile ? "stretch" : "center",
         justifyContent: "space-between",
@@ -1848,7 +1847,7 @@ export default function ClientDetailsPage({
           <Box
             sx={{
               ...glassPanelSx(theme, isMobile),
-              p: isMobile ? 1.5 : 2.25,
+              p: isMobile ? 1.5 : 2,
             }}
           >
             <Suspense fallback={<SectionLoadingFallback label="Indlæser klienthandlinger…" />}>
@@ -1894,7 +1893,7 @@ export default function ClientDetailsPage({
             </Suspense>
           </Box>
 
-          <Box sx={{ ...glassPanelSx(theme, isMobile), p: isMobile ? 1.25 : 1.75 }}>
+          <Box sx={{ ...glassPanelSx(theme, isMobile), p: isMobile ? 1.5 : 2 }}>
             <Box
               sx={{
                 borderRadius: isMobile ? 2.5 : 3.5,
@@ -1926,7 +1925,7 @@ export default function ClientDetailsPage({
           </Box>
 
 
-          <Box sx={{ ...glassPanelSx(theme, isMobile), p: isMobile ? 1.5 : 2.25 }}>
+          <Box sx={{ ...glassPanelSx(theme, isMobile), p: isMobile ? 1.5 : 2 }}>
             <Suspense fallback={<SectionLoadingFallback label="Indlæser klientoplysninger…" />}>
               <ClientDetailsInfoSection
               client={liveClient}

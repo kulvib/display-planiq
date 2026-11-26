@@ -42,6 +42,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 import { summarizeServiceLevels } from "../../utils/serviceHealthSummary.mjs";
+import { ubuntuInventoryView, diagnosticServiceLevel, defaultClientflowTarget } from "../../utils/controlRoomPresentation.mjs";
 import { hasActiveLivestreamError } from "../../utils/livestreamHealth.mjs";
 import { calendarRebootView } from "./calendarRebootStatus.mjs";
 import ClientFlowHistoryOnDemand from "./ClientFlowHistoryOnDemand";
@@ -202,7 +203,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
   const [catalogLoading, setCatalogLoading] = React.useState(false);
   const [catalogError, setCatalogError] = React.useState("");
   const [catalogRetryKey, setCatalogRetryKey] = React.useState(0);
-  const [selectedVersion, setSelectedVersion] = React.useState("latest");
+  const [selectedVersion, setSelectedVersion] = React.useState("auto");
   const [updateReasonDialogOpen, setUpdateReasonDialogOpen] = React.useState(false);
   const [updateReason, setUpdateReason] = React.useState("");
   const [recoveryGate, setRecoveryGate] = React.useState(null);
@@ -224,7 +225,8 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
     () => selectableClientflowUpdateReleases(releaseCatalog),
     [releaseCatalog],
   );
-  const resolvedSelectedVersion = selectedVersion === "latest" ? latestVersion : selectedVersion;
+  const resolvedSelectedVersion = selectedVersion === "auto" ? defaultClientflowTarget(installedVersion, latestVersion, selectableReleases) : selectedVersion;
+  React.useEffect(() => { setSelectedVersion("auto"); }, [installedVersion]);
   const selectedRelease = selectableReleases.find((release) => release.version === resolvedSelectedVersion) || null;
   const standardBaseline = releaseCatalog?.catalog_sequence >= 1250;
   const standardEligible = standardBaseline && releaseCatalog?.catalog_sequence === 1250 &&
@@ -254,7 +256,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
   React.useEffect(() => {
     let cancelled = false;
     setReleaseCatalog(null);
-    setSelectedVersion("latest");
+    setSelectedVersion("auto");
     setCatalogError("");
     setCatalogLoading(Boolean(clientId));
 
@@ -473,14 +475,16 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
             <Typography variant="caption" sx={{ color: MUTED }}>
               Installeret: {installedVersion ? `v${String(installedVersion).replace(/^v/i, "")}` : "ikke rapporteret"}
             </Typography>
-            {latestVersion && <Typography variant="caption" sx={{ color: MUTED }}>Seneste: v{String(latestVersion).replace(/^v/i, "")}</Typography>}
+            {latestVersion && <Typography variant="caption" sx={{ color: MUTED }}>Stabil standard: v{String(latestVersion).replace(/^v/i, "")}</Typography>}
+            {installedVersion && latestVersion && compareClientflowVersions(installedVersion, latestVersion) > 0 && <Typography variant="caption" sx={{ color: "#38bdf8" }}>Nyere end standard</Typography>}
             {inProgress && deployment?.target_version && <Typography variant="caption" sx={{ color: MUTED }}>Mål: v{String(deployment.target_version).replace(/^v/i, "")}</Typography>}
             <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>{statusText}</Typography>
           </Stack>
         </Box>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
-          <TextField select size="small" label="Målversion" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || catalogLoading || !releaseCatalog} sx={{ minWidth: { xs: "100%", sm: 220 } }}>
-            <MenuItem value="latest">Seneste stabile{latestVersion ? ` (v${latestVersion})` : ""}</MenuItem>
+          <TextField select size="small" label="Målversion" value={resolvedSelectedVersion || ""} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || catalogLoading || !releaseCatalog} sx={{ minWidth: { xs: "100%", sm: 220 } }}>
+            <MenuItem value="">Vælg målversion</MenuItem>
+            {latestVersion && selectableReleases.some((release) => release.version === latestVersion) && <MenuItem value={latestVersion}>Seneste stabile (v{latestVersion})</MenuItem>}
             {selectableReleases.filter((release) => release.version !== latestVersion).map((release) => (
               <MenuItem key={release.version} value={release.version}>v{release.version} · {release.status === "supported" ? "understøttet" : release.status}</MenuItem>
             ))}
@@ -552,7 +556,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
       {!catalogLoading && !catalogError && releaseCatalog && selectableReleases.length === 0 && (
         <Alert severity="info" sx={{ mt: 1 }}>Ingen ClientFlow-versioner er godkendt til opdatering.</Alert>
       )}
-      {selectedReleaseRequiresReboot && !showPanel && (
+      {selectedReleaseRequiresReboot && !disabled && !sameVersionSelected && !showPanel && (
         <Alert severity="info" sx={{ mt: 1 }}>
           v{resolvedSelectedVersion} kræver én kontrolleret genstart efter grøn ClientFlow-activation, før reboot/reconnect-gaten er afsluttet.
         </Alert>
@@ -899,7 +903,8 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted, cl
   const requestStartedAtRef = React.useRef(null);
   const requestCommandIdRef = React.useRef(null);
 
-  const updateCount = getUbuntuUpdateCount(client);
+  const inventoryView = ubuntuInventoryView(client);
+  const updateCount = inventoryView.count;
   const phase = normalizeUbuntuPhase(client, localStatus);
   const meta = getUbuntuUpdateStepMeta(phase, updateCount);
   const inProgress = UBUNTU_UPDATE_BUSY_STEPS.has(phase) || !!client?.pending_os_update || starting;
@@ -926,7 +931,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted, cl
     : phase === "error"
     ? "Seneste opdatering fejlede"
     : phase === "updates_available"
-    ? `${updateCount} pakke(r) klar`
+    ? inventoryView.label
     : inProgress
     ? meta.label
     : otherUpdateInProgress
@@ -1143,8 +1148,8 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted, cl
             <Typography variant="caption" sx={{ color: MUTED }}>
               Version: {ubuntuVersion}
             </Typography>
-            <Typography variant="caption" sx={{ color: updateCount === null ? MUTED : updateCount > 0 ? "#fbbf24" : "#22c55e" }}>
-              {updateCount === null ? "Pakkestatus ukendt eller forældet" : `Lokal pakkeliste: ${updateCount} klar`}
+            <Typography variant="caption" sx={{ color: inventoryView.level === "warn" ? "#fbbf24" : inventoryView.level === "ok" ? "#22c55e" : MUTED, fontWeight: 850 }}>
+              {inventoryView.label}
             </Typography>
             {client?.ubuntu_update_inventory?.checked_at && <Typography variant="caption" sx={{ color: MUTED }}>
               Kontrolleret: {formatUpdateDateTime(client.ubuntu_update_inventory.checked_at)}
@@ -1503,9 +1508,7 @@ function getNextScheduleLabel(next, days) {
 }
 
 function getUbuntuUpdateCount(client) {
-  const inventory = client?.ubuntu_update_inventory;
-  const count = inventory?.update_count;
-  return inventory?.state === "known" && !inventory.error && Number.isSafeInteger(count) && count >= 0 ? count : null;
+  return ubuntuInventoryView(client).count;
 }
 
 function formatUbuntuUpdates(client) {
@@ -1513,8 +1516,7 @@ function formatUbuntuUpdates(client) {
   if (client?.pending_os_update) {
     return count && count > 0 ? `Opdatering i gang · ${count} pakke(r)` : "Opdatering i gang";
   }
-  if (count === null) return "ukendt";
-  return count === 0 ? "Ingen opdateringer" : `${count} pakke(r) klar`;
+  return ubuntuInventoryView(client).label;
 }
 
 function getServiceStatusColor(value) {
@@ -1600,14 +1602,14 @@ function DataPanel({ title, description, action, children, compactHeader = false
         boxShadow: "none",
       }}
     >
-      <CardContent sx={{ p: { xs: 2.25, sm: 3.1 } }}>
+      <CardContent sx={{ p: { xs: 1.5, sm: 2 }, "&:last-child": { pb: { xs: 1.5, sm: 2 } } }}>
         <Stack
           direction={{ xs: "column", sm: "row" }}
-          spacing={compactHeader ? 1.1 : 1.6}
+          spacing={1}
           sx={{
             alignItems: { xs: "flex-start", sm: "center" },
             justifyContent: compactHeader ? "flex-start" : "space-between",
-            mb: 2.15
+            mb: 2
           }}>
           <Box sx={{
             minWidth: 0
@@ -1634,8 +1636,8 @@ function InfoRow({ label, value, copy = false, color }) {
         display: "grid",
         gridTemplateColumns: { xs: "1fr", sm: "minmax(130px, 180px) 1fr auto" },
         alignItems: "center",
-        gap: { xs: 0.45, sm: 1.15 },
-        py: 1.18,
+        gap: { xs: 0.5, sm: 1 },
+        py: 1,
         borderTop: `1px solid ${BORDER}`,
         minWidth: 0,
       }}
@@ -1726,7 +1728,7 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
       }
     >
       {calendarLoading && <Alert severity="info" sx={{ mb: 1.5 }}>Henter kalender…</Alert>}
-      <Grid container spacing={1.8} sx={{
+      <Grid container spacing={2} sx={{
         alignItems: "stretch"
       }}>
         <Grid
@@ -1748,7 +1750,7 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
             sx={{
               height: "100%",
               minHeight: 210,
-              p: { xs: 2.45, sm: 2.85 },
+              p: { xs: 1.5, sm: 2 },
               borderRadius: 2,
               background: todayTone.bg,
               border: `1px solid ${todayTone.border}`,
@@ -1829,7 +1831,7 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
                       }
                     }}
                     sx={{
-                      p: { xs: 1.85, sm: 2.05 },
+                      p: { xs: 1.5, sm: 2 },
                       borderRadius: 2,
                       border: `1px solid ${active ? "rgba(34,197,94,0.30)" : BORDER}`,
                       background: active ? "rgba(34,197,94,0.09)" : "rgba(15,23,42,0.42)",
@@ -1993,7 +1995,7 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
 
 function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onUbuntuUpdateStarted, onDiagnosticsRefresh, clientflowDeployment, onClientflowDeploymentChange }) {
   return (
-    <Grid container spacing={1.75}>
+    <Grid container spacing={2}>
       <Grid
         size={{
           xs: 12,
@@ -2027,7 +2029,7 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
             ) : null
           }
         >
-          <Stack spacing={1.1}>
+          <Stack spacing={1.5}>
             {client?.update_maintenance?.schema_version === 1 &&
               client.update_maintenance.phase &&
               client.update_maintenance.phase !== "completed" && (
@@ -2109,7 +2111,7 @@ function NetworkPanel({ client, clientOnline }) {
   ];
 
   return (
-    <Grid container spacing={1.75}>
+    <Grid container spacing={2}>
       <Grid
         size={{
           xs: 12,
@@ -2446,7 +2448,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "rgba(125,211,252,0.42)" },
     "& .MuiSelect-icon": { color: MUTED },
   };
-  const sectionSx = { p: 1.35, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` };
+  const sectionSx = { minWidth: 0, p: 1.5, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` };
   const actionRowSx = { mt: 1.15, display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" };
 
   return (
@@ -2461,45 +2463,45 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
         ) : null}
       >
         {error && <Alert severity="warning" sx={{ mb: 1.5 }}>{error}</Alert>}
-        <Stack spacing={1.6}>
-          {hasDraftChanges && <Alert severity="info">Du har ikke-gemte ændringer.</Alert>}
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
+          {hasDraftChanges && <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>Du har ikke-gemte ændringer.</Alert>}
           <Box sx={sectionSx}>
-            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Stamdata</Typography>
+            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 1 }}>Stamdata</Typography>
 
-            <TextField fullWidth label="Lokation" value={form.locality} onChange={setField("locality")} disabled={saving || !canEditKioskUrlAndLocality} helperText="Valgfri tekst, fx lokale, afdeling eller adresse." sx={textFieldSx} />
+            <TextField size="small" fullWidth label="Lokation" value={form.locality} onChange={setField("locality")} disabled={saving || !canEditKioskUrlAndLocality} helperText="Valgfri tekst, fx lokale, afdeling eller adresse." sx={textFieldSx} />
             {canEditKioskUrlAndLocality && (
               <Box sx={actionRowSx}>
-                <Button variant="contained" type="button" onClick={saveLocality} disabled={saving || !localityDirty} startIcon={savingDomain === "locality" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
+                <Button size="small" variant="contained" type="button" onClick={saveLocality} disabled={saving || !localityDirty} startIcon={savingDomain === "locality" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
                   {savingDomain === "locality" ? "Gemmer…" : "Gem stamdata"}
                 </Button>
-                {localityDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["locality"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+                {localityDirty && <Button size="small" variant="outlined" type="button" onClick={() => resetDomain(["locality"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
               </Box>
             )}
           </Box>
 
           <Box sx={sectionSx}>
-            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Klientidentitet</Typography>
+            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 1 }}>Klientidentitet</Typography>
 
-            <TextField fullWidth label="Klientnavn" value={form.name} onChange={setField("name")} disabled={saving || !canEditClientName || localManagementBusy} helperText={canEditClientName ? "Mellemrum er tilladt. Linux-hostname dannes automatisk." : "Kun superadministrator kan ændre klientnavn"} sx={textFieldSx} />
+            <TextField size="small" fullWidth label="Klientnavn" value={form.name} onChange={setField("name")} disabled={saving || !canEditClientName || localManagementBusy} helperText={canEditClientName ? "Mellemrum er tilladt. Linux-hostname dannes automatisk." : "Kun superadministrator kan ændre klientnavn"} sx={textFieldSx} />
             {canEditClientName && (
               <Box sx={actionRowSx}>
-                <Button variant="contained" type="button" onClick={saveClientIdentity} disabled={saving || localManagementBusy || !identityDirty} startIcon={savingDomain === "identity" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
+                <Button size="small" variant="contained" type="button" onClick={saveClientIdentity} disabled={saving || localManagementBusy || !identityDirty} startIcon={savingDomain === "identity" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
                   {savingDomain === "identity" ? "Sender…" : "Skift klientnavn"}
                 </Button>
-                {identityDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["name"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+                {identityDirty && <Button size="small" variant="outlined" type="button" onClick={() => resetDomain(["name"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
               </Box>
             )}
           </Box>
 
-          <Box sx={sectionSx}>
-            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Kioskvisning</Typography>
+          <Box sx={{ ...sectionSx, gridColumn: "1 / -1" }}>
+            <Typography sx={{ color: TEXT, fontWeight: 950, mb: 1 }}>Kioskvisning</Typography>
 
             <Grid container spacing={1.25}>
               <Grid size={12}>
-                <TextField fullWidth label="Kiosk URL" value={form.kiosk_url} onChange={setField("kiosk_url")} disabled={saving || !canEditKioskUrlAndLocality} helperText={canEditKioskUrlAndLocality ? "Domæne uden scheme normaliseres til HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"} sx={textFieldSx} />
+                <TextField size="small" fullWidth label="Kiosk URL" value={form.kiosk_url} onChange={setField("kiosk_url")} disabled={saving || !canEditKioskUrlAndLocality} helperText={canEditKioskUrlAndLocality ? "Domæne uden scheme normaliseres til HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"} sx={textFieldSx} />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
-                <TextField fullWidth type="number" label="Automatisk browser refresh (sek.)" value={form.browser_refresh_interval_sec} onChange={setField("browser_refresh_interval_sec")} disabled={saving || !canEditBrowserMaintenance} inputProps={{ min: 0, max: 86400, step: 1 }} helperText={canEditBrowserMaintenance ? "0 = slået fra. Ellers 60–86400 sekunder." : "Du har kun læseadgang til browser refresh"} sx={textFieldSx} />
+                <TextField size="small" fullWidth type="number" label="Automatisk browser refresh (sek.)" value={form.browser_refresh_interval_sec} onChange={setField("browser_refresh_interval_sec")} disabled={saving || !canEditBrowserMaintenance} inputProps={{ min: 0, max: 86400, step: 1 }} helperText={canEditBrowserMaintenance ? "0 = slået fra. Ellers 60–86400 sekunder." : "Du har kun læseadgang til browser refresh"} sx={textFieldSx} />
               </Grid>
               <Grid size={{ xs: 12, md: 6 }}>
                 <Box sx={{ height: "100%", p: 1.25, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
@@ -2518,33 +2520,33 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
             </Grid>
             {canEditKioskUrlAndLocality && (
               <Box sx={actionRowSx}>
-                <Button variant="contained" type="button" onClick={saveKioskDisplay} disabled={saving || !kioskDirty} startIcon={savingDomain === "kiosk" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
+                <Button size="small" variant="contained" type="button" onClick={saveKioskDisplay} disabled={saving || !kioskDirty} startIcon={savingDomain === "kiosk" ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900 }}>
                   {savingDomain === "kiosk" ? "Gemmer…" : "Gem kioskvisning"}
                 </Button>
-                {kioskDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["kiosk_url", "browser_refresh_interval_sec"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+                {kioskDirty && <Button size="small" variant="outlined" type="button" onClick={() => resetDomain(["kiosk_url", "browser_refresh_interval_sec"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
               </Box>
             )}
           </Box>
 
           {canChangeOrganization && (
             <Box sx={sectionSx}>
-              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Organisation</Typography>
+              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 1 }}>Organisation</Typography>
 
-              <TextField select fullWidth label="Organisation" value={form.organization_id || ""} onChange={setField("organization_id")} disabled={loading || saving || Boolean(error)} helperText="Standardtider kan ændres ved flytning." sx={textFieldSx}>
+              <TextField size="small" select fullWidth label="Organisation" value={form.organization_id || ""} onChange={setField("organization_id")} disabled={loading || saving || Boolean(error)} helperText="Standardtider kan ændres ved flytning." sx={textFieldSx}>
                 <MenuItem value=""><em>Ingen organisation</em></MenuItem>
                 {loading && <MenuItem value="" disabled>Henter organisationer…</MenuItem>}
                 {organizations.map((organization) => <MenuItem key={organization.id} value={String(organization.id)}>{organization.name}</MenuItem>)}
               </TextField>
               <Box sx={actionRowSx}>
-                <Button variant="contained" type="button" onClick={requestOrganizationChange} disabled={saving || loading || Boolean(error) || !organizationDirty} sx={{ borderRadius: 2, fontWeight: 900 }}>Flyt organisation</Button>
-                {organizationDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["organization_id"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
+                <Button size="small" variant="contained" type="button" onClick={requestOrganizationChange} disabled={saving || loading || Boolean(error) || !organizationDirty} sx={{ borderRadius: 2, fontWeight: 900 }}>Flyt organisation</Button>
+                {organizationDirty && <Button size="small" variant="outlined" type="button" onClick={() => resetDomain(["organization_id"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
               </Box>
             </Box>
           )}
 
           {canViewSecuritySection && (
             <Box sx={sectionSx}>
-              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Sikkerhed på klienten</Typography>
+              <Typography sx={{ color: TEXT, fontWeight: 950, mb: 1 }}>Sikkerhed på klienten</Typography>
 
               <Box sx={{ p: 1.2, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} sx={{ alignItems: { xs: "flex-start", sm: "center" }, justifyContent: "space-between" }}>
@@ -2580,10 +2582,10 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                   </Button>
                   {showPasswordFields && <Grid container spacing={1.25} sx={{ mt: 1 }}>
                   <Grid size={12}><Typography variant="body2" sx={{ color: MUTED }}>Ændringen sendes til klienten.</Typography></Grid>
-                  <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Ny cfadmin-adgangskode" type="password" value={cfadminPassword} onChange={(event) => setCfadminPassword(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} autoComplete="new-password" helperText="Min. 8 tegn med stort bogstav, lille bogstav og tal" sx={textFieldSx} /></Grid>
-                  <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Gentag adgangskode" type="password" value={cfadminPasswordRepeat} onChange={(event) => setCfadminPasswordRepeat(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} error={cfadminPasswordsMismatch} autoComplete="new-password" helperText={cfadminPasswordsMismatch ? "Adgangskoderne matcher ikke" : " "} sx={textFieldSx} /></Grid>
+                  <Grid size={{ xs: 12, md: 5 }}><TextField size="small" fullWidth label="Ny cfadmin-adgangskode" type="password" value={cfadminPassword} onChange={(event) => setCfadminPassword(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} autoComplete="new-password" helperText="Min. 8 tegn med stort bogstav, lille bogstav og tal" sx={textFieldSx} /></Grid>
+                  <Grid size={{ xs: 12, md: 5 }}><TextField size="small" fullWidth label="Gentag adgangskode" type="password" value={cfadminPasswordRepeat} onChange={(event) => setCfadminPasswordRepeat(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} error={cfadminPasswordsMismatch} autoComplete="new-password" helperText={cfadminPasswordsMismatch ? "Adgangskoderne matcher ikke" : " "} sx={textFieldSx} /></Grid>
                   <Grid sx={{ display: "flex", alignItems: "flex-start" }} size={{ xs: 12, md: 2 }}>
-                    <Button fullWidth variant="contained" type="button" onClick={saveCfadminPassword} disabled={saving || savingCfadminPassword || localManagementBusy || !cfadminPassword || !cfadminPasswordRepeat || cfadminPasswordsMismatch} startIcon={savingCfadminPassword ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900, minHeight: 54 }}>
+                    <Button fullWidth variant="contained" type="button" onClick={saveCfadminPassword} disabled={saving || savingCfadminPassword || localManagementBusy || !cfadminPassword || !cfadminPasswordRepeat || cfadminPasswordsMismatch} startIcon={savingCfadminPassword ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900, minHeight: 40 }}>
                       {savingCfadminPassword ? "Sender…" : "Skift"}
                     </Button>
                   </Grid>
@@ -2594,7 +2596,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
           )}
 
           {canViewLocalManagementSection && (
-            <Box sx={{ p: 1.25, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
+            <Box sx={{ gridColumn: "1 / -1", p: 1.5, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
               <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
                 <Box sx={{ minWidth: 0 }}>
                   <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.45 }}>Seneste lokale klienthandling</Typography>
@@ -2623,7 +2625,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
               </Box>
             </Box>
           )}
-        </Stack>
+        </Box>
       </DataPanel>
 
       <Dialog open={organizationConfirmOpen} onClose={() => !saving && setOrganizationConfirmOpen(false)} maxWidth="xs" fullWidth disableRestoreFocus>
@@ -2750,7 +2752,8 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const networkLevel = networkStatusLevel(client);
   const networkMessage = networkStatusMessage(client);
   const networkUnavailable = isNetworkUnavailable(client);
-  const ubuntuUpdateCount = getUbuntuUpdateCount(client);
+  const ubuntuView = ubuntuInventoryView(client);
+  const ubuntuUpdateCount = ubuntuView.count;
   const hasUbuntuUpdates = Number.isFinite(ubuntuUpdateCount) && ubuntuUpdateCount > 0;
   const pendingChromeAction = normalizeText(client?.pending_chrome_action || "none");
   const hasPendingChromeAction = pendingChromeAction && pendingChromeAction !== "none";
@@ -2776,30 +2779,13 @@ function DiagnosticsPanel({ client, onRefresh }) {
     value === true ? trueLevel : value === false ? falseLevel : "neutral"
   );
 
-  const getServiceLevel = (row) => {
-    const s = normalizeText(row.value);
-    if (!s) return row.required === false ? "neutral" : "warn";
-    if (["fejl", "failed", "error"].includes(s)) return "error";
-    if (["mangler", "not-found"].includes(s)) return row.required === false ? "neutral" : "error";
-    if (["starter", "stopper", "activating", "deactivating", "opdaterer", "kører"].includes(s) && row.oneshot) return "info";
-    if (["klar", "ready"].includes(s)) return "ok";
-    if (["kører", "aktiv", "active", "running"].includes(s)) return "ok";
-    if (["stop", "stoppet", "inactive", "idle"].includes(s)) {
-      if (row.expectedStoppedOk) return "ok";
-      if (row.required === false) return "neutral";
-      return "error";
-    }
-    return getStatusLevel(row.value);
-  };
+  const getServiceLevel = (row) => diagnosticServiceLevel(row.value, {
+    online: isOnline, expectedActive: row.unit !== "clientflow-remote-desktop-agent.service" && row.required !== false && !row.expectedStoppedOk,
+  });
 
-  const getLivestreamServiceLevel = (value) => {
-    const s = normalizeText(value);
-    if (["fejl", "failed", "error", "mangler", "not-found"].includes(s)) return livestreamExpectedRunning ? "error" : "neutral";
-    if (["kører", "aktiv", "active", "running"].includes(s)) return "ok";
-    if (["starter", "stopper", "activating", "deactivating"].includes(s)) return "info";
-    if (["stop", "stoppet", "inactive", "idle", "klar"].includes(s)) return livestreamExpectedRunning ? "error" : "ok";
-    return livestreamExpectedRunning ? "warn" : "neutral";
-  };
+  const getLivestreamServiceLevel = (value) => diagnosticServiceLevel(value, {
+    online: isOnline, expectedActive: livestreamExpectedRunning,
+  });
 
   const getRowLevel = (row) => {
     if (row.level) return row.level;
@@ -2833,6 +2819,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
     ["warn", "error"].includes(serviceLevels[index]),
   );
   const systemdIssues = serviceIssues.filter((row) => row.label !== "Livestream process");
+  const hasServiceErrors = serviceLevels.includes("error");
   const livestreamProcessIssues = serviceIssues.filter((row) => row.label === "Livestream process");
 
   const lifecycleLabelMap = {
@@ -2849,13 +2836,13 @@ function DiagnosticsPanel({ client, onRefresh }) {
     onlineValue === false ? { label: "Klienten er offline", level: "error", value: "Seneste kontakt fremgår af tekniske detaljer" } : null,
     onlineValue !== true && onlineValue !== false ? { label: "Forbindelse ikke verificeret", level: "neutral", value: "Aktuel online-status mangler" } : null,
     networkUnavailable ? { label: "Netværk mangler", level: "error", value: networkMessage } : null,
-    systemdIssues.length > 0 ? { label: `${systemdIssues.length} systemd-status kræver tjek`, level: "error", value: systemdIssues.map((row) => row.label).join(", ") } : null,
-    livestreamProcessIssues.length > 0 ? { label: "Livestream-proces kræver tjek", level: "error", value: "Processtatus afviger fra ønsket livestream-tilstand" } : null,
+    systemdIssues.length > 0 ? { label: `${systemdIssues.length} systemd-status kræver tjek`, level: systemdIssues.some((row) => getRowLevel(row) === "error") ? "error" : "warn", value: systemdIssues.map((row) => row.label).join(", ") } : null,
+    livestreamProcessIssues.length > 0 ? { label: "Livestream-proces kræver tjek", level: livestreamProcessIssues.some((row) => getRowLevel(row) === "error") ? "error" : "warn", value: "Processtatus afviger fra ønsket livestream-tilstand" } : null,
     hasPendingChromeAction ? { label: "Pending browser-handling", level: "info", value: client?.pending_chrome_action } : null,
     client?.pending_reboot ? { label: "Pending reboot", level: "warn", value: "Ja" } : null,
     client?.pending_shutdown ? { label: "Pending shutdown", level: "warn", value: "Ja" } : null,
     client?.pending_os_update ? { label: "Ubuntu-opdatering venter", level: "info", value: "Ja" } : null,
-    hasUbuntuUpdates ? { label: "Ubuntu-pakker klar", level: "warn", value: formatUpdateCount(client?.ubuntu_updates_available) } : null,
+    hasUbuntuUpdates ? { label: "Ubuntu-pakker klar", level: "warn", value: ubuntuView.label } : null,
     hasActiveLivestreamError(client) ? { label: "Livestream-fejl", level: "error", value: client?.livestream_last_error } : null,
     hasDiagnosticValue(client?.display_resolution_error) ? { label: "Display-fejl", level: "error", value: client?.display_resolution_error } : null,
     timeSyncLevel === "error" ? { label: "Systemtid er kritisk", level: "error", value: timeSyncMessage } : null,
@@ -2869,7 +2856,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const supportIssues = supportServiceRows.filter((row) => ["warn", "error"].includes(getRowLevel(row)));
 
   const serviceIssueText = [
-    ...(serviceIssues.length ? [`Kræver tjek: ${serviceIssues.map((row) => row.label).join(", ")}`] : []),
+    ...(serviceIssues.length ? [`${serviceIssues.length} kræver tjek`] : []),
     ...(serviceSummary.unverified ? [`${serviceSummary.unverified} uden bekræftet OK-status`] : []),
   ].join(" · ") || "Alle overvågede services er bekræftet OK";
   const displaySummary = formatResolution(client?.display_resolution_current_width, client?.display_resolution_current_height);
@@ -2891,7 +2878,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       label: "Services",
       value: `${serviceSummary.ok}/${serviceSummary.total} OK`,
       helper: serviceIssueText,
-      level: serviceSummary.issues ? "error" : serviceSummary.unverified ? "neutral" : "ok",
+      level: hasServiceErrors ? "error" : serviceSummary.issues ? "warn" : serviceSummary.unverified ? "neutral" : "ok",
     },
     {
       label: "Systemtid",
@@ -2915,7 +2902,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Fuldskærm", value: client?.browser_fullscreen === "fullscreen" ? "Ja" : client?.browser_fullscreen === "windowed" ? "Nej" : "Ukendt", level: client?.browser_fullscreen === "fullscreen" ? "ok" : client?.browser_fullscreen === "windowed" ? "warn" : "neutral" },
         { label: "Netværk", value: networkMessage, level: networkLevel, wide: true },
         { label: "Display", value: `${displaySummary} · ${statusText(client?.display_resolution_current_output)}`, level: getStatusLevel(client?.display_resolution_status) },
-        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : ubuntuUpdateCount === null ? "neutral" : "ok" },
+        { label: "Ubuntu updates", value: ubuntuView.label, level: ubuntuView.level },
       ],
     },
     {
@@ -3077,7 +3064,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       description: "Ubuntu-pakker. ClientFlow-deployments vises i Software-panelet fra den canonical deployment-state-machine.",
       columns: 2,
       rows: [
-        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : ubuntuUpdateCount === null ? "neutral" : "ok" },
+        { label: "Ubuntu updates", value: ubuntuView.label, level: ubuntuView.level },
         { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket" },
         { label: "Pending OS update", value: formatDiagnosticBoolean(client?.pending_os_update), boolean: client?.pending_os_update, trueLevel: "info" },
       ],
@@ -3412,7 +3399,7 @@ export default function ClientDetailsInfoSection({
     <Box sx={{ color: TEXT }}>
       <Box
         sx={{
-          mb: 1.6,
+          mb: 2,
           borderRadius: 2,
           background: "rgba(15,23,42,0.32)",
           border: `1px solid ${BORDER}`,

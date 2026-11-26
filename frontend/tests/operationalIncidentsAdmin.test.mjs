@@ -44,3 +44,9 @@ test("daily incident view prioritizes faults and never reports unverified histor
   assert.match(page, /coverageIncomplete && <Alert/);
   assert.ok(page.indexOf('aria-label="Driftsfejlhistorik"') < page.indexOf("Dækning af klientrapporter"));
 });
+
+test("historical update results are collapsed and only fetched when requested", () => {
+  assert.match(page, /\[historyOpen, setHistoryOpen\] = useState\(false\)/);
+  assert.match(page, /if \(!historyOpen\) return/);
+  assert.match(page, /historisk resultat er ikke i sig selv en aktiv driftsfejl/);
+});

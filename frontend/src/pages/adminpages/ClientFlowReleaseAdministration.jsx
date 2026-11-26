@@ -313,7 +313,7 @@ export default function ClientFlowReleaseAdministration() {
   return (
     <Stack spacing={2.2}>
       <Paper elevation={0} sx={panelSx}>
-        <Box sx={{ display: "flex", width: "100%", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", width: "100%", alignItems: "center", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
           <Box sx={{ flex: "1 1 320px", minWidth: 0 }}>
             <Typography variant="h5" fontWeight={900}>ClientFlow · Releases</Typography>
             <Typography variant="body2" color="text.secondary" aria-live="polite" sx={{ mt: 0.5 }}>
@@ -343,18 +343,21 @@ export default function ClientFlowReleaseAdministration() {
               <ClientFlowDeploymentHistory rows={activeRows.slice(0, activeVisibleCount)} onCancel={activeComplete ? openCancelDeployment : undefined} busy={submitting || loading} />}
             {activeRows.length > activeVisibleCount && <Button onClick={() => setActiveVisibleCount((count) => count + 20)}>Vis flere aktive opdateringer</Button>}
           </Paper>
-          <Paper elevation={0} sx={panelSx}>
+          <Accordion disableGutters defaultExpanded={false} sx={panelSx}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={850}>Afsluttede opdateringer · historik</Typography></AccordionSummary>
+            <AccordionDetails sx={{ p: 0 }}>
             <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1}>
-              <Typography variant="h6" fontWeight={850}>Seneste opdateringer</Typography>
+              <Typography fontWeight={750}>Historiske resultater</Typography>
               {recentProblems > 0 && <Chip size="small" color="warning" variant="outlined" label={`${recentProblems} fejl eller tilbageførsler i historikken`} />}
             </Stack>
-            <ClientFlowDeploymentHistory rows={recentRows.slice(0, 1)} />
+            <ClientFlowDeploymentHistory rows={recentRows.slice(0, 1)} compact />
             {recentRows.length > 1 && <Box sx={{ mt: 1.5 }}>
               <ClientFlowDeploymentHistory rows={recentRows.slice(1, historyVisibleCount)} compact />
             </Box>}
             {recentRows.length > historyVisibleCount && <Button size="small" sx={{ mt: 1 }} onClick={() => setHistoryVisibleCount((count) => count + 10)}>Vis flere opdateringer ({recentRows.length - historyVisibleCount})</Button>}
             {historyVisibleCount > 3 && <Button size="small" sx={{ mt: 1 }} onClick={() => setHistoryVisibleCount(3)}>Vis færre</Button>}
-          </Paper>
+            </AccordionDetails>
+          </Accordion>
           {status.phase !== "standard_baseline" && <Accordion disableGutters defaultExpanded={false} sx={panelSx}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Typography variant="body2" fontWeight={750}>Tekniske releasedetaljer og historiske pilotplaner</Typography>

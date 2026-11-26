@@ -6,6 +6,9 @@ import {
   calendarRebootIsActionable,
   currentClientState,
   currentClientStateTone,
+  ubuntuInventoryView,
+  diagnosticServiceLevel,
+  defaultClientflowTarget,
 } from "../src/utils/controlRoomPresentation.mjs";
 
 const detail = readFileSync(new URL("../src/pages/clientdetailspage/ClientDetailsPage.jsx", import.meta.url), "utf8");
@@ -96,4 +99,27 @@ test("Control Room overview distinguishes a failed inventory read from verified 
   assert.match(listing, /clientListStatus !== "ready" \? "Afventer verificeret klientliste\."/);
   assert.match(listing, /presence\?\.is_online === false/);
   assert.match(listing, /aria-expanded=\{trashExpanded\}/);
+});
+
+test("operational inventory never substitutes a stale legacy package count", () => {
+  const client = { presence: { is_online: true }, ubuntu_updates_available: 69 };
+  assert.equal(ubuntuInventoryView(client).count, null);
+  const known = { ...client, ubuntu_update_inventory: { state: "known", update_count: 69 } };
+  assert.equal(ubuntuInventoryView(known).label, "69 pakker klar");
+  assert.equal(ubuntuInventoryView({ ...known, presence: { is_online: false } }).count, null);
+  assert.equal(ubuntuInventoryView({ ...client, ubuntu_update_inventory: { state: "known", update_count: 0 } }).label, "Ingen opdateringer");
+  assert.equal(ubuntuInventoryView({ ...known, ubuntu_update_inventory: { state: "stale", update_count: 69 } }).count, null);
+});
+test("missing and standby services are not falsely classified as failed", () => {
+  assert.equal(diagnosticServiceLevel(null), "neutral");
+  assert.equal(diagnosticServiceLevel("inactive", { expectedActive: false }), "ok");
+  assert.equal(diagnosticServiceLevel("inactive"), "error");
+  assert.equal(diagnosticServiceLevel("failed", { expectedActive: false }), "error");
+  assert.equal(diagnosticServiceLevel("active", { online: false }), "neutral");
+});
+test("newer installed release never defaults to a downgrade", () => {
+  const releases = [{version: "1.3.44"}];
+  assert.equal(defaultClientflowTarget("1.4.0", "1.3.44", releases), "");
+  assert.equal(defaultClientflowTarget("1.3.43", "1.3.44", releases), "1.3.44");
+  assert.equal(defaultClientflowTarget("1.3.44", "1.3.44", []), "");
 });

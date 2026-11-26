@@ -1674,7 +1674,7 @@ export default function ClientInfoPage() {
           direction={{ xs: "column", md: "row" }}
           spacing={1.5}
           sx={{
-            alignItems: { xs: "stretch", md: "flex-end" },
+            alignItems: { xs: "stretch", md: "center" },
             justifyContent: "space-between"
           }}>
           <Stack direction="row" spacing={1.35} sx={{
@@ -1715,8 +1715,10 @@ export default function ClientInfoPage() {
         </Stack>
       </Paper>
       <Paper sx={{ p: 1.5, mb: 2, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} useFlexGap sx={{ alignItems: { xs: "stretch", md: "center" }, justifyContent: "space-between" }}>
         <TextField
           fullWidth
+          sx={{ maxWidth: { md: 480 }, minWidth: 0 }}
           size="small"
           type="search"
           label="Søg i klientoversigten"
@@ -1728,18 +1730,19 @@ export default function ClientInfoPage() {
             ? `${visibleApprovedClients.length} godkendte · ${unapprovedClients.length} afventer · Ryd søgningen for at ændre rækkefølge`
             : undefined}
         />
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" alignItems="center" sx={{ flexShrink: 0 }}>
+            <Chip size="small" label={clientListStatus === "ready" ? `${dragClients.length} ${dragClients.length === 1 ? "klient" : "klienter"}` : "Klientstatus ikke verificeret"} sx={compactDarkChipSx("neutral", { height: 28, fontSize: 12 })} />
+            {clientListStatus === "ready" && <>
+              <Chip size="small" label={`${dragClients.filter(getClientOnline).length} online`} sx={compactDarkChipSx(dragClients.some(getClientOnline) ? "success" : "neutral", { height: 28, fontSize: 12 })} />
+              <Chip size="small" label={`${dragClients.filter((client) => client?.presence?.is_online === false).length} offline`} sx={compactDarkChipSx("neutral", { height: 28, fontSize: 12 })} />
+              {dragClients.some((client) => typeof client?.presence?.is_online !== "boolean") && <Chip size="small" label={`${dragClients.filter((client) => typeof client?.presence?.is_online !== "boolean").length} ukendt`} sx={compactDarkChipSx("neutral", { height: 28, fontSize: 12 })} />}
+            </>}
+          </Stack>
+        </Stack>
       </Paper>
       {clientListStatus === "error" && (
         <MuiAlert severity="warning" sx={{ mb: 2 }}>Klientlisten kunne ikke opdateres. Viste oplysninger kan være forældede.</MuiAlert>
       )}
-      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
-        <Chip label={clientListStatus === "ready" ? `${dragClients.length} klienter` : "Klientstatus ikke verificeret"} variant="outlined" />
-        {clientListStatus === "ready" && <>
-          <Chip label={`${dragClients.filter(getClientOnline).length} online`} sx={compactDarkChipSx("success")} />
-          <Chip label={`${dragClients.filter((client) => client?.presence?.is_online === false).length} offline`} variant="outlined" />
-          {dragClients.some((client) => typeof client?.presence?.is_online !== "boolean") && <Chip label={`${dragClients.filter((client) => typeof client?.presence?.is_online !== "boolean").length} ukendt`} variant="outlined" />}
-        </>}
-      </Stack>
       {/* Godkendte klienter */}
       <Typography
         variant="h5"
