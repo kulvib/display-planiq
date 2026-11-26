@@ -169,6 +169,7 @@ test("fleet distinguishes standard, older, newer and unknown without inferring a
 
 
 test("1250 pilot uses explicit review and reauthentication, not the legacy plan", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
   const panel = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowBaselinePilotPanel.jsx", import.meta.url), "utf8");
   assert.match(ui, /<ClientFlowBaselinePilotPanel status=\{status\} onAuthorized=\{refresh\}/);
   assert.match(panel, /client\.get\(PATH \+ "\/availability"/);
