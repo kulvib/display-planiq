@@ -1036,7 +1036,7 @@ export default function ClientDetailsPage({
   const deploymentRefreshInFlightRef = useRef(null);
 
   const refreshClientflowDeployment = useCallback(async () => {
-    if (!client?.id || !isSuperadmin || deploymentRefreshInFlightRef.current) return null;
+    if (!client?.id || !isSuperadmin || !isPageVisible() || deploymentRefreshInFlightRef.current) return null;
     const request = new AbortController();
     deploymentRefreshInFlightRef.current = request;
     try {

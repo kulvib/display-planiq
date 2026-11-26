@@ -15,9 +15,14 @@ test("detail hot poll transports canonical presence without a second presence in
 });
 
 test("ClientFlow deployment state has one parent-owned database poll", () => {
-  assert.match(details, /getClientflowDeployments\(client\.id, \{ limit: 1 \}\)/);
+  assert.equal((details.match(/getClientflowDeployments\(client\.id, \{ limit: 1, signal: request.signal \}\)/g) || []).length, 1);
+  assert.match(details, /request.signal.aborted \|\| deploymentRefreshInFlightRef.current !== request/);
+  assert.match(details, /deploymentRefreshInFlightRef.current\?\.abort\(\)/);
   assert.match(details, /deploymentRefreshInFlightRef\.current/);
-  assert.match(details, /setInterval\(refreshClientflowDeployment, CLIENTFLOW_DEPLOYMENT_POLL_MS\)/);
+  assert.equal((details.match(/clientflowDeploymentActive \? CLIENTFLOW_DEPLOYMENT_POLL_MS : 60_000/g) || []).length, 1);
+  assert.match(details, /window\.setInterval\(\(\) => \{\s*if \(isPageVisible\(\)\) void refreshClientflowDeployment\(\);\s*\}, clientflowDeploymentActive \? CLIENTFLOW_DEPLOYMENT_POLL_MS : 60_000\)/);
+  assert.match(details, /CLIENTFLOW_DEPLOYMENT_POLL_MS = 2500/);
+  assert.match(details, /createReleaseAdministrationRealtimeCapability\(signal\)/);
   assert.match(details, /CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES\.has\(clientflowDeploymentState\)/);
   assert.doesNotMatch(actions, /getActiveClientflowDeployment|refreshDeployment|setInterval\([^)]*Deployment/);
   assert.doesNotMatch(info, /getClientflowDeployments|pollDeployment/);

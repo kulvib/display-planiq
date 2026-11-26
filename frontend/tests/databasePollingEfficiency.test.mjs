@@ -22,7 +22,10 @@ test("always-on ClientFlow database polling pauses while the browser page is hid
   assert.match(detailsPage, /document\.addEventListener\("visibilitychange", wakeWhenVisible\)/);
   assert.doesNotMatch(actions, /getActiveClientflowDeployment|refreshDeployment/);
   assert.match(detailsPage, /if \(isPageVisible\(\)\) refreshClientflowDeployment\(\);/);
-  assert.match(detailsPage, /if \(!client\?\.id \|\| !isSuperadmin \|\| !clientflowDeploymentActive\) return undefined;/);
+  assert.match(detailsPage, /if \(!client\?\.id \|\| !isSuperadmin \|\| !isPageVisible\(\) \|\| deploymentRefreshInFlightRef.current\) return null;/);
+  assert.match(detailsPage, /if \(isPageVisible\(\)\) void refreshClientflowDeployment\(\);/);
+  assert.match(detailsPage, /clientflowDeploymentActive \? CLIENTFLOW_DEPLOYMENT_POLL_MS : 60_000/);
+  assert.match(detailsPage, /scope\?\.cancel\(\);\s*if \(!isPageVisible\(\)\) return;/);
   assert.match(detailsPage, /const DETAIL_HOT_FIELDS = \[/);
   assert.doesNotMatch(info, /setInterval\(refreshConfig/);
   assert.doesNotMatch(info, /setInterval\(refreshDiagnostics/);

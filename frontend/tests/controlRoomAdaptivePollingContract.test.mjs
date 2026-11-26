@@ -13,13 +13,14 @@ test("Control Room list uses DB-free realtime invalidation with bounded reconcil
   const api = read("src/api/api.js");
   const policy = read("src/utils/controlRoomPolling.mjs");
 
-  assert.match(api, /export async function getControlRoomClients\(\)/);
+  assert.match(api, /export async function getControlRoomClients\(\{ signal \} = \{\}\)/);
   const controlRoomTransport = api.slice(
-    api.indexOf("export async function getControlRoomClients()"),
-    api.indexOf("export async function getClient(id)"),
+    api.indexOf("export async function getControlRoomClients({ signal } = {})"),
+    api.indexOf("export async function createControlRoomRealtimeCapability(signal)"),
   );
   assert.match(controlRoomTransport, /\/api\/clients\/control-room-summary/);
   assert.match(controlRoomTransport, /cache: "no-store"/);
+  assert.match(controlRoomTransport, /\n    signal,\n/);
   assert.match(page, /getControlRoomClients/);
   assert.match(api, /export async function createControlRoomRealtimeCapability\(signal\)/);
   assert.match(api, /export async function waitForControlRoomRealtime\(/);

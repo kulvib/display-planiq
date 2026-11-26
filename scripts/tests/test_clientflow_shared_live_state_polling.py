@@ -12,7 +12,11 @@ def test_deployment_polling_has_one_common_parent_owner_and_bounded_history():
     api = read("frontend/src/api/api.js")
     router = read("backend/service1/routers/clientflow_deployments.py")
 
-    assert "getClientflowDeployments(client.id, { limit: 1 })" in page
+    assert page.count("getClientflowDeployments(client.id, { limit: 1, signal: request.signal })") == 1
+    assert "request.signal.aborted || deploymentRefreshInFlightRef.current !== request" in page
+    assert "deploymentRefreshInFlightRef.current?.abort()" in page
+    assert "getClientflowDeployments(clientId, { limit = null, signal } = {})" in api
+    assert "clientflowDeploymentActive ? CLIENTFLOW_DEPLOYMENT_POLL_MS : 60_000" in page
     assert "deploymentRefreshInFlightRef" in page
     assert "clientflowDeploymentActive" in page
     assert "getActiveClientflowDeployment" not in actions
