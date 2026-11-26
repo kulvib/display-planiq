@@ -4,7 +4,13 @@ import test from "node:test";
 import { evaluateDependencyAudit } from "../scripts/dependencyAuditPolicy.mjs";
 
 const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url)));
-const allowlist = JSON.parse(readFileSync(new URL("../dependency-audit-allowlist.json", import.meta.url)));
+const activeAllowlist = JSON.parse(readFileSync(new URL("../dependency-audit-allowlist.json", import.meta.url)));
+// Historical fixture: exercises strict exception handling without enabling a real waiver.
+const allowlist = { exceptions: [{
+  package: "picomatch", lockedVersion: "4.0.5",
+  advisories: ["GHSA-fc5q-39xc-vjpf"], expires: "2026-11-25",
+  scope: "dev-only", replacementPlan: "Historical regression fixture only",
+}] };
 const date = "2026-11-18";
 const advisory = {
   name: "picomatch", severity: "high",
@@ -93,12 +99,22 @@ test("udløbet undtagelse afviser hele kæden", () => {
   assert.throws(() => evaluate(report(), allowlist, lock, "2026-11-26"), /udløbet/);
 });
 
-test("manglende npm advisory er ikke et patch: eksakt låst dev-only picomatch undtagelse bevares kortvarigt", () => {
+test("aktiv allowlist er tom efter officiel tilbagetrækning; ren audit består uden undtagelser", () => {
   const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
-  const result = evaluate(clean);
+  assert.deepEqual(activeAllowlist.exceptions, []);
+  const result = evaluate(clean, activeAllowlist, lock, "2026-11-26");
   assert.deepEqual(result.unexpected, []);
   assert.deepEqual(result.exceptionsUsed, []);
-  assert.deepEqual(result.dormantExceptions, ["picomatch"]);
+  assert.deepEqual(result.dormantExceptions, []);
+  assert.equal(evaluate(report(), activeAllowlist, lock, "2026-11-26").unexpected.length, 5);
+});
+
+test("ikke-rapporteret advisory berettiger ikke en ubrugt undtagelse", () => {
+  const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
+  const result = evaluate(clean);
+  assert.deepEqual(result.unexpected.map((item) => item.packageName), ["picomatch"]);
+  assert.deepEqual(result.exceptionsUsed, []);
+  assert.deepEqual(result.dormantExceptions, []);
 });
 
 test("manglende advisory fritager ikke en ændret version, runtime-afhængighed eller devOptional", () => {
@@ -117,7 +133,7 @@ test("manglende advisory fritager ikke en ændret version, runtime-afhængighed 
   assert.deepEqual(evaluate(clean, allowlist, missing).unexpected.map((item) => item.packageName), ["picomatch"]);
 });
 
-test("manglende advisory tillader kun den eksisterende korte GHSA-undtagelse", () => {
+test("manglende advisory afviser også ændrede undtagelser", () => {
   const clean = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 0 } } };
   for (const mutate of [
     (entry) => { entry.advisories = ["GHSA-2345-6789-cfgh"]; },
@@ -138,8 +154,8 @@ test("den ikke-rapporterede picomatch-undtagelse udløber fortsat", () => {
 test("rapport med positiv tæller uden advisory-details fejler lukket", () => {
   const broken = { vulnerabilities: {}, metadata: { vulnerabilities: { total: 1 } } };
   const result = evaluate(broken);
-  assert.deepEqual(result.unexpected.map((item) => item.packageName), ["npm audit"]);
-  assert.deepEqual(result.dormantExceptions, ["picomatch"]);
+  assert.deepEqual(result.unexpected.map((item) => item.packageName), ["picomatch", "npm audit"]);
+  assert.deepEqual(result.dormantExceptions, []);
 });
 
 test("legacy npm advisories-format accepterer kun den præcise GHSA", () => {

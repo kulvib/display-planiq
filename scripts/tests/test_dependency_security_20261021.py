@@ -16,7 +16,7 @@ def test_certifi_security_floor_is_hash_locked_in_both_python_graphs():
         assert "--hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b" in content
 
 
-def test_vite_security_patch_keeps_npm_tarball_integrity_and_scoped_dev_only_exception():
+def test_vite_security_patch_keeps_npm_tarball_integrity_and_empty_allowlist():
     pkg = json.loads((ROOT / "frontend/package.json").read_text())
     lock = json.loads((ROOT / "frontend/package-lock.json").read_text())
     assert pkg["devDependencies"]["vite"] == "8.1.6"
@@ -30,12 +30,7 @@ def test_vite_security_patch_keeps_npm_tarball_integrity_and_scoped_dev_only_exc
     assert lock["packages"]["node_modules/rolldown"]["version"] == "1.1.5"
     assert lock["packages"]["node_modules/postcss"]["version"] == "8.5.23"
     exceptions = json.loads((ROOT / "frontend/dependency-audit-allowlist.json").read_text())["exceptions"]
-    assert len(exceptions) == 1
-    assert exceptions[0]["package"] == "picomatch"
-    assert exceptions[0]["lockedVersion"] == "4.0.5"
-    assert exceptions[0]["advisories"] == ["GHSA-fc5q-39xc-vjpf"]
-    assert exceptions[0]["scope"] == "dev-only"
-    assert exceptions[0]["expires"] == "2026-11-25"
+    assert exceptions == []
     assert lock["packages"]["node_modules/picomatch"]["dev"] is True
     assert lock["packages"]["node_modules/picomatch"]["version"] == "4.0.5"
     assert (ROOT / "frontend/scripts/dependencyAuditPolicy.mjs").is_file()
