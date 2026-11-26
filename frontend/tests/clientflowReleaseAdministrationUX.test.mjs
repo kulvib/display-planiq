@@ -166,3 +166,16 @@ test("fleet distinguishes standard, older, newer and unknown without inferring a
   assert.equal(fleetVersionStatus(clients[4], "1.3.44"), "newer");
   assert.equal(fleetVersionStatus(clients[0], ""), "unknown");
 });
+
+
+test("1250 pilot uses explicit review and reauthentication, not the legacy plan", () => {
+  const panel = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowBaselinePilotPanel.jsx", import.meta.url), "utf8");
+  assert.match(ui, /<ClientFlowBaselinePilotPanel status=\{status\} onAuthorized=\{refresh\}/);
+  assert.match(panel, /client\.get\(PATH \+ "\/availability"/);
+  assert.match(panel, /client\.post\(PATH \+ "\/authorize", body/);
+  assert.match(panel, /confirmed_prepared:true,password/);
+  assert.match(panel, /expected_bundle_sha256:authority\.bundle_sha256/);
+  assert.match(panel, /status\.fleet_open === false/);
+  assert.match(panel, /authority\.revision !== status\.revision/);
+  assert.doesNotMatch(panel, /setInterval\(/);
+});

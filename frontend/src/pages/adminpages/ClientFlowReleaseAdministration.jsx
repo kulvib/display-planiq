@@ -14,6 +14,7 @@ import ClientFlowPilot1247Panel from "./ClientFlowPilot1247Panel";
 import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
 import ClientFlowFleetOverview from "./ClientFlowFleetOverview";
 import ClientFlowStandardOrderPanel from "./ClientFlowStandardOrderPanel";
+import ClientFlowBaselinePilotPanel from "./ClientFlowBaselinePilotPanel";
 import { validateStandardBaselineResponse } from "./clientflowStandardOrders.mjs";
 import { CANCELLABLE_STATES } from "./clientflowDeploymentHistory.mjs";
 import {
@@ -327,6 +328,7 @@ export default function ClientFlowReleaseAdministration() {
         <>
           <ClientFlowFleetOverview clients={available} release={release} stableVersion={status.stable_version} activeRows={activeRows} activeComplete={activeComplete} />
           {status.phase === "standard_baseline" && <ClientFlowStandardOrderPanel status={status} onAuthorized={refresh} /> }
+          {status.phase === "additive_draft_only" && <ClientFlowBaselinePilotPanel status={status} onAuthorized={refresh} /> }
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
