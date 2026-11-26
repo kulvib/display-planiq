@@ -29,7 +29,8 @@ test("configuration and diagnostics reuse the shared detail hot-state poll", () 
   assert.doesNotMatch(info, /setInterval\(refreshConfig/);
   assert.doesNotMatch(info, /setInterval\(refreshDiagnostics/);
   assert.doesNotMatch(info, /auto hvert 10 sek\./);
-  assert.match(info, /live-status/);
+  assert.match(info, /Seneste rapport: \{formatDiagnosticDate\(client\?\.diagnostics_updated_at\)\}/);
+  assert.match(info, /shared \/chrome-status hot read/);
 });
 
 test("manual refresh remains available while background full-client polling is removed", () => {

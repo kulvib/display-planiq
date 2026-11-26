@@ -15,7 +15,6 @@ import {
   Grid,
   FormControlLabel,
   Checkbox,
-  LinearProgress,
   IconButton,
   MenuItem,
   Stack,
@@ -1391,36 +1390,6 @@ function getLocalManagementActionLabel(action) {
   return "Lokal klientstyring";
 }
 
-function getLocalManagementProgress(status) {
-  const st = normalizeLocalManagementStatus(status);
-  if (st === "pending") return 25;
-  if (st === "running") return 65;
-  if (st === "success") return 100;
-  if (st === "error") return 100;
-  return 0;
-}
-
-function buildLocalManagementFlow(snapshot = {}) {
-  const status = normalizeLocalManagementStatus(snapshot.status);
-  const actionLabel = getLocalManagementActionLabel(snapshot.action);
-  const terminalError = status === "error";
-  const terminalSuccess = status === "success";
-  const running = status === "running" || terminalSuccess || terminalError;
-  const finished = terminalSuccess || terminalError;
-  return [
-    { key: "queued", label: "Sendt fra backend", active: status === "pending", done: status === "pending" || running || finished },
-    { key: "running", label: actionLabel, active: status === "running", done: running || finished },
-    {
-      key: "finished",
-      label: terminalError ? "Fejl" : terminalSuccess ? "Gennemført" : "Afventer resultat",
-      active: finished,
-      done: finished,
-      error: terminalError,
-      success: terminalSuccess,
-    },
-  ];
-}
-
 function formatDateShort(date) {
   const dayName = UKEDAGE[date.getDay()];
   const day = String(date.getDate()).padStart(2, "0");
@@ -1574,8 +1543,12 @@ function useOrganizationsList(enabled) {
         if (cancelled) return;
         if (Array.isArray(data)) setOrganizations(data);
         else if (Array.isArray(data?.organizations)) setOrganizations(data.organizations);
+        else throw new Error("Ugyldig organisationsliste");
       } catch (err) {
-        if (!cancelled) setError(err?.message || "Kunne ikke hente organisationer");
+        if (!cancelled) {
+          setOrganizations([]);
+          setError(err?.message || "Kunne ikke hente organisationer");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1686,9 +1659,10 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(timer);
   }, [markedDays, calendarLoading]);
+  const calendarDayStart = startOfLocalDay(now).getTime();
   const days = React.useMemo(() => {
     const result = [];
-    const base = startOfLocalDay(new Date());
+    const base = new Date(calendarDayStart);
 
     // Dag 0 bruges kun til det store "i dag"-kort.
     // De små kort starter i morgen, så kalenderen ikke viser i dag to gange.
@@ -1700,7 +1674,7 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
     }
 
     return result;
-  }, [markedDays]);
+  }, [markedDays, calendarDayStart]);
 
   const [editDate, setEditDate] = React.useState(null);
   const [editDialogOpen, setEditDialogOpen] = React.useState(false);
@@ -2207,6 +2181,12 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const [cfadminPassword, setCfadminPassword] = React.useState("");
   const [cfadminPasswordRepeat, setCfadminPasswordRepeat] = React.useState("");
   const [savingCfadminPassword, setSavingCfadminPassword] = React.useState(false);
+  const [showPasswordFields, setShowPasswordFields] = React.useState(false);
+  const closePasswordFields = () => {
+    setShowPasswordFields(false);
+    setCfadminPassword("");
+    setCfadminPasswordRepeat("");
+  };
   const [localManagementSnapshot, setLocalManagementSnapshot] = React.useState(() => pickLocalManagementFields(client));
 
   React.useEffect(() => {
@@ -2325,13 +2305,13 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   };
 
   const requestOrganizationChange = () => {
-    if (!client?.id || saving || !organizationDirty || !canChangeOrganization) return;
+    if (!client?.id || saving || loading || error || !organizationDirty || !canChangeOrganization) return;
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) document.activeElement.blur();
     setOrganizationConfirmOpen(true);
   };
 
   const confirmOrganizationChange = async () => {
-    if (!client?.id || saving || !organizationDirty || !canChangeOrganization) return;
+    if (!client?.id || saving || loading || error || !organizationDirty || !canChangeOrganization) return;
     const raw = form.organization_id || null;
     const organizationId = raw && /^\d+$/.test(String(raw)) ? Number(raw) : raw;
     setSavingDomain("organization");
@@ -2399,7 +2379,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   };
 
   const saveCfadminPassword = async () => {
-    if (!client?.id || savingCfadminPassword) return;
+    if (!client?.id || !isSuperadmin || localManagementBusy || saving || savingCfadminPassword) return;
     if (!cfadminPassword) {
       showSnackbar?.({ message: "Indtast en ny cfadmin-adgangskode", severity: "warning" });
       return;
@@ -2416,7 +2396,9 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
       setCfadminPassword("");
       setCfadminPasswordRepeat("");
       showSnackbar?.({ message: "Ændring af cfadmin-adgangskode er sendt til klienten", severity: "success" });
-      await onRefresh?.();
+      setShowPasswordFields(false);
+      // The command is already accepted; a read failure is not a write failure.
+      try { await onRefresh?.(); } catch {}
       try { await refreshLocalManagement(); } catch {}
     } catch (err) {
       showSnackbar?.({ message: `Fejl: ${err?.message || "Kunne ikke sende cfadmin-adgangskode"}`, severity: "error" });
@@ -2447,8 +2429,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const localManagementActionLabel = getLocalManagementActionLabel(localManagementSnapshot.action);
   const localManagementMessage = localManagementSnapshot.message || localManagementSnapshot.error || "Ingen lokal klienthandling i gang";
   const localManagementBusy = localManagementStatus === "pending" || localManagementStatus === "running";
-  const localManagementFlow = buildLocalManagementFlow(localManagementSnapshot);
-  const localManagementProgress = getLocalManagementProgress(localManagementStatus);
+  const localManagementNeedsAttention = localManagementBusy || localManagementStatus === "error";
   const cfadminPasswordsMismatch = !!cfadminPasswordRepeat && cfadminPassword !== cfadminPasswordRepeat;
   const lockdownStatus = String(client?.desktop_lockdown_status || "").toLowerCase();
   const lockdownDesired = client?.desktop_lockdown_enabled === true;
@@ -2472,7 +2453,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
     <>
       <DataPanel
         title="Konfiguration"
-        description="Indstillinger er opdelt efter ansvar og konsekvens. Hver sektion gemmes eller udføres uafhængigt."
+        description="Gem ændringer i den relevante sektion."
         action={onRefresh ? (
           <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={refreshConfigNow} disabled={saving || hasDraftChanges} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}>
             Opdater
@@ -2481,11 +2462,10 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
       >
         {error && <Alert severity="warning" sx={{ mb: 1.5 }}>{error}</Alert>}
         <Stack spacing={1.6}>
+          {hasDraftChanges && <Alert severity="info">Du har ikke-gemte ændringer.</Alert>}
           <Box sx={sectionSx}>
             <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Stamdata</Typography>
-            <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-              Lokation er almindelig metadata og gemmes uafhængigt af klientens lokale identitet og kioskopsætning.
-            </Typography>
+
             <TextField fullWidth label="Lokation" value={form.locality} onChange={setField("locality")} disabled={saving || !canEditKioskUrlAndLocality} helperText="Valgfri tekst, fx lokale, afdeling eller adresse." sx={textFieldSx} />
             {canEditKioskUrlAndLocality && (
               <Box sx={actionRowSx}>
@@ -2499,9 +2479,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 
           <Box sx={sectionSx}>
             <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Klientidentitet</Typography>
-            <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-              Klientnavnet er en lokal klienthandling. Linux-hostname dannes automatisk og anvendes først, når klienten har gennemført handlingen.
-            </Typography>
+
             <TextField fullWidth label="Klientnavn" value={form.name} onChange={setField("name")} disabled={saving || !canEditClientName || localManagementBusy} helperText={canEditClientName ? "Mellemrum er tilladt. Linux-hostname dannes automatisk." : "Kun superadministrator kan ændre klientnavn"} sx={textFieldSx} />
             {canEditClientName && (
               <Box sx={actionRowSx}>
@@ -2515,7 +2493,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 
           <Box sx={sectionSx}>
             <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Kioskvisning</Typography>
-            <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>URL og browser-refresh udgør én display-konfiguration og gemmes samlet.</Typography>
+
             <Grid container spacing={1.25}>
               <Grid size={12}>
                 <TextField fullWidth label="Kiosk URL" value={form.kiosk_url} onChange={setField("kiosk_url")} disabled={saving || !canEditKioskUrlAndLocality} helperText={canEditKioskUrlAndLocality ? "Domæne uden scheme normaliseres til HTTPS. HTTP er kun tilladt til localhost eller 127.0.0.1." : "Du har kun læseadgang til kiosk URL"} sx={textFieldSx} />
@@ -2551,16 +2529,14 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
           {canChangeOrganization && (
             <Box sx={sectionSx}>
               <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Organisation</Typography>
-              <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-                Flytning er en særskilt domænehandling, fordi organisationens standardtider kan blive anvendt på eksisterende tændte dage.
-              </Typography>
-              <TextField select fullWidth label="Organisation" value={form.organization_id || ""} onChange={setField("organization_id")} disabled={loading || saving} helperText="Flyt kun klienten, hvis den reelt hører til en anden organisation." sx={textFieldSx}>
+
+              <TextField select fullWidth label="Organisation" value={form.organization_id || ""} onChange={setField("organization_id")} disabled={loading || saving || Boolean(error)} helperText="Standardtider kan ændres ved flytning." sx={textFieldSx}>
                 <MenuItem value=""><em>Ingen organisation</em></MenuItem>
                 {loading && <MenuItem value="" disabled>Henter organisationer…</MenuItem>}
                 {organizations.map((organization) => <MenuItem key={organization.id} value={String(organization.id)}>{organization.name}</MenuItem>)}
               </TextField>
               <Box sx={actionRowSx}>
-                <Button variant="contained" type="button" onClick={requestOrganizationChange} disabled={saving || loading || !organizationDirty} sx={{ borderRadius: 2, fontWeight: 900 }}>Flyt organisation</Button>
+                <Button variant="contained" type="button" onClick={requestOrganizationChange} disabled={saving || loading || Boolean(error) || !organizationDirty} sx={{ borderRadius: 2, fontWeight: 900 }}>Flyt organisation</Button>
                 {organizationDirty && <Button variant="outlined" type="button" onClick={() => resetDomain(["organization_id"])} disabled={saving} sx={{ borderRadius: 2, fontWeight: 900 }}>Fortryd</Button>}
               </Box>
             </Box>
@@ -2569,9 +2545,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
           {canViewSecuritySection && (
             <Box sx={sectionSx}>
               <Typography sx={{ color: TEXT, fontWeight: 950, mb: 0.35 }}>Sikkerhed på klienten</Typography>
-              <Typography variant="caption" sx={{ color: MUTED, display: "block", mb: 1.25 }}>
-                Kiosk lockdown er en asynkron desired-state handling. Status kan ses her; kun superadministrator kan ændre den.
-              </Typography>
+
               <Box sx={{ p: 1.2, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1.2} sx={{ alignItems: { xs: "flex-start", sm: "center" }, justifyContent: "space-between" }}>
                   <Box>
@@ -2599,16 +2573,22 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
               </Box>
 
               {isSuperadmin && (
-                <Grid container spacing={1.25} sx={{ mt: 0.2 }}>
-                  <Grid size={12}><Divider sx={{ borderColor: BORDER, my: 0.2 }} /><Typography sx={{ color: TEXT, fontWeight: 950, mt: 0.4 }}>Skift cfadmin-adgangskode</Typography></Grid>
+                <Box sx={{ mt: 1.25 }}>
+                  <Button variant="outlined" size="small" aria-expanded={showPasswordFields} disabled={savingCfadminPassword}
+                    onClick={() => showPasswordFields ? closePasswordFields() : setShowPasswordFields(true)}>
+                    {showPasswordFields ? "Annullér adgangskodeændring" : "Skift cfadmin-adgangskode"}
+                  </Button>
+                  {showPasswordFields && <Grid container spacing={1.25} sx={{ mt: 1 }}>
+                  <Grid size={12}><Typography variant="body2" sx={{ color: MUTED }}>Ændringen sendes til klienten.</Typography></Grid>
                   <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Ny cfadmin-adgangskode" type="password" value={cfadminPassword} onChange={(event) => setCfadminPassword(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} autoComplete="new-password" helperText="Min. 8 tegn med stort bogstav, lille bogstav og tal" sx={textFieldSx} /></Grid>
                   <Grid size={{ xs: 12, md: 5 }}><TextField fullWidth label="Gentag adgangskode" type="password" value={cfadminPasswordRepeat} onChange={(event) => setCfadminPasswordRepeat(event.target.value)} disabled={savingCfadminPassword || localManagementBusy} error={cfadminPasswordsMismatch} autoComplete="new-password" helperText={cfadminPasswordsMismatch ? "Adgangskoderne matcher ikke" : " "} sx={textFieldSx} /></Grid>
                   <Grid sx={{ display: "flex", alignItems: "flex-start" }} size={{ xs: 12, md: 2 }}>
-                    <Button fullWidth variant="contained" type="button" onClick={saveCfadminPassword} disabled={savingCfadminPassword || localManagementBusy || !cfadminPassword || cfadminPasswordsMismatch} startIcon={savingCfadminPassword ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900, minHeight: 54 }}>
+                    <Button fullWidth variant="contained" type="button" onClick={saveCfadminPassword} disabled={saving || savingCfadminPassword || localManagementBusy || !cfadminPassword || !cfadminPasswordRepeat || cfadminPasswordsMismatch} startIcon={savingCfadminPassword ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />} sx={{ borderRadius: 2, fontWeight: 900, minHeight: 54 }}>
                       {savingCfadminPassword ? "Sender…" : "Skift"}
                     </Button>
                   </Grid>
-                </Grid>
+                </Grid>}
+                </Box>
               )}
             </Box>
           )}
@@ -2626,20 +2606,12 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                   <Button size="small" type="button" variant="outlined" onClick={refreshLocalManagement} disabled={!client?.id} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER, fontWeight: 900 }}>Opdater status</Button>
                 </Stack>
               </Stack>
-              {(localManagementBusy || localManagementStatus === "success" || localManagementStatus === "error") && (
-                <Box sx={{ mt: 1.1 }}>
-                  <LinearProgress variant="determinate" value={localManagementProgress} color={localManagementStatus === "error" ? "error" : localManagementStatus === "success" ? "success" : "primary"} sx={{ height: 8, borderRadius: 999, backgroundColor: "rgba(148,163,184,0.16)" }} />
-                  <Stack direction={{ xs: "column", md: "row" }} spacing={0.75} useFlexGap sx={{ flexWrap: "wrap", mt: 1 }}>
-                    {localManagementFlow.map((step, index) => (
-                      <Box key={step.key} sx={{ flex: 1, minWidth: 150, p: 0.85, borderRadius: 2, border: `1px solid ${step.error ? "rgba(248,113,113,0.45)" : step.success ? "rgba(34,197,94,0.55)" : step.active ? "rgba(56,189,248,0.42)" : step.done ? "rgba(34,197,94,0.35)" : BORDER}`, background: step.error ? "rgba(127,29,29,0.24)" : step.success ? "rgba(22,101,52,0.24)" : step.active ? "rgba(14,165,233,0.18)" : step.done ? "rgba(34,197,94,0.12)" : "rgba(15,23,42,0.34)" }}>
-                        <Typography variant="caption" sx={{ color: MUTED, fontWeight: 900 }}>{index + 1}. trin</Typography>
-                        <Typography sx={{ color: TEXT, fontWeight: 950, fontSize: 13 }}>{step.label}</Typography>
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-              )}
-              <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.9 }}>{localManagementMessage}</Typography>
+              {localManagementNeedsAttention && <Alert severity={localManagementStatus === "error" ? "error" : "info"} sx={{ mt: 1 }}>
+                {localManagementMessage}
+              </Alert>}
+              <Box component="details" sx={{ mt: 1, color: MUTED }}>
+                <Box component="summary" sx={{ cursor: "pointer", fontSize: "0.8rem" }}>Detaljer om lokal handling</Box>
+                {!localManagementNeedsAttention && <Typography variant="caption" sx={{ display: "block", mt: 0.9 }}>{localManagementMessage}</Typography>}
               {localManagementSnapshot.desired_hostname && <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>Nyt klientnavn/hostname: {localManagementSnapshot.desired_hostname}</Typography>}
               {(localManagementSnapshot.requested_at || localManagementSnapshot.started_at || localManagementSnapshot.finished_at) && (
                 <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>
@@ -2648,6 +2620,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
                   {localManagementSnapshot.finished_at ? ` · Afsluttet: ${formatDateTime(localManagementSnapshot.finished_at, true)}` : ""}
                 </Typography>
               )}
+              </Box>
             </Box>
           )}
         </Stack>
@@ -2661,7 +2634,7 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOrganizationConfirmOpen(false)} disabled={saving}>Annullér</Button>
-          <Button onClick={confirmOrganizationChange} variant="contained" disabled={saving || !organizationDirty}>{savingDomain === "organization" ? "Flytter…" : "Ja, flyt klient"}</Button>
+          <Button onClick={confirmOrganizationChange} variant="contained" disabled={saving || loading || Boolean(error) || !organizationDirty}>{savingDomain === "organization" ? "Flytter…" : "Ja, flyt klient"}</Button>
         </DialogActions>
       </Dialog>
 

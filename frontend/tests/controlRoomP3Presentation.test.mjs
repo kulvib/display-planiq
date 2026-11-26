@@ -80,3 +80,10 @@ test("System, Network and Diagnostics retain technical details without false cur
   assert.ok(diagnostics.indexOf("Kræver opmærksomhed") < diagnostics.indexOf("summaryCards.map(renderSummaryCard)"));
   assert.match(diagnostics, /Faktiske ClientFlow-opdateringstrin/);
 });
+
+
+test("calendar rolls its seven-day view forward at midnight without another network timer", () => {
+  assert.match(diagnostics, /calendarDayStart = startOfLocalDay\(now\)\.getTime\(\)/);
+  assert.match(diagnostics, /const base = new Date\(calendarDayStart\)/);
+  assert.match(diagnostics, /\[markedDays, calendarDayStart\]/);
+});
