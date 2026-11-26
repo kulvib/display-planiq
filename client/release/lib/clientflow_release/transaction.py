@@ -1619,6 +1619,86 @@ def activate_release(
 
 
 
+def prepare_post_boot_recovery(
+    *, expected_failed_release_id: str, expected_previous_release_id: str,
+    expected_release_approval_reference: str, expected_bundle_sha256: str,
+    deployment_id: str, requested_boot_id: str, failed_boot_id: str,
+    layout: Layout = Layout(),
+) -> None:
+    """Durably authorize only recovery of the original in-place deployment.
+
+    The first legacy-to-baseline transition is deliberately excluded. No
+    service mutation occurs here; recover_failed_update performs the same
+    independently verified predecessor restoration as activation recovery.
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Post-boot recovery kræver root")
+    failed = _validate_release_id(expected_failed_release_id)
+    previous = _validate_release_id(expected_previous_release_id)
+    approval = _validate_approval(expected_release_approval_reference)
+    previous_seq = int(previous.rsplit("-seq-", 1)[1])
+    if not 1250 <= previous_seq < int(failed.rsplit("-seq-", 1)[1]):
+        raise TransactionError("Post-boot recovery kræver en kompatibel tidligere release")
+    try:
+        if any(str(uuid.UUID(value)) != value for value in (deployment_id, requested_boot_id, failed_boot_id)):
+            raise ValueError("noncanonical UUID")
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise TransactionError("Post-boot recovery har ugyldig deployment- eller bootidentitet") from exc
+    if requested_boot_id == failed_boot_id or not _SHA256_RE.fullmatch(expected_bundle_sha256):
+        raise TransactionError("Post-boot recovery mangler boot- eller bundlebevis")
+
+    with TransactionLock(layout):
+        root = (install_coordinator.DEFAULT_ROOT if layout.root == Path("/")
+                else layout.path("/var/lib/clientflow/install-coordinator"))
+        binding = {"schema_version": 1, "owner": "update_clientflow", "operation_id": deployment_id}
+        if install_coordinator.snapshot(root=root) != binding:
+            raise TransactionError("Post-boot recovery matcher ikke installationslåsen")
+        state = load_state(layout)
+        record = state["installed"].get(failed)
+        prior = state["installed"].get(previous)
+        if (state.get("active_release_id") != failed or state.get("previous_release_id") != previous
+                or state.get("staged_release_id") is not None
+                or not isinstance(record, dict) or not isinstance(prior, dict)
+                or record.get("bundle_sha256") != expected_bundle_sha256
+                or record.get("release_approval_reference") != approval):
+            raise TransactionError("Post-boot recovery matcher ikke lokal releasejournal")
+        intent = state.get("activation_intent")
+        if intent is not None:
+            if (not isinstance(intent, dict)
+                    or intent.get("release_id") != failed or intent.get("previous_release_id") != previous
+                    or intent.get("release_approval_reference") != approval
+                    or intent.get("post_boot_deployment_id") != deployment_id
+                    or intent.get("post_boot_failed_id") != failed_boot_id
+                    or intent.get("post_boot_requested_id") != requested_boot_id
+                    or _read_active_release_id(layout) not in {failed, previous}):
+                raise TransactionError("Post-boot recovery har en anden aktiv journal")
+            return
+        if (_read_active_release_id(layout) != failed
+                or layout.path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip() != failed_boot_id):
+            raise TransactionError("Post-boot recovery matcher ikke det fejlede boot")
+        activated = next((event for event in reversed(state["history"])
+                          if isinstance(event, dict) and event.get("event") == "activated"), None)
+        if (not activated or activated.get("release_id") != failed
+                or activated.get("previous_release_id") != previous
+                or activated.get("release_approval_reference") != approval):
+            raise TransactionError("Post-boot recovery mangler dokumenteret activation")
+        _canonical_activation_approval(layout, state, previous,
+                                       expected_approval_reference=prior.get("release_approval_reference") or "")
+        manifest = load_secure_json(layout.releases / previous / "release-manifest.json",
+                                    max_bytes=8 * 1024 * 1024, forbidden_mode_bits=0o022)
+        _validate_prepared_release_tree(layout.releases / previous, manifest)
+        state["activation_intent"] = {
+            "release_id": failed, "previous_release_id": previous,
+            "release_approval_reference": approval, "started_at": _now(),
+            "post_boot_deployment_id": deployment_id, "post_boot_failed_id": failed_boot_id,
+            "post_boot_requested_id": requested_boot_id,
+        }
+        _append_history(state, "post_boot_rollback_requested", release_id=failed,
+                        previous_release_id=previous, release_approval_reference=approval,
+                        deployment_id=deployment_id, failed_boot_id=failed_boot_id)
+        save_state(layout, state)
+
+
 def recover_failed_update(
     *,
     expected_failed_release_id: str,
@@ -1648,10 +1728,21 @@ def recover_failed_update(
             intent.get("release_id") != failed,
             intent.get("previous_release_id") != previous,
             intent.get("release_approval_reference") != approval,
-            state.get("active_release_id") != previous,
-            state.get("staged_release_id") != failed,
-            state.get("previous_release_id") is not None,
         )):
+            raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
+        post_boot = intent.get("post_boot_deployment_id")
+        if post_boot is not None:
+            root = (install_coordinator.DEFAULT_ROOT if layout.root == Path("/")
+                    else layout.path("/var/lib/clientflow/install-coordinator"))
+            if (state.get("active_release_id") != failed or state.get("previous_release_id") != previous
+                    or state.get("staged_release_id") is not None
+                    or install_coordinator.snapshot(root=root) != {
+                        "schema_version": 1, "owner": "update_clientflow", "operation_id": post_boot,
+                    }):
+                raise TransactionError("Post-boot recovery har mistet sin autoriserede installationslås")
+        elif any((state.get("active_release_id") != previous,
+                  state.get("staged_release_id") != failed,
+                  state.get("previous_release_id") is not None)):
             raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
         if not isinstance(state.get("installed"), dict) or not {previous, failed}.issubset(state["installed"]):
             raise TransactionError("Recovery kræver begge installerede releases")
@@ -1665,7 +1756,14 @@ def recover_failed_update(
                    and event.get("release_id") == failed
                    and event.get("previous_release_id") == previous
                    and event.get("release_approval_reference") == approval]
-        if not anchors or not any(
+        if post_boot is not None:
+            if not any(isinstance(event, dict) and event.get("event") == "post_boot_rollback_requested"
+                       and event.get("deployment_id") == post_boot
+                       and event.get("failed_boot_id") == intent.get("post_boot_failed_id")
+                       and event.get("release_id") == failed and event.get("previous_release_id") == previous
+                       and event.get("release_approval_reference") == approval for event in history):
+                raise TransactionError("Post-boot recovery mangler dokumenteret fejl")
+        elif not anchors or not any(
             isinstance(event, dict)
             and event.get("event") == "automatic_rollback_failed"
             and event.get("release_id") == failed

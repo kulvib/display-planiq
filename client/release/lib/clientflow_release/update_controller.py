@@ -22,7 +22,7 @@ import uuid
 
 from .constants import INSTALL_MODE_UPDATE
 from .filesystem import atomic_write_json, ensure_real_directory, fsync_directory, load_secure_json
-from .transaction import Layout, TransactionError, activate_release, recover_failed_update, stage_bundle, status, _health_check, _assert_no_temporary_media_override
+from .transaction import Layout, TransactionError, activate_release, recover_failed_update, stage_bundle, status, _health_check, _assert_no_temporary_media_override, prepare_post_boot_recovery
 from .updater_config import UpdaterConfig
 from .updater_state import DeploymentSnapshot
 from .updater_transport import UpdaterTransport, UpdaterTransportError
@@ -35,6 +35,10 @@ COPY_CHUNK_BYTES = 1024 * 1024
 
 class UpdateControllerError(RuntimeError):
     pass
+
+
+class PostBootHealthError(TransactionError):
+    """Health verification failed after observing a different kernel boot."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +135,10 @@ class ControllerStateStore:
             "idle", "activation_succeeded", "rolled_back", "recovery_failed"
         }:
             raise UpdateControllerError("En anden privileged deployment er stadig uafsluttet lokalt")
+        boundary = self._state.get("reboot_boundary")
+        if boundary is not None and (not isinstance(boundary, dict)
+                or (not boundary.get("observed_boot_id") and self.phase != "rolled_back")):
+            raise UpdateControllerError("Tidligere deployment afventer boot-verifikation eller recovery")
         self.cleanup_handoffs()
         self._state = self._empty()
         self._state["deployment"] = expected
@@ -863,7 +871,12 @@ class UpdateController:
         publish("post_boot_check")
         try:
             _assert_no_temporary_media_override(self.layout)
-            _health_check(self.layout, snapshot.target_release_id, timeout=120)
+            try:
+                _health_check(self.layout, snapshot.target_release_id, timeout=120)
+            except TransactionError as exc:
+                if self._boot_id() != boot:
+                    raise UpdateControllerError("Boot-ID ændret under helbredskontrol") from exc
+                raise PostBootHealthError("ClientFlow helbredskontrol fejlede efter genstart") from exc
             if self._boot_id() != boot:
                 raise UpdateControllerError("Boot-ID ændret under helbredskontrol")
         except Exception:
@@ -888,7 +901,21 @@ class UpdateController:
             self._bind_deployment(deployment, expected_snapshot=snapshot)
             state = self._deployment_state(deployment)
         if state == "health_check":
-            if not self._await_post_activation_boot(snapshot):
+            try:
+                boot_ok = self._await_post_activation_boot(snapshot)
+            except PostBootHealthError:
+                previous = outcome.previous_release_id
+                if not previous or int(previous.rsplit("-seq-", 1)[1]) < 1250:
+                    raise  # legacy baseline transition remains manual
+                record = self.controller_state._state["reboot_boundary"]
+                self.controller_state._state["post_boot_recovery"] = {
+                    "deployment_id": snapshot.deployment_id, "release_id": snapshot.target_release_id,
+                    "previous_release_id": previous, "failed_boot_id": self._boot_id(),
+                    "requested_boot_id": record["requested_boot_id"], "phase": "pending",
+                }
+                self.controller_state._save()
+                return self._recover_post_boot(snapshot)
+            if not boot_ok:
                 return {"status": "awaiting_reboot", "deployment_id": snapshot.deployment_id,
                         "release_id": snapshot.target_release_id}
             # Only the new boot gate introduces a potentially long health check.
@@ -1009,7 +1036,72 @@ class UpdateController:
             raise UpdateControllerError("Recovery returnerede uden eksakt rollback-outcome")
         return outcome
 
+    def _post_boot_restored(self, snapshot: DeploymentSnapshot, previous: str) -> bool:
+        local = self.status_func(self.layout)
+        outcome = _local_activation_outcome(
+            self.layout, snapshot, local, history_anchor=self.controller_state.history_anchor)
+        return bool(outcome is not None and outcome.state == "rolled_back"
+                    and outcome.previous_release_id == previous
+                    and local.get("active_release_id") == previous
+                    and local.get("active_symlink_release_id") == previous
+                    and local.get("activation_intent") is None)
+
+    def _recover_post_boot(self, snapshot: DeploymentSnapshot) -> dict[str, Any]:
+        marker = self.controller_state._state.get("post_boot_recovery")
+        boundary = self.controller_state._state.get("reboot_boundary")
+        if (not isinstance(marker, dict) or not isinstance(boundary, dict)
+                or set(marker) != {"deployment_id", "release_id", "previous_release_id",
+                                   "failed_boot_id", "requested_boot_id", "phase"}
+                or marker["deployment_id"] != snapshot.deployment_id
+                or marker["release_id"] != snapshot.target_release_id
+                or boundary.get("deployment_id") != snapshot.deployment_id
+                or boundary.get("release_id") != snapshot.target_release_id
+                or marker["requested_boot_id"] != boundary.get("requested_boot_id")
+                or marker["failed_boot_id"] == marker["requested_boot_id"]
+                or marker["phase"] not in {"pending", "failed"}):
+            raise UpdateControllerError("Post-boot recoveryjournal matcher ikke deployment")
+        previous = marker["previous_release_id"]
+        # Re-prove the existing backend deployment before local mutation.
+        _, deployment = self._fresh_active(snapshot)
+        if deployment is None or self._deployment_state(deployment) not in {"health_check", "rolling_back"}:
+            raise UpdateControllerError("Post-boot recovery mangler aktiv backendautorisation")
+        if marker["phase"] == "pending" and not self._post_boot_restored(snapshot, previous):
+            self._publish_advisory_release_status(snapshot, "rolling_back")
+            try:
+                prepare_post_boot_recovery(
+                    expected_failed_release_id=snapshot.target_release_id,
+                    expected_previous_release_id=previous,
+                    expected_release_approval_reference=snapshot.release_approval_reference,
+                    expected_bundle_sha256=snapshot.bundle_sha256,
+                    deployment_id=snapshot.deployment_id,
+                    requested_boot_id=marker["requested_boot_id"], failed_boot_id=marker["failed_boot_id"],
+                    layout=self.layout,
+                )
+                self.recovery_func(
+                    expected_failed_release_id=snapshot.target_release_id,
+                    expected_previous_release_id=previous,
+                    expected_release_approval_reference=snapshot.release_approval_reference,
+                    layout=self.layout,
+                )
+            except Exception:
+                # A lost response after a durable rollback must not become a
+                # second attempt. Only the local commit proves restoration.
+                if not self._post_boot_restored(snapshot, previous):
+                    marker["phase"] = "failed"
+                    self.controller_state._save()
+        if self._post_boot_restored(snapshot, previous):
+            outcome = LocalActivationOutcome("rolled_back", previous)
+            self.controller_state.mark_outcome(outcome)
+            return self._report_rollback(snapshot, outcome)
+        marker["phase"] = "failed"
+        self.controller_state._save()
+        self.controller_state.mark_outcome(LocalActivationOutcome("recovery_failed"))
+        self._publish_advisory_release_status(snapshot, "recovery_required")
+        return self._report_recovery_failed(snapshot)
+
     def _activate_or_reconcile(self, snapshot: DeploymentSnapshot, backend_state: str) -> dict[str, Any]:
+        if self.controller_state._state.get("post_boot_recovery") is not None:
+            return self._recover_post_boot(snapshot)
         local_state = self.status_func(self.layout)
         phase = self.controller_state.phase
 
@@ -1244,7 +1336,12 @@ class UpdateController:
         if deployment is None:
             boundary = self.controller_state._state.get("reboot_boundary")
             if boundary is not None and (not isinstance(boundary, dict) or not boundary.get("observed_boot_id")):
-                raise UpdateControllerError("Backend mangler aktiv deployment før verificeret genstart; behold recoveryjournal")
+                marker = self.controller_state._state.get("post_boot_recovery")
+                prior = self.controller_state._state.get("deployment")
+                if not (self.controller_state.phase == "rolled_back" and isinstance(marker, dict)
+                        and isinstance(prior, dict) and self._post_boot_restored(
+                            DeploymentSnapshot.from_state(prior), marker.get("previous_release_id"))):
+                    raise UpdateControllerError("Backend mangler aktiv deployment før verificeret genstart; behold recoveryjournal")
             if self.controller_state.phase != "idle":
                 self.controller_state.clear()
             return {"status": "idle", "deployment_id": None, "release_id": None}

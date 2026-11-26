@@ -77,3 +77,99 @@ def test_legacy_update_is_not_retroactively_changed(monkeypatch, tmp_path):
     s.target_release_sequence = 1248
     assert c._await_post_activation_boot(s) is True
     assert not events
+
+def test_post_boot_recovery_preparation_and_restore_preserve_high_water(monkeypatch, tmp_path):
+    import json
+    from clientflow_release import transaction as txn
+    from clientflow_release import install_coordinator
+    layout = txn.Layout(tmp_path)
+    failed = "clientflow-1.4.1-seq-1251"
+    previous = "clientflow-1.4.0-seq-1250"
+    operation, before, after = (str(uuid.uuid4()) for _ in range(3))
+    layout.releases.mkdir(parents=True)
+    layout.state_root.mkdir(parents=True)
+    boot = layout.path("/proc/sys/kernel/random/boot_id")
+    boot.parent.mkdir(parents=True)
+    boot.write_text(after)
+    installed = {}
+    for release_id in (failed, previous):
+        folder = layout.releases / release_id
+        folder.mkdir()
+        manifest = {"release_id": release_id, "release_approval": {"reference": "approval", "candidate_sha256": "b"*64},
+                    "source": {"commit": "c"*40}}
+        (folder / "release-manifest.json").write_text(json.dumps(manifest))
+        installed[release_id] = {"manifest_sha256": txn._manifest_digest(manifest), "bundle_size": 100,
+                                 "bundle_sha256": "a"*64, "release_approval_reference": "approval",
+                                 "release_candidate_sha256": "b"*64, "source_commit": "c"*40}
+    layout.active.symlink_to(layout.releases / failed)
+    state = txn._initial_state()
+    state.update(active_release_id=failed, previous_release_id=previous, highest_release_sequence=1251,
+                 installed=installed)
+    txn._append_history(state, "activated", release_id=failed, previous_release_id=previous,
+                        release_approval_reference="approval")
+    txn.save_state(layout, state)
+    calls = []
+    monkeypatch.setattr(txn, "_validate_prepared_release_tree", lambda *a: None)
+    for name in ("_disable_target", "_quiesce_runtime", "_disable_power_lifecycle_reporters",
+                 "_apply_definitions", "_systemd_prepare", "_start_target", "_enable_power_lifecycle_reporters",
+                 "_enable_target"):
+        monkeypatch.setattr(txn, name, lambda *a, name=name: calls.append(name))
+    monkeypatch.setattr(txn, "_health_check", lambda layout, release_id, **kw: calls.append(release_id))
+    args = dict(expected_failed_release_id=failed, expected_previous_release_id=previous,
+                expected_release_approval_reference="approval", expected_bundle_sha256="a"*64,
+                deployment_id=operation, requested_boot_id=before, failed_boot_id=after, layout=layout)
+    with pytest.raises(txn.TransactionError, match="installationslåsen"):
+        txn.prepare_post_boot_recovery(**args)
+    assert txn.load_state(layout)["activation_intent"] is None and not calls
+    install_coordinator.claim(owner="update_clientflow", operation_id=operation,
+                             root=layout.path("/var/lib/clientflow/install-coordinator"))
+    with pytest.raises(txn.TransactionError):
+        txn.prepare_post_boot_recovery(**dict(args, requested_boot_id=after))
+    txn.prepare_post_boot_recovery(**args)
+    first = txn.load_state(layout)
+    assert first["active_release_id"] == failed and first["activation_intent"]["post_boot_deployment_id"] == operation
+    txn.prepare_post_boot_recovery(**args)
+    assert txn.load_state(layout) == first and not calls
+    result = txn.recover_failed_update(expected_failed_release_id=failed,
+                                       expected_previous_release_id=previous,
+                                       expected_release_approval_reference="approval", layout=layout)
+    final = txn.status(layout)
+    assert result["restored_release_id"] == previous
+    assert final["active_release_id"] == final["active_symlink_release_id"] == previous
+    assert final["highest_release_sequence"] == 1251 and final["activation_intent"] is None
+    assert previous in calls
+    assert install_coordinator.snapshot(root=layout.path("/var/lib/clientflow/install-coordinator"))["operation_id"] == operation
+
+
+@pytest.mark.parametrize("restore", [True, False])
+def test_post_boot_controller_reports_only_durable_restoration(monkeypatch, tmp_path, restore):
+    c, s, boot, events = fixture(monkeypatch, tmp_path)
+    s.target_release_id = "clientflow-1.4.1-seq-1251"
+    s.target_version = "1.4.1"
+    s.target_release_sequence = 1251
+    s.release_approval_reference = "approval"
+    s.bundle_sha256 = "a"*64
+    prior = "clientflow-1.4.0-seq-1250"
+    c._await_post_activation_boot(s)
+    boot[0] = str(uuid.uuid4())
+    monkeypatch.setattr(module, "_health_check", lambda *a, **k: (_ for _ in ()).throw(module.TransactionError("unhealthy")))
+    c._fresh_active = lambda s: ("token", {"state": "health_check"})
+    c._publish_advisory_release_status = lambda s, phase: events.append(phase)
+    c.controller_state.mark_outcome = lambda outcome: events.append(outcome.state)
+    c._report_rollback = lambda s, outcome: {"status": "rolled_back"}
+    c._report_recovery_failed = lambda s: {"status": "recovery_failed"}
+    restored = [False]
+    c._post_boot_restored = lambda s, previous: restored[0]
+    monkeypatch.setattr(module, "prepare_post_boot_recovery", lambda **kw: events.append("prepare"))
+    def recover(**kwargs):
+        events.append("restore")
+        if not restore:
+            raise module.TransactionError("cannot restore")
+        restored[0] = True
+    c.recovery_func = recover
+    outcome = module.LocalActivationOutcome("succeeded", prior)
+    expected = "rolled_back" if restore else "recovery_failed"
+    assert c._report_success(s, outcome)["status"] == expected
+    assert c._recover_post_boot(s)["status"] == expected
+    assert events.count("restore") == 1 and events.count("reboot") == 1
+    assert "succeeded" not in events

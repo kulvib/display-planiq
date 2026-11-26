@@ -5,6 +5,7 @@ Status: development candidate; not an approved or published release. Active cata
 ## Acceptance scope
 
 - Permanent native Remote Desktop (WSS primary, authenticated HTTPS fallback) and Livestream HLS; physical Ubuntu reboot verification. No 20-minute installation timer; retain 10-minute idle session policy.
+- Post-boot recovery for subsequent compatible releases: bind the failed boot and original deployment to the retained installation lock; restore only the locally verified predecessor; report rollback only after its health commit. A failed or uncertain restoration retains the lock and recovery notice. The first legacy-to-1250 transition still needs separate physical acceptance.
 - Generation-bound HLS storage and manifest references; test resolution switches, visible/hidden tabs, concurrent RD/stream, bounded media retention and 100-client resource budgets.
 - Release administration: one standard release, automatic authoritative status, bulk/single client control, signed and authorized rollback, automatic audit text for ordinary updates, explicit reason for rollback.
 - Control Room and local GUI: shared update status for ClientFlow, Ubuntu and firmware, real update availability/freshness, cross-plane serialization, verified maintenance/reboot/recovery.
