@@ -107,7 +107,7 @@ class _ASGIClient:
         return await self.request("PUT", path, json_body=json_body, headers=headers)
 
 
-SIZES = (5, 10, 15)
+SIZES = (5, 10, 15, 50, 100)
 ROUNDS = 2
 DOMAINS = ("status", "display", "system")
 
@@ -376,12 +376,14 @@ async def _run_stage(app: FastAPI, engine, agents: list[Agent]) -> StageResult:
         "sql_statements": result.sql_statements,
         "select_statements": result.select_statements,
         "sql_checkouts": result.sql_checkouts,
+        "sql_statements_per_client_round": round(result.sql_statements / (result.clients * ROUNDS), 3),
+        "sql_checkouts_per_client_round": round(result.sql_checkouts / (result.clients * ROUNDS), 3),
         "elapsed_seconds": round(elapsed_s, 3),
     }, sort_keys=True))
     return result
 
 
-def test_fleet_load_5_10_15_isolated_ci_postgres(monkeypatch):
+def test_fleet_load_up_to_100_isolated_ci_postgres(monkeypatch):
     with _isolated_ci_postgres(monkeypatch) as (engine, app):
         agents = _make_agents(engine, max(SIZES))
         asyncio.run(_get_tokens(app, agents))
@@ -439,5 +441,5 @@ def test_fleet_load_5_10_15_isolated_ci_postgres(monkeypatch):
         with Session(engine) as session:
             # The synthetic fleet has its own status rows, and no real clients.
             assert session.exec(select(ClientDomainStatus)).all()
-            assert len(session.exec(select(Client)).all()) == 15
+            assert len(session.exec(select(Client)).all()) == max(SIZES)
             assert session.exec(select(ClientCommand)).all() == []

@@ -256,7 +256,39 @@ def test_duplicate_1247_build_rejected_for_new_main(tmp_path):
     with pytest.raises(ValueError, match='1248 is already approved'):
         verify('f' * 40, root=approved_1248)
     verify('c0d5a092efe0c4e8638866ad98621481d6f5d0e8', root=approved_1248)
-    verify('f' * 40)  # Newly staged 1249 is unsigned, not a 1248 duplicate.
+    # Use an independent future identity fixture, not mutable main metadata.
+    (approved_1248 / 'client/VERSION').write_text('1.4.1\n')
+    (approved_1248 / 'client/release/release-input.json').write_text(
+        '{"schema_version":1,"release_sequence":1251}'
+    )
+    verify('f' * 40, root=approved_1248)
     workflow = (ROOT / '.github/workflows/release-build.yml').read_text()
     assert 'clientflow_63d11_prevent_duplicate_build.py' in workflow
     assert '--expected-source-sha "$EXPECTED_SOURCE_SHA"' in workflow
+
+
+def test_approved_1250_cannot_be_rebuilt_or_reused_under_mismatched_identity(tmp_path):
+    from scripts.clientflow_63d11_prevent_duplicate_build import verify
+
+    fixture = tmp_path / "approved-1250"
+    (fixture / "client/release").mkdir(parents=True)
+    (fixture / "backend/service1").mkdir(parents=True)
+    version = fixture / "client/VERSION"
+    release = fixture / "client/release/release-input.json"
+    approval = fixture / "backend/service1/clientflow_pilot_1250_approval.json"
+    shutil.copy2(ROOT / "backend/service1/clientflow_pilot_1250_approval.json", approval)
+    source = json.loads(approval.read_text())["source_commit"]
+    version.write_text("1.4.0\n")
+    release.write_text('{"schema_version":1,"release_sequence":1250}')
+    verify(source, root=fixture)
+    with pytest.raises(ValueError, match="1250 is already approved"):
+        verify("f" * 40, root=fixture)
+    version.write_text("1.4.1\n")
+    with pytest.raises(ValueError, match="1250 is already approved"):
+        verify(source, root=fixture)
+    version.write_text("1.4.0\n")
+    release.write_text('{"schema_version":1,"release_sequence":1251}')
+    with pytest.raises(ValueError, match="1250 is already approved"):
+        verify(source, root=fixture)
+    version.write_text("1.4.1\n")
+    verify("f" * 40, root=fixture)  # Not an approval; only not a duplicate.
