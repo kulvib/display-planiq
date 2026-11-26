@@ -186,3 +186,35 @@ def test_livestream_runtime_wheel_exact_members(tmp_path):
         write_wheel(**{scenario: "livestream_fmp4_capture.py"})
         with pytest.raises(ValueError, match="Livestream runtime wheel"):
             builder.validate_livestream_wheel(ROOT, wheel)
+
+
+@pytest.mark.parametrize("relative", (
+    *transaction._TEMPORARY_LIVESTREAM_PATHS,
+    "/run/systemd/system/clientflow-livestream-producer.service.d/63d77-hls.conf",
+    "/run/systemd/system/clientflow-livestream-uploader.service.d/63d77-hls.conf",
+    "/etc/systemd/system/clientflow-livestream-uploader.service.d/63d77-hls.conf",
+    "/run/clientflow-63d54-operator/shadow",
+))
+def test_temporary_media_blocks_before_activation_intent_or_target_disable(tmp_path, monkeypatch, relative):
+    layout = transaction.Layout(tmp_path)
+    marker = layout.path(relative)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.symlink_to(tmp_path / "missing")
+    previous = "clientflow-1.3.47-seq-1248"
+    target = "clientflow-1.3.48-seq-1249"
+    state = {"installed": {target: {}}, "active_release_id": previous}
+    monkeypatch.setattr(transaction, "_read_active_release_id", lambda _: previous)
+    monkeypatch.setattr(transaction, "_activation_intent", lambda *a, **k: pytest.fail("intent mutated"))
+    monkeypatch.setattr(transaction, "_disable_target", lambda *a, **k: pytest.fail("target disabled"))
+    with pytest.raises(transaction.TransactionError, match="Temporary (RDP|Livestream)"):
+        transaction._activate_release(layout, state, target, "test")
+    assert marker.is_symlink()
+
+
+def test_livestream_dropin_directory_symlink_is_rejected(tmp_path):
+    layout = transaction.Layout(tmp_path)
+    folder = layout.path("/run/systemd/system/clientflow-livestream-producer.service.d")
+    folder.parent.mkdir(parents=True)
+    folder.symlink_to(tmp_path / "missing")
+    with pytest.raises(transaction.TransactionError, match="Temporary Livestream override"):
+        transaction._assert_no_temporary_livestream_override(layout)

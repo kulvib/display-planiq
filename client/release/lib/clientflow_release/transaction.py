@@ -675,6 +675,30 @@ def _assert_no_temporary_rdp_override(layout: Layout) -> None:
             raise TransactionError("Temporary RDP agent override must be rolled back before activation")
 
 
+_TEMPORARY_LIVESTREAM_PATHS = (
+    "/run/clientflow-63d77-hls",
+    "/run/clientflow-63d76-livestream",
+    "/run/clientflow-63d72f-hls",
+)
+
+
+def _assert_no_temporary_livestream_override(layout: Layout) -> None:
+    for name in _TEMPORARY_LIVESTREAM_PATHS:
+        path = layout.path(name)
+        if path.exists() or path.is_symlink():
+            raise TransactionError("Temporary Livestream source must be rolled back before activation")
+    for base in ("/run/systemd/system", "/etc/systemd/system"):
+        for unit in ("clientflow-livestream-producer.service", "clientflow-livestream-uploader.service"):
+            folder = layout.path(base + "/" + unit + ".d")
+            if folder.is_symlink() or (folder.is_dir() and any(folder.glob("63d*.conf"))):
+                raise TransactionError("Temporary Livestream override must be rolled back before activation")
+
+
+def _assert_no_temporary_media_override(layout: Layout) -> None:
+    _assert_no_temporary_rdp_override(layout)
+    _assert_no_temporary_livestream_override(layout)
+
+
 def _managed_unit_paths(layout: Layout) -> list[Path]:
     """Return release-owned ClientFlow units, never temporary bootstrap units.
 
@@ -694,7 +718,7 @@ def _managed_unit_paths(layout: Layout) -> list[Path]:
 
 
 def _remove_managed_units(layout: Layout) -> None:
-    _assert_no_temporary_rdp_override(layout)
+    _assert_no_temporary_media_override(layout)
     if _native_rdp_physical_pending(layout):
         raise TransactionError("RDP physical cleanup pending; preserve guard and watchdog")
     for path in _managed_unit_paths(layout):
@@ -922,6 +946,7 @@ def _quiesce_native_rdp(layout: Layout) -> None:
 
 
 def _quiesce_runtime(layout: Layout, *, require_target: bool = True) -> None:
+    _assert_no_temporary_livestream_override(layout)
     if layout.root != Path("/"):
         return
     _quiesce_native_rdp(layout)
@@ -1321,6 +1346,9 @@ def _activate_release(
     if current == release_id and state.get("active_release_id") == release_id and state.get("activation_intent") is None:
         return {"status": "already_active", "release_id": release_id}
 
+    # Reject temporary test layers before a durable activation intent or any
+    # target/service mutation. The updater never executes local pilot scripts.
+    _assert_no_temporary_media_override(layout)
     intent, _created = _activation_intent(
         layout,
         state,
