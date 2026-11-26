@@ -137,7 +137,7 @@ jobs:
             backend/tests/test_clientflow_operational_compatibility_gate.py \
             scripts/tests/test_clientflow_code_only_fresh_install.py
 
-      - name: Execute isolated 5 / 10 / 15 ClientFlow fleet load gate
+      - name: Execute isolated 5 / 10 / 15 / 50 / 100 ClientFlow fleet load gate
         # Uses only the disposable localhost PostgreSQL service. The test
         # creates/drops its own random schema and refuses non-CI DB URLs.
         run: python -m pytest -s -q backend/tests/test_clientflow_fleet_capacity_ci.py
