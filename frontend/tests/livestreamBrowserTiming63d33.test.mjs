@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
 import { createLivestreamBrowserTiming, createHlsReserveController, contiguousVideoBuffer, latestManifestSegment, hlsHttpTransportLabel, livestreamLatencyStatus } from "../src/pages/clientdetailspage/livestreamBrowserTiming.mjs";
 
@@ -326,7 +327,22 @@ test("63D-74 both live views use numeric presentation, no false green on unknown
   assert.doesNotMatch(detail, /title: "Stream live"/);
   assert.match(detail, /title: latencyStatus\.text/);
   assert.match(detail, /severity: latencyStatus\.severity/);
-  assert.match(wall, /state === "live" \? latencyStatus\.text/);
+  assert.match(wall, /visibleState === "live" \? latencyStatus\.text/);
+  const expression = wall.match(/const visibleState = ([^\n;]+);/)?.[1];
+  assert.ok(expression);
+  for (const [presence, state, shouldRun, expected] of [
+    ["unknown", "live", true, "unknown"],
+    ["unknown", "live", false, "unknown"],
+    ["offline", "live", true, "offline"],
+    ["online", "live", false, "paused"],
+    ["online", "live", true, "live"],
+    ["online", "error", true, "error"],
+  ]) {
+    const visibleState = runInNewContext(expression, { presence, state, shouldRun });
+    assert.equal(visibleState, expected);
+    const latency = livestreamLatencyStatus(visibleState === "live" && shouldRun ? 5.2 : null);
+    assert.equal(latency.severity, expected === "live" ? "success" : "neutral");
+  }
   assert.doesNotMatch(wall, /Number\(hlsRef\.current\?\.latency\)/);
   assert.doesNotMatch(wall, /const value = Number\(seconds\)/);
 });
