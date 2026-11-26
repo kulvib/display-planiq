@@ -1976,6 +1976,144 @@ def status(layout: Layout = Layout()) -> dict[str, Any]:
         return state
 
 
+
+def release_inventory(layout: Layout = Layout()) -> dict[str, Any]:
+    """Advisory inspection under the existing transaction lock.
+
+    No lock creation, chmod, state rewrite, service action or deletion. The
+    snapshot cannot authorize pruning: the controller, backend, and recovery
+    dependencies must independently be quiesced before any future mutation.
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Releaseinventar kræver root")
+    owner = 0 if layout.root == Path("/") else os.geteuid()
+    for directory in (layout.install_root, layout.releases, layout.state_root):
+        meta = directory.lstat()
+        if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != owner or meta.st_mode & 0o022:
+            raise TransactionError("Usikkert release- eller statekatalog")
+    fd = os.open(layout.lock_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        meta = os.fstat(fd)
+        if not stat.S_ISREG(meta.st_mode) or meta.st_uid != owner or meta.st_mode & 0o077:
+            raise TransactionError("Usikker eksisterende transaktionslås")
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        current_lock = layout.lock_file.lstat()
+        if (current_lock.st_dev, current_lock.st_ino) != (meta.st_dev, meta.st_ino):
+            raise TransactionError("Transaktionslåsen er udskiftet")
+        if not layout.state_file.is_file():
+            raise TransactionError("Releasejournal mangler")
+        state = load_state(layout)
+        installed = state["installed"]
+        if len(installed) > 128:
+            raise TransactionError("Releasejournal overskrider inventargrænsen")
+        for release_id, record in installed.items():
+            _validate_release_id(release_id)
+            if not isinstance(record, dict):
+                raise TransactionError("Ugyldig releasejournalpost")
+        active = _read_active_release_id(layout)
+        protected = {}
+        blockers = []
+
+        def protect(release_id, reason):
+            if release_id is not None:
+                _validate_release_id(release_id)
+                protected.setdefault(release_id, []).append(reason)
+
+        for key in ("active_release_id", "previous_release_id", "staged_release_id"):
+            protect(state.get(key), key)
+        protect(active, "active_symlink")
+        if active is None or active != state.get("active_release_id"):
+            blockers.append("active_state_not_confirmed")
+        if state.get("staged_release_id") is not None:
+            blockers.append("staged_release_present")
+        intent = state.get("activation_intent")
+        if intent is not None:
+            if not isinstance(intent, dict):
+                raise TransactionError("Ugyldigt activation-intent")
+            protect(intent.get("release_id"), "activation_target")
+            protect(intent.get("previous_release_id"), "activation_previous")
+            blockers.append("activation_intent_present")
+        receipts = state.get("rollback_reports", {})
+        if not isinstance(receipts, dict):
+            raise TransactionError("Ugyldig rollbackjournal")
+        for receipt in receipts.values():
+            if not isinstance(receipt, dict):
+                raise TransactionError("Ugyldig rollbackjournalpost")
+            protect(receipt.get("to_release_id"), "rollback_receipt")
+        if receipts:
+            blockers.append("rollback_receipts_require_review")
+
+        controller_path = layout.path("/var/lib/clientflow/update-controller/state.json")
+        try:
+            controller = load_secure_json(controller_path, max_bytes=1024 * 1024)
+        except (OSError, RuntimeError, ValueError):
+            controller = None
+        if not isinstance(controller, dict) or controller.get("schema_version") != 1:
+            blockers.append("controller_state_not_verified")
+        elif controller.get("phase") != "idle" or controller.get("deployment") is not None:
+            blockers.append("controller_not_idle")
+            protect(controller.get("previous_release_id"), "controller_previous")
+            deployment = controller.get("deployment")
+            if isinstance(deployment, dict):
+                protect(deployment.get("target_release_id"), "controller_target")
+
+        rows = []
+        observed = set()
+        with os.scandir(layout.releases) as entries:
+            for entry in entries:
+                if len(rows) >= 128:
+                    raise TransactionError("Releasekatalog overskrider inventargrænsen")
+                name = entry.name
+                if not _RELEASE_ID_RE.fullmatch(name):
+                    blockers.append("noncanonical_store_entry")
+                    rows.append({"release_id": None, "classification": "unrecognized", "manifest_matches_journal": False})
+                    continue
+                observed.add(name)
+                record = installed.get(name)
+                info = entry.stat(follow_symlinks=False)
+                matches = False
+                if (stat.S_ISDIR(info.st_mode) and info.st_uid == owner
+                        and not info.st_mode & 0o022 and isinstance(record, dict)):
+                    try:
+                        manifest = load_secure_json(Path(entry.path) / "release-manifest.json", forbidden_mode_bits=0o022)
+                        matches = (
+                            manifest.get("release_id") == name
+                            and manifest.get("version") == record.get("version")
+                            and manifest.get("release_sequence") == record.get("release_sequence")
+                            and _manifest_digest(manifest) == record.get("manifest_sha256")
+                        )
+                    except (OSError, RuntimeError, ValueError):
+                        matches = False
+                if not matches:
+                    blockers.append("unverified_release_directory")
+                rows.append({
+                    "release_id": name,
+                    "classification": "protected" if name in protected else "review_only" if matches else "unverified",
+                    "manifest_matches_journal": matches,
+                    "protection_reasons": protected.get(name, []),
+                })
+        if set(installed) - observed or set(protected) - observed:
+            blockers.append("journal_or_protected_release_missing")
+        rows.sort(key=lambda row: row["release_id"] or "")
+        return {
+            "mode": "read_only_local_inventory",
+            "active_release_id": active,
+            "previous_release_id": state.get("previous_release_id"),
+            "staged_release_id": state.get("staged_release_id"),
+            "registered_count": len(installed),
+            "directory_count": len(rows),
+            "releases": rows,
+            "blockers": sorted(set(blockers)),
+            "full_payload_integrity_verified": False,
+            "backend_dependency_review_required": True,
+            "physical_reboot_recovery_acceptance_required": True,
+            "deletion_authorized": False,
+            "automatic_cleanup_enabled": False,
+        }
+    finally:
+        os.close(fd)
+
+
 def install_stable_updater_host(
     release_id: str,
     *,

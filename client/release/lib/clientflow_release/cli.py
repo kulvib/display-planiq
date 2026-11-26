@@ -53,6 +53,7 @@ from .transaction import (
     install_staged_definitions,
     rollback_release,
     recover_failed_update,
+    release_inventory,
     stage_bundle,
     status,
 )
@@ -1361,6 +1362,7 @@ def transaction_main(argv: list[str] | None = None) -> int:
     recover.add_argument("--expected-previous-release-id", required=True)
     recover.add_argument("--expected-release-approval-reference", required=True)
     sub.add_parser("promote-rollback-host")
+    sub.add_parser("release-inventory")
     sub.add_parser("status")
     args = parser.parse_args(argv)
     if args.operation == "stage":
@@ -1385,6 +1387,9 @@ def transaction_main(argv: list[str] | None = None) -> int:
             reason=args.reason,
             permit_file=args.permit_file,
         )
+    elif args.operation == "release-inventory":
+        _require_root(Layout())
+        result = release_inventory()
     elif args.operation == "promote-rollback-host":
         _require_root(Layout())
         from .transaction import promote_durable_rollback_host

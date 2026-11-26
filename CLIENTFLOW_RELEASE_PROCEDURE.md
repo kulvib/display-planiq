@@ -395,3 +395,32 @@ python -m pytest -q \
 ```
 
 A release/install change is not accepted as physically validated until the relevant Ubuntu installation/update and frozen-domain regressions have been run.
+
+
+## 1.4.0 / 1250 baseline transition (staged, not approved by this document)
+
+The new source identity is separate from the active release catalog. Until the
+1250 bytes are reproducibly built, approved, published and physically tested,
+the old approved catalog and its recovery dependencies remain intact.
+
+The retirement review is deliberately split into independent inventories:
+
+- `scripts/audit_clientflow_140_retirement.py`: read-only central Render
+  PostgreSQL and artifact-store dependency review after baseline acceptance.
+- `clientflow-release-transaction release-inventory`: explicit local root
+  inspection, using the existing transaction lock. It distinguishes protected
+  release directories from review-only entries and flags journal mismatches.
+  It does not verify every payload byte, report a deployment outcome, mutate
+  the journal, remove a directory or authorize deletion.
+
+A successful snapshot is not permission to prune. Preserve the active,
+previous and staged releases, unresolved controller transactions and recovery
+evidence until the relevant installation and reboot have been accepted.
+Never lower the persisted highest release sequence during cleanup.
+Manual signed downgrade remains disabled for this first 1.4 baseline.
+
+Historical source-freeze reports, changed-file lists, approval evidence and
+test fixtures are historical records, not current installation instructions.
+Consolidate operational instructions here and retain version-specific evidence
+until source/test references and release provenance have been checked. Do not
+remove files merely because their names contain an older version.
