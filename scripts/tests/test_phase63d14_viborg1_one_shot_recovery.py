@@ -185,6 +185,11 @@ def test_real_original_controller_source_with_reviewed_transaction(tmp_path):
     data = FIXED_CONTROLLER.read_text().replace('                expected_update_deployment_id=snapshot.deployment_id,\n', '', 1)
     assert hashlib.sha256(data.encode()).hexdigest() == runner.SHA256_OLD_CONTROLLER
     p.write_text(data)
+    # The historic source is stored as data, not an importable module in the
+    # repository. Reproduce the production recovery loader's .py input.
+    fixed_path = tmp_path / 'transaction.py'
+    fixed_path.write_bytes(FIXED_TRANSACTION.read_bytes())
+    assert hashlib.sha256(fixed_path.read_bytes()).hexdigest() == runner.SHA256_FIXED_TRANSACTION
     code = r'''
 from pathlib import Path
 import sys
@@ -192,13 +197,13 @@ repo=Path(sys.argv[1]); path=Path(sys.argv[2])
 sys.path.insert(0,str(repo/'backend'))
 from scripts.phase63d14_viborg1_one_shot_recovery import load_fixed_transaction, SHA256_OLD_CONTROLLER
 import hashlib
-fixed, old=load_fixed_transaction(repo/'scripts/tests/fixtures/63d14-fixed-transaction.txt',path.parent.parent)
+fixed, old=load_fixed_transaction(Path(sys.argv[3]),path.parent.parent)
 assert old.TransactionError is fixed.TransactionError
 assert old.Layout is fixed.Layout
 assert hashlib.sha256(Path(old.__file__).read_bytes()).hexdigest()==SHA256_OLD_CONTROLLER
 assert 'expected_update_deployment_id' not in old.UpdateController._activate_or_reconcile.__code__.co_varnames
 print('HISTORIC_CONTROLLER_OVERLAY=PASS')
 '''
-    result = subprocess.run([sys.executable, '-c', code, str(ROOT), str(p)], cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run([sys.executable, '-c', code, str(ROOT), str(p), str(fixed_path)], cwd=ROOT, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert 'HISTORIC_CONTROLLER_OVERLAY=PASS' in result.stdout
