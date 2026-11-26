@@ -41,17 +41,11 @@ try {
   process.exit(2);
 }
 if (evaluation.accepted.length) {
-  console.warn("Midlertidig dev-only picomatch-undtagelse og arvede meta-advisories:");
+  console.warn("Midlertidige dev-only-undtagelser og arvede meta-advisories:");
   for (const name of evaluation.accepted) console.warn(`- ${name}`);
   for (const name of evaluation.exceptionsUsed) {
     const entry = allowlist.exceptions.find((item) => item.package === name);
     console.warn(`  Kun ${name}@${entry.lockedVersion} / ${entry.advisories.join(", ")} (udløber ${entry.expires})`);
-  }
-}
-if (evaluation.dormantExceptions.length) {
-  for (const name of evaluation.dormantExceptions) {
-    const entry = allowlist.exceptions.find((item) => item.package === name);
-    console.warn(`Kendt, endnu ikke rettet GHSA for ${name}@${entry.lockedVersion} rapporteres ikke af npm audit; dev-only undtagelsen overvåges indtil ${entry.expires}.`);
   }
 }
 if (evaluation.unexpected.length) {
@@ -61,4 +55,4 @@ if (evaluation.unexpected.length) {
   }
   process.exit(1);
 }
-console.log(`Frontend dependency-audit bestået (${evaluation.total} rapporterede advisories, ${evaluation.exceptionsUsed.length} anvendte og ${evaluation.dormantExceptions.length} overvågede dev-only-undtagelser).`);
+console.log(`Frontend dependency-audit bestået (${evaluation.total} rapporterede advisories, ${evaluation.exceptionsUsed.length} anvendte dev-only-undtagelser).`);

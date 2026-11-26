@@ -1,12 +1,3 @@
 {
-  "exceptions": [
-    {
-      "package": "picomatch",
-      "lockedVersion": "4.0.5",
-      "advisories": ["GHSA-fc5q-39xc-vjpf"],
-      "expires": "2026-11-25",
-      "scope": "dev-only",
-      "replacementPlan": "Fjern undtagelsen og regenerér npm package-lock, når picomatch udgiver en patchet version. Opdater samtidig Vite-kæden og verificér npm audit, lock-integritet, CI og bundletests. Ingen runtime- eller produktionsundtagelse."
-    }
-  ]
+  "exceptions": []
 }
