@@ -32,6 +32,7 @@ export default function OperationalIncidents() {
   const [clientId, setClientId] = useState("");
   const [page, setPage] = useState(0);
   const [result, setResult] = useState({ items: [], total: 0 });
+  const [resultVerified, setResultVerified] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -44,18 +45,26 @@ export default function OperationalIncidents() {
 
   const reload = useCallback(() => setRefreshKey((key) => key + 1), []);
   useEffect(() => {
-    const timer = window.setInterval(reload, 60_000);
-    return () => window.clearInterval(timer);
+    const refreshVisible = () => {
+      if (document.visibilityState !== "hidden") reload();
+    };
+    const timer = window.setInterval(refreshVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshVisible);
+      window.clearInterval(timer);
+    };
   }, [reload]);
 
   useEffect(() => {
     const abort = new AbortController();
     setLoading(true);
+    setResultVerified(false);
     const params = new URLSearchParams({ status, limit: "50", offset: String(page * 50) });
     if (severity) params.set("severity", severity);
     if (/^[1-9]\d*$/.test(clientId.trim())) params.set("client_id", clientId.trim());
     client.get(`/api/superadmin/operational-incidents?${params}`, { signal: abort.signal, headers: { "Cache-Control": "no-cache" } })
-      .then(({ data }) => { if (!abort.signal.aborted) { setResult(data); setError(""); } })
+      .then(({ data }) => { if (!abort.signal.aborted) { setResult(data); setResultVerified(true); setError(""); } })
       .catch((err) => { if (!abort.signal.aborted) setError(err.response?.data?.detail || "Fejlhistorikken kunne ikke hentes."); })
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
@@ -150,7 +159,7 @@ export default function OperationalIncidents() {
       {detailsError && <Alert severity="warning">{detailsError}</Alert>}
       <Paper sx={paper}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1.5}>
-          <Typography fontWeight={800}>Fejlforløb ({result.total ?? 0})</Typography>
+          <Typography fontWeight={800}>Fejlforløb {resultVerified ? `(${result.total ?? 0})` : "· status ikke verificeret"}</Typography>
           {loading && <CircularProgress size={18} aria-label="Henter fejlhistorik" />}
         </Stack>
         <TableContainer sx={{ overflowX: "auto" }}>
@@ -164,7 +173,7 @@ export default function OperationalIncidents() {
               <TableCell>Historik</TableCell>
             </TableRow></TableHead>
             <TableBody>
-              {result.items?.map((row) => (
+              {resultVerified && result.items?.map((row) => (
                 <React.Fragment key={row.id}>
                   <TableRow>
                     <TableCell>{row.client_name} (#{row.client_id})<Typography variant="caption" display="block" sx={{ color: "#cbd5e1" }}>{row.organization_name || "Ingen organisation"}</Typography></TableCell>
@@ -185,7 +194,7 @@ export default function OperationalIncidents() {
                   </TableCell></TableRow>}
                 </React.Fragment>
               ))}
-              {!loading && !result.items?.length && <TableRow><TableCell colSpan={6}>Ingen registrerede fejlforløb med disse filtre. Historikken starter ved aktivering af denne funktion.</TableCell></TableRow>}
+              {!loading && resultVerified && !result.items?.length && <TableRow><TableCell colSpan={6}>Ingen registrerede fejlforløb med disse filtre. Historikken starter ved aktivering af denne funktion.</TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>
@@ -205,13 +214,13 @@ export default function OperationalIncidents() {
         <TableContainer><Table size="small" aria-label="Opdaterings- og rollbackhistorik">
           <TableHead><TableRow><TableCell>Klient</TableCell><TableCell>Handling</TableCell><TableCell>Resultat</TableCell><TableCell>Modtaget</TableCell></TableRow></TableHead>
           <TableBody>
-            {operations.map((row) => <TableRow key={`${row.category}:${row.id}`}>
+            {!operationError && operations.map((row) => <TableRow key={`${row.category}:${row.id}`}>
               <TableCell>{row.client_name} (#{row.client_id})</TableCell>
               <TableCell>{row.category === "signed_rollback" ? "Signeret rollback" : "ClientFlow-opdatering"}</TableCell>
               <TableCell><Chip size="small" color={row.outcome === "succeeded" ? "success" : row.outcome === "rolled_back" ? "warning" : "error"} label={row.outcome === "succeeded" ? "Gennemført" : row.outcome === "rolled_back" ? "Tilbageført" : "Fejl"} /></TableCell>
               <TableCell>{dateText(row.occurred_at)}</TableCell>
             </TableRow>)}
-            {!operations.length && <TableRow><TableCell colSpan={4}>Ingen afsluttede handlinger i de seneste 90 dage.</TableCell></TableRow>}
+            {!operationError && !operations.length && <TableRow><TableCell colSpan={4}>Ingen afsluttede handlinger i de seneste 90 dage.</TableCell></TableRow>}
           </TableBody>
         </Table></TableContainer>
       </Paper>

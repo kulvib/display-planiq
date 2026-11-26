@@ -332,8 +332,7 @@ export default function ClientFlowReleaseAdministration() {
           <Paper elevation={0} sx={panelSx}>
             <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              Seneste 20 registrerede deployments – adskilt fra de inaktive planer.
-              Status følger backendens faktiske hændelser. Ingen kunstig downloadprocent.
+              Aktive opdateringer og de seneste registrerede afsluttede forløb.
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }} aria-live="polite">
               {liveStatus === "active" ? "Automatisk status aktiv" : liveStatus === "paused" ? "Automatisk status midlertidigt sat på pause" : liveStatus === "connecting" ? "Opretter live status …" : "Automatisk status afbrudt – Opdater kan bruges manuelt"}

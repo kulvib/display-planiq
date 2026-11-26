@@ -688,11 +688,12 @@ export async function getMyClients() {
 }
 
 
-export async function getControlRoomClients() {
+export async function getControlRoomClients({ signal } = {}) {
   const res = await apiFetch(`${apiUrl}/api/clients/control-room-summary`, {
     headers: authHeaders(),
     credentials: "include",
     cache: "no-store",
+    signal,
   });
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
   if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente Control Room-klienter"));
@@ -1502,7 +1503,7 @@ export async function getClientflowReleases() {
   return readJsonResponse(res);
 }
 
-export async function getClientflowDeployments(clientId, { limit = null } = {}) {
+export async function getClientflowDeployments(clientId, { limit = null, signal } = {}) {
   const params = new URLSearchParams();
   if (Number.isInteger(limit) && limit > 0) params.set("limit", String(limit));
   const query = params.toString();
@@ -1510,6 +1511,8 @@ export async function getClientflowDeployments(clientId, { limit = null } = {}) 
   const res = await apiFetch(`${apiUrl}/api/clients/${encodeURIComponent(clientId)}/clientflow-deployments${suffix}`, {
     headers: authHeaders(),
     credentials: "include",
+    cache: "no-store",
+    signal,
   });
   if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
   if (!res.ok) throw new Error(await extractError(res, "Kunne ikke hente ClientFlow-deployments"));

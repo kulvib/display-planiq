@@ -677,11 +677,11 @@ export default function LivestreamOverview() {
 
   const load = useCallback(async () => {
     if (!inventoryActive.current || inventoryRequest.current) return;
-    const request = {};
+    const request = new AbortController();
     inventoryRequest.current = request;
     setLoading(true);
     try {
-      const data = await getControlRoomClients();
+      const data = await getControlRoomClients({ signal: request.signal });
       if (!inventoryActive.current || inventoryRequest.current !== request) return;
       if (!Array.isArray(data)) throw new Error("Klientoversigten kunne ikke verificeres");
       setClients(data.filter((client) => String(client.status || "").toLowerCase() === "approved"));
@@ -714,12 +714,16 @@ export default function LivestreamOverview() {
   useEffect(() => {
     inventoryActive.current = true;
     void load();
-    const timer = window.setInterval(() => {
+    const refreshVisible = () => {
       if (document.visibilityState !== "hidden") void load();
-    }, 60_000);
+    };
+    const timer = window.setInterval(refreshVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshVisible);
     return () => {
       inventoryActive.current = false;
+      inventoryRequest.current?.abort();
       inventoryRequest.current = null;
+      document.removeEventListener("visibilitychange", refreshVisible);
       window.clearInterval(timer);
     };
   }, [load]);
@@ -779,7 +783,7 @@ export default function LivestreamOverview() {
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 950 }}>Livestream oversigt</Typography>
               <Typography variant="body2" color="text.secondary">
-                Synlige previews aktiveres efter behov. Flere brugere kan se samme klient samtidig uden ekstra klient-producer.
+                Viser godkendte klienter og deres aktuelle livestream. Previews aktiveres efter behov.
               </Typography>
             </Box>
           </Stack>
@@ -838,7 +842,7 @@ export default function LivestreamOverview() {
       {loading && sortedClients.length === 0 ? (
         <Stack sx={{ minHeight: 240, alignItems: "center", justifyContent: "center" }}><CircularProgress /></Stack>
       ) : sortedClients.length === 0 ? (
-        <Alert severity="info">Ingen godkendte klienter matcher søgningen.</Alert>
+        <Alert severity={inventoryValid ? "info" : "warning"}>{inventoryValid ? "Ingen godkendte klienter matcher søgningen." : "Klientoversigten er ikke verificeret."}</Alert>
       ) : (
         <Box
           sx={{
