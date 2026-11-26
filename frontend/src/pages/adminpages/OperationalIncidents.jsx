@@ -69,7 +69,11 @@ export default function OperationalIncidents() {
     if (severity) params.set("severity", severity);
     if (/^[1-9]\d*$/.test(clientId.trim())) params.set("client_id", clientId.trim());
     client.get(`/api/superadmin/operational-incidents?${params}`, { signal: abort.signal, headers: { "Cache-Control": "no-cache" } })
-      .then(({ data }) => { if (!abort.signal.aborted) { setResult(data); setResultVerified(true); setError(""); } })
+      .then(({ data }) => {
+        if (abort.signal.aborted) return;
+        if (!Array.isArray(data?.items) || !Number.isSafeInteger(data.total) || data.total < data.items.length || data.items.length > 50) throw new Error("Ugyldig fejloversigt");
+        setResult(data); setResultVerified(true); setError("");
+      })
       .catch((err) => { if (!abort.signal.aborted) setError(err.response?.data?.detail || "Fejlhistorikken kunne ikke hentes."); })
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();

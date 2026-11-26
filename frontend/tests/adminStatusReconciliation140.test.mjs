@@ -34,3 +34,25 @@ test("Control Room consumes release wakeups and reconciles externally ordered up
   assert.match(detail, /request.signal.aborted \|\| deploymentRefreshInFlightRef.current !== request/);
   assert.match(detail, /deploymentRefreshInFlightRef.current\?\.abort\(\)/);
 });
+
+
+test("organization writes require verified organization-season data and a current deletion preview", () => {
+  const org = read("pages/adminpages/OrganizationAdministration.jsx");
+  assert.match(org, /verifiedSeasonTimes\(timesResult\.value, org\.id, season\)/);
+  assert.match(org, /timesScope\.season === selectedSeason/);
+  assert.match(org, /if \(!timesVerified \|\| timesLoading \|\| timesBusy/);
+  assert.match(org, /verifiedDeleteId !== organizationToDelete\.id/);
+  assert.match(org, /request !== deleteRead\.current/);
+  assert.match(org, /Klientlisten er ikke verificeret\. Sletning er spærret/);
+  assert.match(org, /også i papirkurven/);
+});
+test("failed administrative reads cannot be presented as empty verified lists", () => {
+  const tokens = read("pages/adminpages/EnrollmentTokensPage.jsx");
+  const audit = read("pages/adminpages/AuditLog.jsx");
+  assert.match(tokens, /setTokensVerified\(false\)/);
+  assert.match(tokens, /if \(!Array\.isArray\(data\)\) throw/);
+  assert.match(tokens, /\{tokensVerified && <>/);
+  assert.match(audit, /if \(controller\.signal\.aborted\) return/);
+  assert.match(audit, /!loading && !error && visibleLogs\.length === 0/);
+  assert.match(incidents, /!Number\.isSafeInteger\(data\.total\)/);
+});
