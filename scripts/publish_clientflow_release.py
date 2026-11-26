@@ -135,8 +135,9 @@ def publish(
     authorized_1243_transition: bool = False,
     authorized_1244_reset: bool = False,
     authorized_1248_viborg1_fourth: bool = False,
+    authorized_1250_baseline_storage: bool = False,
 ) -> tuple[Path, int, str]:
-    if sum((authorized_1243_transition, authorized_1244_reset, authorized_1248_viborg1_fourth)) > 1:
+    if sum((authorized_1243_transition, authorized_1244_reset, authorized_1248_viborg1_fourth, authorized_1250_baseline_storage)) > 1:
         raise RuntimeError("Simultaneous release-store exceptions are forbidden")
     expected_bundle_sha256 = str(expected_bundle_sha256 or "").strip().lower()
     expected_approval_reference = str(expected_approval_reference or "").strip()
@@ -171,6 +172,10 @@ def publish(
             raise RuntimeError("Approved bundle matcher ikke den forventede approval-reference")
         if str(source.get("commit") or "").lower() != expected_source_commit:
             raise RuntimeError("Approved bundle matcher ikke det forventede source commit")
+        if authorized_1250_baseline_storage:
+            from scripts.clientflow_1250_storage_transition import require_provenance
+            require_provenance(manifest, size, digest)
+
         if authorized_1244_reset:
             from scripts.clientflow_1244_transition_policy import (
                 APPROVAL_REFERENCE, APPROVED_SHA256, APPROVED_SIZE, RELEASE_ID, SOURCE_COMMIT,
@@ -196,6 +201,9 @@ def publish(
             else:
                 if (existing_size, existing_digest) != (size, digest):
                     raise RuntimeError("Artifact-ID er allerede publiceret med andre bytes")
+                if authorized_1250_baseline_storage:
+                    verify_publication(artifact_dir, release_id=str(manifest["release_id"]),
+                                       size_bytes=size, sha256=digest, authorized_1250_baseline_storage=True)
                 return artifact_dir / destination_name, size, digest
 
             # The preflight independently authenticates existing approved
@@ -216,6 +224,7 @@ def publish(
                     authorized_1243_transition=authorized_1243_transition,
                     authorized_1244_reset=authorized_1244_reset,
                     authorized_1248_viborg1_fourth=authorized_1248_viborg1_fourth,
+                    authorized_1250_baseline_storage=authorized_1250_baseline_storage,
                 )
                 # Disk can change between audit and copy; re-check the pinned
                 # directory descriptor (not a separately resolved pathname).
@@ -300,10 +309,15 @@ def main(argv: list[str] | None = None) -> int:
         "--authorize-1248-viborg1-fourth-storage-only", action="store_true",
         help="One-time signed 1248 TAR storage with exact 1245/1246/1247 predecessors; NOT a deployment grant",
     )
+    parser.add_argument(
+        "--authorize-1250-baseline-storage-only", action="store_true",
+        help="Exact 1245/1246/1247/1248 to approved 1250 storage transition only",
+    )
     args = parser.parse_args(argv)
     if sum((args.authorize_1243_five_release_transition,
             args.authorize_1244_one_version_reset,
-            args.authorize_1248_viborg1_fourth_storage_only)) > 1:
+            args.authorize_1248_viborg1_fourth_storage_only,
+            args.authorize_1250_baseline_storage_only)) > 1:
         raise SystemExit("Cannot combine release-store transition flags")
     if not args.publish_release:
         raise SystemExit("Artifact-publicering kræver --publish-release")
@@ -316,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         authorized_1243_transition=args.authorize_1243_five_release_transition,
         authorized_1244_reset=args.authorize_1244_one_version_reset,
         authorized_1248_viborg1_fourth=args.authorize_1248_viborg1_fourth_storage_only,
+        authorized_1250_baseline_storage=args.authorize_1250_baseline_storage_only,
     )
     try:
         verified = verify_publication(
@@ -326,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
             authorized_1243_transition=args.authorize_1243_five_release_transition,
             authorized_1244_reset=args.authorize_1244_one_version_reset,
         authorized_1248_viborg1_fourth=args.authorize_1248_viborg1_fourth_storage_only,
+        authorized_1250_baseline_storage=args.authorize_1250_baseline_storage_only,
         )
     except (StoreAuditError, RuntimeError) as exc:
         print(f"RELEASE_STORE_POSTFLIGHT=FAIL: {exc}", file=sys.stderr)
@@ -334,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"BUNDLE_SIZE={size}")
     print(f"BUNDLE_SHA256={digest}")
     print("RELEASE_STORE_POSTFLIGHT=PASS")
+    if args.authorize_1250_baseline_storage_only:
+        print("CLIENTFLOW_1250_FIFTH_STORE=VERIFIED_TEMPORARY_NO_DEPLOYMENT_GRANT")
+        print("CLIENTFLOW_THREE_RELEASE_RETENTION_READY=NO")
     if args.authorize_1248_viborg1_fourth_storage_only:
         print("CLIENTFLOW_1248_FOURTH_STORE=VERIFIED_TEMPORARY_NO_DEPLOYMENT_GRANT")
         print("CLIENTFLOW_THREE_RELEASE_RETENTION_READY=NO")

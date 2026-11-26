@@ -111,3 +111,31 @@ def test_candidate_does_not_open_legacy_or_fresh_install_gates(monkeypatch, tmp_
         assert exc.value.status_code == 503
     finally:
         releases.load_catalog.cache_clear()
+
+
+def test_1250_source_pin_matches_archived_approved_bytes(monkeypatch, tmp_path):
+    from service1 import clientflow_pilot_1250 as pilot
+    approval = pilot.approval_lock_1250()
+    assert approval["source_commit"] == "6d7e16c4cf6857c50cdd6d88899ef988e2e739a5"
+    assert approval["approval_run_id"] == 45867523387
+    assert approval["approved_bundle_sha256"] == "cf4a3077975b9740ef7d1e34a58731a83f2f4b1e43f4ab0f2fad54772e35b446"
+    assert approval["approved_bundle_size"] == 223897600
+    assert approval["candidate_sha256"] == "681c43bc8e07822a3a4d340d73f9566b9a9df717f66e36801b99ef1e8bf668ff"
+    assert approval["installer_sha256"] == "66bfe26c1e7c0face7572e9e6c7f3f8eec152d96d800e43dcd96b2bc081b9bee"
+    artifact = {"target_release_id": approval["release_id"],
+                "bundle_sha256": approval["approved_bundle_sha256"],
+                "bundle_size": approval["approved_bundle_size"],
+                "release_approval_reference": approval["approval_reference"],
+                "release_candidate_sha256": approval["candidate_sha256"],
+                "source_commit": approval["source_commit"]}
+    pilot.match_approved_artifact(approval, artifact)
+    for key in artifact:
+        changed = dict(artifact)
+        changed[key] = None
+        with pytest.raises(pilot.Pilot1250Denied):
+            pilot.match_approved_artifact(approval, changed)
+    path = tmp_path / "approval.json"
+    path.write_bytes(pilot.APPROVAL_PATH.read_bytes() + b" ")
+    monkeypatch.setattr(pilot, "APPROVAL_PATH", path)
+    with pytest.raises(pilot.Pilot1250Denied):
+        pilot.approval_lock_1250()

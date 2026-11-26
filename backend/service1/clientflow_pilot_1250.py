@@ -1,7 +1,7 @@
 """Source-reviewed approval pin and exact closed pre-cutover 1250 pilot policy.
 
-A successful build is not approval. The pin remains None until a separate
-reviewed post-build commit records the real approved archive metadata.
+A successful build is not approval. The separate post-build pin records
+verified archive metadata; it never opens fleet or fresh-install admission.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .clientflow_pilot_1248_db_authorization import CONFLICTING_FLAGS
 from .clientflow_standard_release import BASELINE_ID, BASELINE_VERSION, BASELINE_SEQUENCE
 
 APPROVAL_PATH = Path(__file__).with_name("clientflow_pilot_1250_approval.json")
-EXPECTED_APPROVAL_SHA256 = None
+EXPECTED_APPROVAL_SHA256 = "fc851982c39de0b7f92b9274f822b70bf61ca014bcbd88e62d7570a08d58f334"
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
 _COMMIT = re.compile(r"[a-f0-9]{40}\Z")
 _OLD_ID = "clientflow-1.3.44-seq-1245"
