@@ -1564,6 +1564,11 @@ def create_control_room_realtime_capability(
     return issue_ui_realtime_capability(user, client_id=client_id)
 
 
+@router.post("/clients/release-administration-realtime/capability")
+def create_release_admin_realtime_capability(user=Depends(get_current_superadmin_user)):
+    return issue_ui_realtime_capability(user, release_admin=True)
+
+
 @router.get("/clients/control-room-realtime/wait")
 def wait_control_room_realtime(
     after: int = Query(default=0, ge=0),

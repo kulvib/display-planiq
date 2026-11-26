@@ -42,6 +42,7 @@ from ..client_domain_models import ClientDomainCredential, ClientDomainStatus
 from ..clientflow_update_models import ClientFlowDeployment
 from ..models import Client, Organization, User
 from ..rate_limit import assert_key_not_limited, clear_key_rate_limit, record_key_attempt
+from ..realtime_wakeup import queue_release_admin_wakeup
 
 router = APIRouter(prefix="/clientflow/release-administration", tags=["clientflow-release-administration"])
 _BUNDLE_SHA256 = "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
@@ -486,6 +487,7 @@ def create_rollout_draft(
             "phase": "inert_draft_only",
         },
     )
+    queue_release_admin_wakeup(session)
     session.commit()
     return _wave_json(wave, payload.client_ids)
 
@@ -549,6 +551,7 @@ def review_rollout_plan(
     wave.approved_by_user_id = int(user.id)
     wave.revision += 1
     _plan_audit(session, request, user, wave, "clientflow_rollout_plan_reviewed", targets)
+    queue_release_admin_wakeup(session)
     session.commit()
     return {"id": wave.id, "state": wave.state, "revision": wave.revision,
             "reviewed_for_planning": True, "deployment_authorized": False}
@@ -569,6 +572,7 @@ def pause_rollout_plan(
     wave.state = "paused"
     wave.revision += 1
     _plan_audit(session, request, user, wave, "clientflow_rollout_plan_paused", targets)
+    queue_release_admin_wakeup(session)
     session.commit()
     return {"id": wave.id, "state": "paused", "revision": wave.revision, "deployment_authorized": False}
 
@@ -592,6 +596,7 @@ def resume_rollout_plan(
     wave.state = "draft"  # NEVER approved: this is still an inert reviewed plan.
     wave.revision += 1
     _plan_audit(session, request, user, wave, "clientflow_rollout_plan_resumed", targets)
+    queue_release_admin_wakeup(session)
     session.commit()
     return {"id": wave.id, "state": "draft", "revision": wave.revision,
             "reviewed_for_planning": True, "deployment_authorized": False}
@@ -614,6 +619,7 @@ def cancel_rollout_draft(
     for target in targets:
         target.state = "revoked"
     _plan_audit(session, request, user, wave, "clientflow_rollout_draft_cancelled", targets)
+    queue_release_admin_wakeup(session)
     session.commit()
     return {"id": wave.id, "state": "cancelled", "revision": wave.revision,
             "deployment_authorized": False}

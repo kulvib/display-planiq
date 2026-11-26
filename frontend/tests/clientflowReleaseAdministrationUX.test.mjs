@@ -111,3 +111,15 @@ test("63D readiness gate cannot be converted into implicit deployment permission
   assert.match(fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8"),
     /Release readiness – obligatoriske gates/);
 });
+
+
+test("release administration automatically reconciles actual events without interval polling", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
+  assert.match(ui, /createReleaseAdministrationRealtimeCapability\(signal\)/);
+  assert.match(ui, /waitForControlRoomRealtime\(capability, generation, 25, signal\)/);
+  assert.match(ui, /createRealtimeRequestScope\(getAuthSessionSignal\(\)\)/);
+  assert.match(ui, /if \(submitting \|\| intent\)/);
+  assert.match(ui, /document\.visibilityState === "hidden"/);
+  assert.match(ui, /Automatisk status aktiv/);
+  assert.doesNotMatch(ui, /setInterval\(|Brug Opdater øverst/);
+});

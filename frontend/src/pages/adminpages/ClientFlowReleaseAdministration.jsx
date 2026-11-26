@@ -5,6 +5,8 @@ import {
   Stack, TextField, Typography,
 } from "@mui/material";
 import client from "../../api/client";
+import { assertActiveAuthSession, getAuthSessionSignal, createReleaseAdministrationRealtimeCapability, waitForControlRoomRealtime } from "../../api";
+import { createRealtimeRequestScope, realtimeRetryDelayMs, waitForRealtimeRetry } from "../../utils/controlRoomRealtimeLifecycle.mjs";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 import ClientFlowPilot1246Panel from "./ClientFlowPilot1246Panel";
 import ClientFlowPilot1247Panel from "./ClientFlowPilot1247Panel";
@@ -55,10 +57,15 @@ export default function ClientFlowReleaseAdministration() {
   const [password, setPassword] = React.useState("");
   const [dialogError, setDialogError] = React.useState("");
   const controllerRef = React.useRef(null);
+  const [liveStatus, setLiveStatus] = React.useState("connecting");
 
   const refresh = React.useCallback(async () => {
     controllerRef.current?.abort();
     const controller = new AbortController();
+    const authSignal = getAuthSessionSignal();
+    if (authSignal?.aborted) return;
+    const onLogout = () => controller.abort();
+    authSignal?.addEventListener("abort", onLogout, { once: true });
     controllerRef.current = controller;
     setLoading(true);
     try {
@@ -77,14 +84,92 @@ export default function ClientFlowReleaseAdministration() {
       setStatus(null); // Any unavailable or unexpected policy is a HARD STOP.
       setError(err?.message || "Releaseadministrationen kunne ikke hentes");
     } finally {
+      authSignal?.removeEventListener("abort", onLogout);
       if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
 
   React.useEffect(() => {
-    void refresh();
-    return () => controllerRef.current?.abort();
-  }, [refresh]);
+    // Freeze the reviewed selection/revision while a confirmation is open.
+    // The existing server-side revision check remains authoritative.
+    if (submitting || intent) {
+      setLiveStatus("paused");
+      return undefined;
+    }
+    let scope = null;
+    const stop = () => {
+      scope?.cancel();
+      scope = null;
+      controllerRef.current?.abort();
+    };
+    const start = () => {
+      stop();
+      if (document.visibilityState === "hidden") {
+        setLiveStatus("paused");
+        return;
+      }
+      const currentScope = createRealtimeRequestScope(getAuthSessionSignal());
+      scope = currentScope;
+      const { signal } = currentScope;
+      const run = async () => {
+        let capability = null;
+        let generation = 0;
+        let failures = 0;
+        let attemptedSnapshot = false;
+        setLiveStatus("connecting");
+        while (!signal.aborted) {
+          try {
+            assertActiveAuthSession(signal);
+            if (!capability) {
+              const issued = await createReleaseAdministrationRealtimeCapability(signal);
+              if (signal.aborted) break;
+              capability = issued?.capability;
+              generation = Number(issued?.generation);
+              if (!capability || !Number.isSafeInteger(generation) || generation < 0) {
+                throw new Error("Release-realtime-capability mangler");
+              }
+              attemptedSnapshot = true;
+              await refresh();
+              if (signal.aborted) break;
+              setLiveStatus("active");
+            }
+            const result = await waitForControlRoomRealtime(capability, generation, 25, signal);
+            if (signal.aborted) break;
+            const next = Number(result?.generation);
+            if (!Number.isSafeInteger(next) || next < 0) throw new Error("Ugyldig release-realtime-status");
+            if (next < generation) {
+              capability = null; // process restart; re-subscribe and resync
+              continue;
+            }
+            failures = 0;
+            if (result?.changed === true || next > generation) {
+              generation = next;
+              if (!await waitForRealtimeRetry(750, signal)) break;
+              await refresh();
+            }
+          } catch (error) {
+            capability = null;
+            if (signal.aborted || error?.name === "AbortError") break;
+            setLiveStatus("unavailable");
+            if (!attemptedSnapshot) {
+              attemptedSnapshot = true;
+              await refresh();
+            }
+            if (error?.status === 403 || signal.aborted) break;
+            failures += 1;
+            await waitForRealtimeRetry(realtimeRetryDelayMs(failures, error), signal);
+          }
+        }
+      };
+      void run();
+    };
+    start();
+    document.addEventListener("visibilitychange", start);
+    return () => {
+      document.removeEventListener("visibilitychange", start);
+      stop();
+    };
+  }, [refresh, submitting, intent]);
 
   const available = status?.available_clients ?? EMPTY_CLIENTS;
   const groups = React.useMemo(() => planVersionGroups(available, status?.stable_version), [available, status?.stable_version]);
@@ -351,8 +436,10 @@ export default function ClientFlowReleaseAdministration() {
             <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
               Seneste 20 registrerede deployments – adskilt fra de inaktive planer.
-              Status følger backendens faktiske hændelser. Brug Opdater øverst for at hente ny status;
-              der er ingen automatisk polling eller kunstig downloadprocent.
+              Status følger backendens faktiske hændelser. Ingen kunstig downloadprocent.
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }} aria-live="polite">
+              {liveStatus === "active" ? "Automatisk status aktiv" : liveStatus === "paused" ? "Automatisk status midlertidigt sat på pause" : liveStatus === "connecting" ? "Opretter live status …" : "Automatisk status afbrudt – Opdater kan bruges manuelt"}
             </Typography>
             <ClientFlowDeploymentHistory rows={status.recent_deployments ?? []} />
           </Paper>

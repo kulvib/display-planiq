@@ -704,6 +704,20 @@ export async function createControlRoomRealtimeCapability(signal) {
   return createScopedControlRoomRealtimeCapability(null, signal);
 }
 
+export async function createReleaseAdministrationRealtimeCapability(signal) {
+  const res = await apiFetch(`${apiUrl}/api/clients/release-administration-realtime/capability`, {
+    signal,
+    method: "POST",
+    headers: authHeaders({ Accept: "application/json" }),
+    credentials: "include",
+    cache: "no-store",
+  });
+  signal?.throwIfAborted?.();
+  if (res.status === 401) { handle401(); throw new Error("Login udløbet"); }
+  if (!res.ok) throw await buildApiErrorFromResponse(res, "Kunne ikke oprette release-realtime-forbindelse");
+  return readJsonResponse(res);
+}
+
 export async function createScopedControlRoomRealtimeCapability(clientId, signal) {
   const clientScope = clientId == null ? "" : `?client_id=${encodeURIComponent(clientId)}`;
   const res = await apiFetch(`${apiUrl}/api/clients/control-room-realtime/capability${clientScope}`, {
