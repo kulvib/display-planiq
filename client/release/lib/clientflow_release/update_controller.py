@@ -15,13 +15,14 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import tempfile
 from typing import Any, Callable
 import uuid
 
 from .constants import INSTALL_MODE_UPDATE
 from .filesystem import atomic_write_json, ensure_real_directory, fsync_directory, load_secure_json
-from .transaction import Layout, TransactionError, activate_release, recover_failed_update, stage_bundle, status
+from .transaction import Layout, TransactionError, activate_release, recover_failed_update, stage_bundle, status, _health_check, _assert_no_temporary_media_override
 from .updater_config import UpdaterConfig
 from .updater_state import DeploymentSnapshot
 from .updater_transport import UpdaterTransport, UpdaterTransportError
@@ -799,6 +800,79 @@ class UpdateController:
             return deployment
         return None
 
+    def _boot_id(self) -> str:
+        value = self.layout.path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        try:
+            if str(uuid.UUID(value)) != value:
+                raise ValueError("noncanonical boot id")
+        except ValueError as exc:
+            raise UpdateControllerError("Kernel boot-ID er ugyldigt") from exc
+        return value
+
+    def _request_reboot(self) -> None:
+        if self.layout.root != Path("/"):
+            raise UpdateControllerError("Test-root kan ikke genstarte værten")
+        subprocess.run(["/usr/bin/systemctl", "--no-block", "reboot"],
+                       stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=True)
+
+    def _await_post_activation_boot(self, snapshot: DeploymentSnapshot) -> bool:
+        # Legacy controllers executing the first 1248 -> 1250 transition
+        # cannot run this code before their own completion. That transition
+        # separately requires a physical reboot and health acceptance.
+        version = tuple(int(part) for part in snapshot.target_version.split("."))
+        if version < (1, 4, 0) or snapshot.target_release_sequence < 1250:
+            return True
+        boot = self._boot_id()
+        state = self.controller_state._state
+        record = state.get("reboot_boundary")
+        path = self.controller_state_root.parent / "release-status" / "state.json"
+
+        def publish(phase):
+            # For this particular boot boundary the marker also inhibits the
+            # kiosk. A failure to establish it must not request a reboot.
+            release_public_status.publish(path=path, deployment_id=snapshot.deployment_id,
+                release_id=snapshot.target_release_id, phase=phase)
+
+        if record is None:
+            publish("rebooting")
+            record = {"deployment_id": snapshot.deployment_id, "release_id": snapshot.target_release_id,
+                      "requested_boot_id": boot, "observed_boot_id": None}
+            state["reboot_boundary"] = record
+            self.controller_state._save()  # durable at-most-once request before systemctl
+            try:
+                self._request_reboot()
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                publish("recovery_required")
+                raise UpdateControllerError("Genstart kunne ikke bekræftes; kontrollér klienten manuelt") from exc
+            return False
+        if not isinstance(record, dict) or set(record) != {
+            "deployment_id", "release_id", "requested_boot_id", "observed_boot_id"
+        } or record["deployment_id"] != snapshot.deployment_id or record["release_id"] != snapshot.target_release_id:
+            raise UpdateControllerError("Genstartsjournal matcher ikke deployment")
+        try:
+            previous = record["requested_boot_id"]
+            observed = record["observed_boot_id"]
+            if str(uuid.UUID(previous)) != previous or (observed is not None and
+                    (str(uuid.UUID(observed)) != observed or observed == previous)):
+                raise ValueError("invalid boot boundary")
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise UpdateControllerError("Genstartsjournalens boot-ID er ugyldigt") from exc
+        if boot == previous:
+            # Never repeat a reboot request after a crash or lost response.
+            return False
+        publish("post_boot_check")
+        try:
+            _assert_no_temporary_media_override(self.layout)
+            _health_check(self.layout, snapshot.target_release_id, timeout=120)
+            if self._boot_id() != boot:
+                raise UpdateControllerError("Boot-ID ændret under helbredskontrol")
+        except Exception:
+            publish("recovery_required")
+            raise
+        record["observed_boot_id"] = boot
+        self.controller_state._save()
+        return True
+
     def _report_success(self, snapshot: DeploymentSnapshot, outcome: LocalActivationOutcome) -> dict[str, Any]:
         access_token, deployment = self._fresh_active(snapshot)
         if deployment is None:
@@ -814,6 +888,13 @@ class UpdateController:
             self._bind_deployment(deployment, expected_snapshot=snapshot)
             state = self._deployment_state(deployment)
         if state == "health_check":
+            if not self._await_post_activation_boot(snapshot):
+                return {"status": "awaiting_reboot", "deployment_id": snapshot.deployment_id,
+                        "release_id": snapshot.target_release_id}
+            # Reacquire fresh credentials/state after a potentially long health check.
+            access_token, deployment = self._fresh_active(snapshot)
+            if deployment is None or self._deployment_state(deployment) != "health_check":
+                raise UpdateControllerError("Backend health-check state er ændret før success")
             deployment = self._report_event(
                 access_token,
                 deployment,
@@ -1160,6 +1241,9 @@ class UpdateController:
     def _run_locked(self) -> dict[str, Any]:
         access_token, deployment = self._access_token_and_active_deployment()
         if deployment is None:
+            boundary = self.controller_state._state.get("reboot_boundary")
+            if boundary is not None and (not isinstance(boundary, dict) or not boundary.get("observed_boot_id")):
+                raise UpdateControllerError("Backend mangler aktiv deployment før verificeret genstart; behold recoveryjournal")
             if self.controller_state.phase != "idle":
                 self.controller_state.clear()
             return {"status": "idle", "deployment_id": None, "release_id": None}

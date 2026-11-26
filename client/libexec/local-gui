@@ -288,7 +288,7 @@ def _update_inventory_display(value: object, *, firmware: bool = False) -> tuple
 
 def _trusted_release_maintenance() -> dict[str, str] | None:
     """Only paint root-controlled release phases; no installation authority."""
-    phases = {"preparing", "staging", "activating", "post_activation_check",
+    phases = {"preparing", "staging", "activating", "post_activation_check", "rebooting", "post_boot_check",
               "rolling_back", "recovery_required", "completed", "rolled_back", "cancelled"}
     try:
         try:

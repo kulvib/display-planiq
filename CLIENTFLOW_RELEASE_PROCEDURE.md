@@ -445,3 +445,16 @@ must first physically prepare Viborg1 using the verified
 preparation; this is not a substitute for the local activation guards.
 The order is one-shot and uses the existing signed artifact and updater
 transaction. It does not promote the catalog or record physical acceptance.
+
+### Post-activation boot boundary
+
+For forward updates handled by the 1.4 controller, successful activation is
+not terminal. The deployment stays in health_check until a durable, exact
+deployment-bound reboot request has crossed a kernel boot-ID boundary and
+the immutable release tree and required services/sockets are verified.
+The request is at most once; a lost or failed request requires operator
+review, not an automatic reboot loop. The shared installation lock stays
+owned until the proven outcome. Chrome is inhibited during the active
+release maintenance phases. The first 1248-to-1250 update is executed by
+1248 code and therefore needs a separately witnessed physical reboot;
+its earlier backend succeeded event is not evidence of post-boot health.
