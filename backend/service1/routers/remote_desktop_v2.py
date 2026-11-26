@@ -22,7 +22,7 @@ import time
 from typing import Any, Optional
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
@@ -2077,6 +2077,20 @@ def remote_desktop_browser_download(client_id: int, transfer_id: str, request: R
     response.headers["X-ClientFlow-File-SHA256"] = transfer.sha256
     response.headers["X-ClientFlow-File-Size"] = str(transfer.size_bytes)
     return response
+
+
+@router.get("/remote-desktop/clients/{client_id}/native-release-eligibility")
+def native_release_eligibility(client_id: int, request: Request, response: Response):
+    """Explicit superadmin-only inspection; never allocates a native session."""
+    from ..native_rdp_admission import release_eligibility
+    user = _require_superadmin(_get_http_user(request))
+    if not _platform_client_accessible(client_id, user):
+        raise HTTPException(status_code=404, detail="Klient ikke fundet")
+    response.headers["Cache-Control"] = "no-store"
+    with Session(engine) as session:
+        reason = release_eligibility(session, client_id=client_id)
+    return {"client_id": client_id, "release_eligible": reason == "eligible",
+            "reason": reason, "native_transport_admitted": native_rdp_client_admitted(client_id)}
 
 
 @router.get("/remote-desktop/clients/{client_id}/status")

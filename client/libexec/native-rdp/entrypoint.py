@@ -1,8 +1,11 @@
 """Root-only immutable native RDP release entrypoint (Viborg1 gate retained)."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
+import json
 import os
+import re
 from pathlib import Path
 import stat
 import sys
@@ -35,6 +38,119 @@ def verify_sources(directory: Path) -> None:
             raise RuntimeError("RDP_SOURCE_MISMATCH")
 
 
+def _trusted_directory(path: Path) -> None:
+    meta = path.lstat()
+    if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != os.geteuid() or meta.st_mode & 0o022:
+        raise RuntimeError("RDP_INSTALLATION_DIRECTORY_UNSAFE")
+
+
+def _trusted_json(path: Path, *, limit: int, private: bool = True) -> dict:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as stream:
+        meta = os.fstat(stream.fileno())
+        forbidden = 0o077 if private else 0o022
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.geteuid()
+                or meta.st_mode & forbidden or not 0 < meta.st_size <= limit):
+            raise RuntimeError("RDP_INSTALLATION_FILE_UNSAFE")
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise RuntimeError("RDP_INSTALLATION_FILE_TOO_LARGE")
+    value = json.loads(data)
+    if type(value) is not dict:
+        raise RuntimeError("RDP_INSTALLATION_FILE_INVALID")
+    return value
+
+
+def verify_installed_identity(active: Path, *, root: Path = Path("/")) -> int:
+    """Host-local admission for a committed, bundle-bound canonical release.
+
+    This is not a backend or browser authorization and does not open any
+    network endpoint. The root-owned transaction lock is read, never created.
+    """
+    if root == Path("/") and os.geteuid() != 0:
+        raise RuntimeError("RDP_INSTALLATION_ROOT_REQUIRED")
+    install = root / "opt/clientflow"
+    state_dir = root / "var/lib/clientflow/release"
+    identity_dir = root / "etc/clientflow"
+    for folder in (root / "opt", install, install / "releases", active,
+                   root / "var", root / "var/lib", state_dir.parent, state_dir,
+                   root / "etc", identity_dir):
+        _trusted_directory(folder)
+    link = install / "active"
+    link_meta = link.lstat()
+    if (not stat.S_ISLNK(link_meta.st_mode) or link_meta.st_uid != os.geteuid()
+            or link.resolve(strict=True) != active or active.parent != install / "releases"):
+        raise RuntimeError("RDP_INSTALLATION_ACTIVE_MISMATCH")
+    match = re.fullmatch(r"clientflow-([0-9]+\.[0-9]+\.[0-9]+)-seq-([1-9][0-9]*)", active.name)
+    if not match:
+        raise RuntimeError("RDP_INSTALLATION_RELEASE_INVALID")
+    version, sequence_text = match.groups()
+    sequence = int(sequence_text)
+    if sequence < 1250 or tuple(map(int, version.split("."))) < (1, 4, 0):
+        raise RuntimeError("RDP_INSTALLATION_RELEASE_TOO_OLD")
+    fd = os.open(state_dir / "transaction.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        meta = os.fstat(fd)
+        if not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.geteuid() or meta.st_mode & 0o077:
+            raise RuntimeError("RDP_INSTALLATION_LOCK_UNSAFE")
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        lock_meta = (state_dir / "transaction.lock").lstat()
+        if (meta.st_dev, meta.st_ino) != (lock_meta.st_dev, lock_meta.st_ino):
+            raise RuntimeError("RDP_INSTALLATION_LOCK_CHANGED")
+        identity = _trusted_json(identity_dir / "identity.json", limit=64 * 1024)
+        client_id = identity.get("client_id")
+        if (type(identity.get("schema_version")) is not int or identity["schema_version"] != 1
+                or type(client_id) is not int or client_id <= 0
+                or ("CLIENT_ID" in identity and str(identity["CLIENT_ID"]) != str(client_id))
+                or identity.get("kiosk_user") != "clientflow-kiosk"):
+            raise RuntimeError("RDP_INSTALLATION_IDENTITY_INVALID")
+        journal = _trusted_json(state_dir / "state.json", limit=8 * 1024 * 1024)
+        installed = journal.get("installed")
+        record = installed.get(active.name) if isinstance(installed, dict) else None
+        if (type(journal.get("schema_version")) is not int or journal["schema_version"] != 2
+                or journal.get("active_release_id") != active.name
+                or journal.get("activation_intent") is not None
+                or journal.get("staged_release_id") is not None
+                or type(journal.get("highest_release_sequence")) is not int
+                or journal["highest_release_sequence"] < sequence
+                or not isinstance(record, dict)
+                or record.get("version") != version
+                or type(record.get("release_sequence")) is not int or record["release_sequence"] != sequence
+                or not isinstance(record.get("activated_at"), str) or not record["activated_at"]):
+            raise RuntimeError("RDP_INSTALLATION_NOT_COMMITTED")
+        manifest = _trusted_json(active / "release-manifest.json", limit=8 * 1024 * 1024, private=False)
+        ready = _trusted_json(active / "release-ready.json", limit=64 * 1024, private=False)
+        for value in (manifest, ready):
+            if (value.get("release_id") != active.name or value.get("version") != version
+                    or type(value.get("release_sequence")) is not int or value["release_sequence"] != sequence):
+                raise RuntimeError("RDP_INSTALLATION_RELEASE_MISMATCH")
+        approval = manifest.get("release_approval")
+        source = manifest.get("source")
+        if (not isinstance(approval, dict) or not isinstance(source, dict)
+                or not isinstance(approval.get("reference"), str) or not approval["reference"]
+                or record.get("release_approval_reference") != approval["reference"]
+                or record.get("release_candidate_sha256") != approval.get("candidate_sha256")
+                or record.get("source_commit") != source.get("commit")
+                or not re.fullmatch(r"[a-f0-9]{64}", str(record.get("bundle_sha256") or ""))
+                or not re.fullmatch(r"[a-f0-9]{64}", str(record.get("release_candidate_sha256") or ""))
+                or not re.fullmatch(r"[a-f0-9]{40}", str(record.get("source_commit") or ""))
+                or type(record.get("bundle_size")) is not int or record["bundle_size"] <= 0
+                or record.get("manifest_sha256") != hashlib.sha256(
+                    json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()):
+            raise RuntimeError("RDP_INSTALLATION_PROVENANCE_MISMATCH")
+        coordinator = state_dir.parent / "install-coordinator"
+        if coordinator.exists() or coordinator.is_symlink():
+            _trusted_directory(coordinator)
+            marker = coordinator / "state.json"
+            if marker.exists() or marker.is_symlink():
+                raise RuntimeError("RDP_INSTALLATION_MAINTENANCE_ACTIVE")
+        if link.resolve(strict=True) != active:
+            raise RuntimeError("RDP_INSTALLATION_ACTIVE_CHANGED")
+        return client_id
+    finally:
+        os.close(fd)
+
+
 def main() -> None:
     if os.geteuid() != 0 or len(sys.argv) != 2 or sys.argv[1] not in {"lifecycle", "sealer"}:
         raise RuntimeError("RDP_ENTRYPOINT_DENIED")
@@ -47,6 +163,7 @@ def main() -> None:
         if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022:
             raise RuntimeError("RDP_ACTIVE_RELEASE_UNSAFE")
     verify_sources(directory)
+    verify_installed_identity(active)
     sys.path.insert(0, str(directory))
     from scripts import clientflow_63d53_rdp_ipc as ipc
     from scripts import clientflow_63d53_rdp_lifecycle as lifecycle
