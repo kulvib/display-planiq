@@ -458,3 +458,11 @@ owned until the proven outcome. Chrome is inhibited during the active
 release maintenance phases. The first 1248-to-1250 update is executed by
 1248 code and therefore needs a separately witnessed physical reboot;
 its earlier backend succeeded event is not evidence of post-boot health.
+
+For the first baseline transition the new active transaction helper offers
+`baseline-boot-evidence --expected-bundle-sha256` before the operator's reboot,
+then the same command with `--previous-boot-id` from that first observation.
+It checks the exact active 1250 provenance, absence of temporary media overrides
+and existing release health contract under a shared transaction lock. The report
+is supporting evidence only; it does not assert physical UI/media acceptance,
+automatic reboot, backend approval or deletion authorization.

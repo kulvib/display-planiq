@@ -75,3 +75,37 @@ def test_missing_lock_is_not_created(tmp_path):
     with pytest.raises(OSError):
         release_inventory(layout)
     assert not layout.lock_file.exists()
+
+
+def test_baseline_boot_evidence_requires_same_release_and_real_boot_change(tmp_path, monkeypatch):
+    import uuid
+    from clientflow_release import transaction as txn
+    layout, state = setup(tmp_path)
+    sha = "a" * 64
+    manifest = {"release_id": ACTIVE, "version": "1.4.0", "release_sequence": 1250,
+                "release_approval": {"reference": "fixture-only", "candidate_sha256": "b"*64},
+                "source": {"commit": "c"*40}}
+    write(layout.releases / ACTIVE / "release-manifest.json", manifest, 0o444)
+    state["installed"][ACTIVE].update(manifest_sha256=txn._manifest_digest(manifest),
+        bundle_sha256=sha, bundle_size=100, release_approval_reference="fixture-only",
+        release_candidate_sha256="b"*64, source_commit="c"*40)
+    write(layout.state_file, state)
+    boot = layout.path("/proc/sys/kernel/random/boot_id")
+    boot.parent.mkdir(parents=True)
+    before = str(uuid.uuid4())
+    boot.write_text(before)
+    # The full integrity and systemd check has its own existing contracts.
+    checked = []
+    monkeypatch.setattr(txn, "_health_check", lambda *a, **k: checked.append(a[1]))
+    report = txn.baseline_boot_evidence(expected_bundle_sha256=sha, layout=layout)
+    assert report["boot_id"] == before and not report["boot_changed_from_operator_reference"]
+    with pytest.raises(TransactionError, match="Genstart"):
+        txn.baseline_boot_evidence(expected_bundle_sha256=sha, previous_boot_id=before, layout=layout)
+    after = str(uuid.uuid4())
+    boot.write_text(after)
+    report = txn.baseline_boot_evidence(expected_bundle_sha256=sha, previous_boot_id=before, layout=layout)
+    assert report["boot_id"] == after and report["boot_changed_from_operator_reference"]
+    assert report["release_health_verified"] and not report["physical_acceptance"] and not report["deletion_authorized"]
+    with pytest.raises(TransactionError, match="bundle"):
+        txn.baseline_boot_evidence(expected_bundle_sha256="d"*64, previous_boot_id=before, layout=layout)
+    assert checked == [ACTIVE, ACTIVE]

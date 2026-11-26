@@ -53,6 +53,7 @@ from .transaction import (
     install_staged_definitions,
     rollback_release,
     recover_failed_update,
+    baseline_boot_evidence,
     release_inventory,
     stage_bundle,
     status,
@@ -1363,6 +1364,9 @@ def transaction_main(argv: list[str] | None = None) -> int:
     recover.add_argument("--expected-release-approval-reference", required=True)
     sub.add_parser("promote-rollback-host")
     sub.add_parser("release-inventory")
+    boot = sub.add_parser("baseline-boot-evidence")
+    boot.add_argument("--expected-bundle-sha256", required=True)
+    boot.add_argument("--previous-boot-id")
     sub.add_parser("status")
     args = parser.parse_args(argv)
     if args.operation == "stage":
@@ -1387,6 +1391,10 @@ def transaction_main(argv: list[str] | None = None) -> int:
             reason=args.reason,
             permit_file=args.permit_file,
         )
+    elif args.operation == "baseline-boot-evidence":
+        _require_root(Layout())
+        result = baseline_boot_evidence(expected_bundle_sha256=args.expected_bundle_sha256,
+                                        previous_boot_id=args.previous_boot_id)
     elif args.operation == "release-inventory":
         _require_root(Layout())
         result = release_inventory()

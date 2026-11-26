@@ -891,10 +891,11 @@ class UpdateController:
             if not self._await_post_activation_boot(snapshot):
                 return {"status": "awaiting_reboot", "deployment_id": snapshot.deployment_id,
                         "release_id": snapshot.target_release_id}
-            # Reacquire fresh credentials/state after a potentially long health check.
-            access_token, deployment = self._fresh_active(snapshot)
-            if deployment is None or self._deployment_state(deployment) != "health_check":
-                raise UpdateControllerError("Backend health-check state er ændret før success")
+            # Only the new boot gate introduces a potentially long health check.
+            if self.controller_state._state.get("reboot_boundary") is not None:
+                access_token, deployment = self._fresh_active(snapshot)
+                if deployment is None or self._deployment_state(deployment) != "health_check":
+                    raise UpdateControllerError("Backend health-check state er ændret før success")
             deployment = self._report_event(
                 access_token,
                 deployment,

@@ -1977,6 +1977,83 @@ def status(layout: Layout = Layout()) -> dict[str, Any]:
 
 
 
+def baseline_boot_evidence(*, expected_bundle_sha256: str, previous_boot_id: str | None = None,
+                           layout: Layout = Layout()) -> dict[str, Any]:
+    """Read the exact installed baseline before/after an operator-observed reboot.
+
+    This is supporting local evidence only, not a physical acceptance, a
+    reboot request, a backend success event, or permission to delete releases.
+    """
+    if layout.root == Path("/") and os.geteuid() != 0:
+        raise TransactionError("Bootkontrol kræver root")
+    if not isinstance(expected_bundle_sha256, str) or not _SHA256_RE.fullmatch(expected_bundle_sha256):
+        raise TransactionError("Forventet bundle-SHA256 er ugyldig")
+    release_id = "clientflow-1.4.0-seq-1250"
+    owner = 0 if layout.root == Path("/") else os.geteuid()
+    for path in (layout.install_root, layout.releases, layout.state_root):
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != owner or info.st_mode & 0o022:
+            raise TransactionError("Ubetroet releasekatalog")
+    def boot_id():
+        value = layout.path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        try:
+            if str(uuid.UUID(value)) != value:
+                raise ValueError("noncanonical boot ID")
+        except ValueError as exc:
+            raise TransactionError("Kernel boot-ID er ugyldigt") from exc
+        return value
+
+    if previous_boot_id is not None:
+        try:
+            if str(uuid.UUID(previous_boot_id)) != previous_boot_id:
+                raise ValueError("noncanonical previous boot ID")
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise TransactionError("Tidligere boot-ID er ugyldigt") from exc
+    fd = os.open(layout.lock_file, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != owner or info.st_mode & 0o077:
+            raise TransactionError("Ubetroet transaktionslås")
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        current_lock = layout.lock_file.lstat()
+        if (info.st_dev, info.st_ino) != (current_lock.st_dev, current_lock.st_ino):
+            raise TransactionError("Transaktionslåsen er udskiftet")
+        boot = boot_id()
+        if previous_boot_id == boot:
+            raise TransactionError("Genstart er endnu ikke observeret")
+        state = load_state(layout)
+        record = state["installed"].get(release_id)
+        if (state.get("active_release_id") != release_id
+                or _read_active_release_id(layout) != release_id
+                or state.get("activation_intent") is not None
+                or state.get("staged_release_id") is not None
+                or not isinstance(record, dict)
+                or record.get("bundle_sha256") != expected_bundle_sha256):
+            raise TransactionError("Aktiv 1250-release matcher ikke verificeret bundle og journal")
+        manifest = load_secure_json(layout.releases / release_id / "release-manifest.json",
+                                    max_bytes=8 * 1024 * 1024, forbidden_mode_bits=0o022)
+        if (manifest.get("release_id") != release_id
+                or manifest.get("version") != "1.4.0"
+                or manifest.get("release_sequence") != 1250
+                or record.get("manifest_sha256") != _manifest_digest(manifest)):
+            raise TransactionError("1250-manifest matcher ikke den lokale journal")
+        provenance = _manifest_provenance(manifest, bundle_size=record.get("bundle_size"),
+                                          bundle_sha256=expected_bundle_sha256)
+        _assert_record_provenance(record, provenance)
+        _assert_no_temporary_media_override(layout)
+        _health_check(layout, release_id, timeout=120)
+        if boot_id() != boot:
+            raise TransactionError("Boot-ID ændret under releaseverifikation")
+        return {"release_id": release_id, "version": "1.4.0", "release_sequence": 1250,
+                "bundle_sha256": expected_bundle_sha256, "source_commit": provenance["source_commit"],
+                "boot_id": boot, "previous_boot_id": previous_boot_id,
+                "boot_changed_from_operator_reference": previous_boot_id is not None,
+                "release_health_verified": True, "temporary_media_overrides_absent": True,
+                "physical_acceptance": False, "deletion_authorized": False}
+    finally:
+        os.close(fd)
+
+
 def release_inventory(layout: Layout = Layout()) -> dict[str, Any]:
     """Advisory inspection under the existing transaction lock.
 
