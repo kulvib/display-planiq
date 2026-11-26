@@ -35,8 +35,10 @@ import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import DeleteSweepIcon from "@mui/icons-material/DeleteSweep";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import { buildClientflowUpdateRequest } from "./clientflowUpdateRequest.mjs";
+import apiClient from "../../api/client";
+import { BASELINE_ID, BASELINE_VERSION, validateOrderAvailability, verifyOrderResult } from "../adminpages/clientflowStandardOrders.mjs";
 import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "./clientflowCatalogOptions.mjs";
-import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, getClientflowRecoveryGate, acknowledgeClientflowRecovery, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
+import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, getActiveClientflowDeployment, getClientflowRecoveryGate, acknowledgeClientflowRecovery, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
@@ -182,7 +184,17 @@ function UpdateStepTimeline({ steps, currentIndex = -1, terminal = false, error 
   );
 }
 
-function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pendingFirmwareUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
+function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendingOsUpdate, pendingFirmwareUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
+  const { user } = useAuth();
+  const isSuperadmin = user?.role === "superadmin";
+  const [standardIntent, setStandardIntent] = React.useState(null);
+  const [standardPassword, setStandardPassword] = React.useState("");
+  const standardRequest = React.useRef(null);
+  const standardMounted = React.useRef(false);
+  React.useEffect(() => {
+    standardMounted.current = true;
+    return () => { standardMounted.current = false; standardRequest.current?.abort(); };
+  }, []);
   const [polling, setPolling] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
@@ -215,6 +227,12 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pen
   );
   const resolvedSelectedVersion = selectedVersion === "latest" ? latestVersion : selectedVersion;
   const selectedRelease = selectableReleases.find((release) => release.version === resolvedSelectedVersion) || null;
+  const standardBaseline = releaseCatalog?.catalog_sequence >= 1250;
+  const standardEligible = standardBaseline && releaseCatalog?.catalog_sequence === 1250 &&
+    latestVersion === BASELINE_VERSION && resolvedSelectedVersion === BASELINE_VERSION &&
+    selectedRelease?.release_id === BASELINE_ID && selectedRelease?.rollback_allowed === false &&
+    String(installedVersion || "").replace(/^v/i, "") === "1.3.47" &&
+    Number.isSafeInteger(Number(clientId)) && Number(clientId) > 0 && isSuperadmin && clientOnline === true;
   const selectedReleaseRequiresReboot = selectedRelease?.requires_reboot === true;
   const deploymentRelease = selectableReleases.find((release) => release.version === deployment?.target_version) || null;
   const deploymentRequiresReboot = deploymentRelease?.requires_reboot === true;
@@ -317,7 +335,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pen
   }, [feedbackVisible, inProgress, starting, cancelling, finished, state]);
 
   const executeClientFlowUpdate = async ({ confirmDowngrade = false, reason = null } = {}) => {
-    if (!clientId || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
+    if (standardBaseline || !clientId || starting || inProgress || otherUpdateInProgress || sameVersionSelected) return;
     setFeedbackVisible(true);
     setStarting(true);
     try {
@@ -355,10 +373,78 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pen
     }
   };
 
+  // Standard orders share the exact same backend authorization path as
+  // Administration. Review is an explicit action, never a polling loop.
+  const reviewStandardUpdate = async () => {
+    if (disabled || !standardEligible || standardRequest.current) return;
+    const controller = new AbortController();
+    standardRequest.current = controller;
+    setStarting(true);
+    setStandardPassword("");
+    try {
+      const { data } = await apiClient.get("/api/clientflow/standard-deployments/availability", { signal: controller.signal });
+      const authority = validateOrderAvailability(data);
+      if (!standardMounted.current || controller.signal.aborted) return;
+      setStandardIntent({ authority, clientId: Number(clientId), sourceVersion: "1.3.47" });
+    } catch (err) {
+      if (standardMounted.current && !controller.signal.aborted) showSnackbar?.({ message: err?.message || "Releaseautorisation kunne ikke kontrolleres", severity: "error" });
+    } finally {
+      if (standardRequest.current === controller) standardRequest.current = null;
+      if (standardMounted.current) setStarting(false);
+    }
+  };
+
+  const closeStandardUpdate = () => {
+    if (starting) return;
+    setStandardIntent(null);
+    setStandardPassword("");
+  };
+
+  const confirmStandardUpdate = async () => {
+    if (disabled || !standardEligible || !standardIntent || !standardPassword || standardRequest.current ||
+        standardIntent.clientId !== Number(clientId)) return;
+    const controller = new AbortController();
+    standardRequest.current = controller;
+    const targets = [{ client_id: standardIntent.clientId, expected_source_version: standardIntent.sourceVersion }];
+    const body = { target_release_id: BASELINE_ID, expected_bundle_sha256: standardIntent.authority.bundle_sha256,
+      expected_revision: standardIntent.authority.revision, targets, confirmed: true, password: standardPassword };
+    setStandardPassword("");
+    setStarting(true);
+    try {
+      const { data } = await apiClient.post("/api/clientflow/standard-deployments", body, { signal: controller.signal });
+      verifyOrderResult(data, targets);
+      if (!standardMounted.current || controller.signal.aborted) return;
+      showSnackbar?.({ message: "ClientFlow 1.4.0-opdatering er bestilt", severity: "success" });
+      // Read the real deployment state; do not synthesize a deployment or
+      // guess download progress from the authorization response.
+      try {
+        const observed = await getActiveClientflowDeployment(clientId);
+        if (standardMounted.current && !controller.signal.aborted && observed?.id === data.deployments[0].deployment_id) {
+          onDeploymentChange?.(observed);
+          setFeedbackVisible(true);
+        }
+      } catch {
+        // The order has succeeded. Reconcile status through the existing
+        // Control Room refresh instead of resubmitting an uncertain request.
+      }
+    } catch (err) {
+      if (standardMounted.current && !controller.signal.aborted) showSnackbar?.({ message: (err?.message || "Bestillingens resultat er ukendt") + " Hent status før et nyt forsøg.", severity: "error" });
+    } finally {
+      body.password = "";
+      if (standardRequest.current === controller) standardRequest.current = null;
+      if (standardMounted.current) {
+        setStarting(false);
+        setStandardIntent(null);
+        onFinished?.();
+      }
+    }
+  };
+
   const startClientFlowUpdate = (event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
     if (disabled) return;
+    if (standardBaseline) { void reviewStandardUpdate(); return; }
     // Keep an explicit confirmation; ordinary updates generate audit text.
     setUpdateReason("");
     setUpdateReasonDialogOpen(true);
@@ -372,7 +458,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pen
     await executeClientFlowUpdate({ confirmDowngrade: isDowngrade, reason });
   };
 
-  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected || recoveryGateLoading || !!recoveryGateError || recoveryGate?.blocked !== false;
+  const disabled = !clientId || starting || inProgress || otherUpdateInProgress || !releaseCatalog || !selectedRelease || sameVersionSelected || recoveryGateLoading || !!recoveryGateError || recoveryGate?.blocked !== false || (standardBaseline && !standardEligible);
   const stateIsError = state === "failed" || state === "recovery_failed";
   const stateIsWarning = state === "cancelled" || state === "rolled_back" || state === "rolling_back";
   const stateIsSuccess = state === "succeeded";
@@ -509,7 +595,21 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pen
         </Box>
       )}
       <ClientFlowHistoryOnDemand clientId={clientId} />
-      <Dialog open={updateReasonDialogOpen} onClose={() => setUpdateReasonDialogOpen(false)} maxWidth="sm" fullWidth>
+      {standardBaseline && !standardEligible && !sameVersionSelected && !inProgress && (
+        <Alert severity="info" sx={{ mt: 1 }}>Standardrelease 1.4.0 kræver en online, kompatibel klient og superadministrator. Manuel rollback til 1.3 er ikke tilgængelig.</Alert>
+      )}
+      <Dialog open={Boolean(standardIntent)} onClose={closeStandardUpdate} maxWidth="sm" fullWidth>
+        <DialogTitle>Bekræft ClientFlow 1.4.0-opdatering</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>Klient #{standardIntent?.clientId}: 1.3.47 → 1.4.0. Kioskbrowseren kan blive lukket, og klienten genstarter under opdateringen. Bestillingen registreres automatisk i auditloggen.</Alert>
+          <TextField autoFocus fullWidth type="password" autoComplete="current-password" label="Genbekræft din adgangskode" value={standardPassword} onChange={(event) => setStandardPassword(event.target.value)} disabled={starting} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeStandardUpdate} disabled={starting}>Annuller</Button>
+          <Button variant="contained" disabled={disabled || !standardEligible || !standardPassword} onClick={confirmStandardUpdate}>Bestil opdatering</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog open={updateReasonDialogOpen && !standardBaseline} onClose={() => setUpdateReasonDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{isDowngrade ? "Bekræft ClientFlow-nedgradering" : "Bekræft ClientFlow-opdatering"}</DialogTitle>
         <DialogContent>
           <Alert severity={isDowngrade ? "warning" : "info"} sx={{ mb: 2 }}>
@@ -1973,7 +2073,9 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
                 </Alert>
               )}
             <ClientFlowUpdateControl
+              key={client?.id}
               clientId={client?.id}
+              clientOnline={clientOnline}
               clientVersion={client?.client_version}
               pendingOsUpdate={client?.pending_os_update}
               pendingFirmwareUpdate={client?.pending_firmware_update}

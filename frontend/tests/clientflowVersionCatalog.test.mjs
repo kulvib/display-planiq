@@ -97,3 +97,19 @@ test("malformed or missing release catalog must be rejected, not interpreted as 
     assert.throws(() => normalizeClientflowReleaseCatalog(invalid), /ugyldigt format/);
   }
 });
+
+
+test("1.4 Control Room uses the same standard order authority as administration", () => {
+  assert.match(infoSource, /if \(standardBaseline\) \{ void reviewStandardUpdate\(\); return; \}/);
+  assert.match(infoSource, /if \(standardBaseline \|\| !clientId/);
+  assert.match(infoSource, /apiClient\.get\("\/api\/clientflow\/standard-deployments\/availability"/);
+  assert.match(infoSource, /validateOrderAvailability\(data\)/);
+  assert.match(infoSource, /apiClient\.post\("\/api\/clientflow\/standard-deployments", body/);
+  assert.match(infoSource, /verifyOrderResult\(data, targets\)/);
+  assert.match(infoSource, /expected_bundle_sha256: standardIntent\.authority\.bundle_sha256/);
+  assert.match(infoSource, /standardIntent\.clientId !== Number\(clientId\)/);
+  assert.match(infoSource, /getActiveClientflowDeployment\(clientId\)/);
+  assert.match(infoSource, /key=\{client\?\.id\}/);
+  assert.match(infoSource, /clientOnline === true/);
+  assert.match(auditSource, /clientflow_standard_deployment_authorized/);
+});
