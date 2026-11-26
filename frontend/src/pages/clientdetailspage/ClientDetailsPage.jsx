@@ -343,6 +343,7 @@ const UPDATE_LIVE_FIELDS = [
   "pending_os_update",
   "ubuntu_update_command_id",
   "ubuntu_updates_available",
+  "ubuntu_update_inventory",
   "service_ubuntu_update_status",
   "ubuntu_update_status",
   "ubuntu_update_step",
@@ -492,8 +493,8 @@ function formatDashboardUptime(value) {
 }
 
 function formatUbuntuMetric(client) {
-  const raw = client?.ubuntu_updates_available;
-  const count = Number.parseInt(String(raw ?? ""), 10);
+  const inventory = client?.ubuntu_update_inventory;
+  const count = inventory?.state === "known" && !inventory.error ? inventory.update_count : null;
   if (client?.pending_os_update || client?.state === "updating") return "Opdaterer";
   if (!Number.isFinite(count) || count < 0) return "ukendt";
   return count === 0 ? "Ingen" : `${count} klar`;

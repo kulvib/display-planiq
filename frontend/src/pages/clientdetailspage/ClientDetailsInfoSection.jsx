@@ -1431,8 +1431,9 @@ function getNextScheduleLabel(next, days) {
 }
 
 function getUbuntuUpdateCount(client) {
-  const count = Number.parseInt(String(client?.ubuntu_updates_available ?? ""), 10);
-  return Number.isFinite(count) && count >= 0 ? count : null;
+  const inventory = client?.ubuntu_update_inventory;
+  const count = inventory?.update_count;
+  return inventory?.state === "known" && !inventory.error && Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
 function formatUbuntuUpdates(client) {
@@ -1819,11 +1820,11 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
   const firmware = client?.firmware || null;
   const [starting, setStarting] = React.useState(false);
   const supported = firmware?.supported === true;
-  const updateCount = Number.isFinite(Number(firmware?.update_count)) ? Number(firmware.update_count) : 0;
+  const updateCount = Number.isSafeInteger(firmware?.update_count) && firmware.update_count >= 0 ? firmware.update_count : null;
   const updateAvailable = firmware?.update_available === true && updateCount > 0;
   const requiresShutdown = firmware?.requires_shutdown === true;
   const inProgress = client?.pending_firmware_update === true || ["requested", "installing"].includes(String(client?.firmware_update_status || ""));
-  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || Boolean(firmware?.error) || requiresShutdown || starting || inProgress || otherUpdateInProgress || client?.pending_os_update === true;
+  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || Boolean(firmware?.error) || firmware?.stale !== false || requiresShutdown || starting || inProgress || otherUpdateInProgress || client?.pending_os_update === true;
 
   const startFirmwareUpdate = async () => {
     if (disabled || !client?.id) return;
@@ -1841,14 +1842,18 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
 
   let statusText = "Status ikke rapporteret";
   let statusColor = MUTED;
-  if (supported) {
+  if (supported && firmware?.stale === false && updateCount !== null) {
     if (updateAvailable) {
       statusText = `${updateCount} opdatering${updateCount === 1 ? "" : "er"} tilgængelig${updateCount === 1 ? "" : "e"}`;
       statusColor = "#fbbf24";
     } else {
-      statusText = "Firmware er opdateret";
+      statusText = "Ingen firmwareopdateringer fundet i lokal metadata";
       statusColor = "#22c55e";
     }
+  }
+  if (firmware?.stale === true) {
+    statusText = "Firmwarestatus forældet";
+    statusColor = MUTED;
   }
   if (firmware?.error) {
     statusText = `Firmware-statusfejl: ${firmware.error}`;
@@ -1877,6 +1882,8 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
           <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>Firmware</Typography>
           <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>{statusText}</Typography>
           <Typography variant="caption" sx={{ color: MUTED, display: "block", mt: 0.35 }}>{helper}</Typography>
+          {firmware?.checked_at && <Typography variant="caption" sx={{ color: MUTED, display: "block" }}>Senest kontrolleret: {formatUpdateDateTime(firmware.checked_at)}</Typography>}
+          {firmware?.stale === false && !firmware?.error && Array.isArray(firmware?.devices) && firmware.devices.slice(0,32).map((device, index) => <Typography key={device.device_id || index} variant="caption" sx={{ color: MUTED, display: "block" }}>{device.name}: {device.version || "ukendt"}{Array.isArray(device.available_versions) && device.available_versions.length ? ` → ${device.available_versions.join(", ")}` : ""}</Typography>)}
         </Box>
         {isSuperadmin && (
           <Button
@@ -2641,7 +2648,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const networkLevel = networkStatusLevel(client);
   const networkMessage = networkStatusMessage(client);
   const networkUnavailable = isNetworkUnavailable(client);
-  const ubuntuUpdateCount = Number.parseInt(String(client?.ubuntu_updates_available ?? ""), 10);
+  const ubuntuUpdateCount = getUbuntuUpdateCount(client);
   const hasUbuntuUpdates = Number.isFinite(ubuntuUpdateCount) && ubuntuUpdateCount > 0;
   const pendingChromeAction = normalizeText(client?.pending_chrome_action || "none");
   const hasPendingChromeAction = pendingChromeAction && pendingChromeAction !== "none";
@@ -2805,7 +2812,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Fuldskærm", value: client?.browser_fullscreen === "fullscreen" ? "Ja" : client?.browser_fullscreen === "windowed" ? "Nej" : "Ukendt", level: client?.browser_fullscreen === "fullscreen" ? "ok" : client?.browser_fullscreen === "windowed" ? "warn" : "neutral" },
         { label: "Netværk", value: networkMessage, level: networkLevel, wide: true },
         { label: "Display", value: `${displaySummary} · ${statusText(client?.display_resolution_current_output)}`, level: getStatusLevel(client?.display_resolution_status) },
-        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
+        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : ubuntuUpdateCount === null ? "neutral" : "ok" },
       ],
     },
     {
@@ -2967,7 +2974,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
       description: "Ubuntu-pakker. ClientFlow-deployments vises i Software-panelet fra den canonical deployment-state-machine.",
       columns: 2,
       rows: [
-        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : "ok" },
+        { label: "Ubuntu updates", value: formatUpdateCount(client?.ubuntu_updates_available), level: hasUbuntuUpdates ? "warn" : ubuntuUpdateCount === null ? "neutral" : "ok" },
         { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket" },
         { label: "Pending OS update", value: formatDiagnosticBoolean(client?.pending_os_update), boolean: client?.pending_os_update, trueLevel: "info" },
       ],
