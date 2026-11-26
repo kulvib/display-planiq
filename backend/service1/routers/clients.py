@@ -22,7 +22,7 @@ from ..ui_realtime import (
     notify_ui_fleet_order_changed,
     issue_ui_realtime_capability,
     verify_ui_realtime_capability,
-    wait_for_ui_change,
+    wait_for_ui_change_async,
 )
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
 from ..clientflow_1244_identity_decommission import TOMBSTONE_REASON
@@ -1588,7 +1588,7 @@ def create_release_admin_realtime_capability(user=Depends(get_current_superadmin
 
 
 @router.get("/clients/control-room-realtime/wait")
-def wait_control_room_realtime(
+async def wait_control_room_realtime(
     after: int = Query(default=0, ge=0),
     timeout_seconds: int = Query(default=25, ge=1, le=30),
     authorization: str | None = Header(default=None),
@@ -1596,7 +1596,7 @@ def wait_control_room_realtime(
     value = str(authorization or "")
     token = value[7:].strip() if value.lower().startswith("bearer ") else None
     claims = verify_ui_realtime_capability(token)
-    generation = wait_for_ui_change(claims=claims, after=after, timeout=timeout_seconds)
+    generation = await wait_for_ui_change_async(claims=claims, after=after, timeout=timeout_seconds)
     return {"generation": generation, "changed": generation > after}
 
 

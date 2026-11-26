@@ -9,6 +9,7 @@ HTTP endpoints after a change.
 from __future__ import annotations
 
 from collections import defaultdict
+import asyncio
 from datetime import datetime, timedelta, timezone
 import os
 import threading
@@ -22,7 +23,7 @@ from fastapi import HTTPException, status
 from .auth import SECRET_KEY
 from .realtime_wakeup import (
     RELEASE_ADMIN_WAKE_DOMAIN, RELEASE_ADMIN_WAKE_KEY,
-    current_generation as wake_generation, wait_for_change,
+    current_generation as wake_generation, wait_for_change, wait_for_change_async,
 )
 
 ISSUER = "clientflow-ui-realtime"
@@ -32,6 +33,38 @@ _CONDITION = threading.Condition()
 _GLOBAL_GENERATION = 0
 _ORG_GENERATIONS: dict[int, int] = defaultdict(int)
 _CLIENT_GENERATIONS: dict[int, int] = defaultdict(int)
+_UI_ASYNC_WAITERS: dict[
+    tuple[str, int], set[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]]
+] = defaultdict(set)
+
+
+def _wake_scope(*, global_scope: bool, organization_id: int | None, client_id: int | None) -> tuple[str, int]:
+    if client_id is not None:
+        return ("client", int(client_id))
+    if global_scope:
+        return ("global", 0)
+    if organization_id is None:
+        raise ValueError("organization_id kræves for organisationsscope")
+    return ("organization", int(organization_id))
+
+
+def _take_ui_waiters(scopes: set[tuple[str, int]]):
+    # Caller holds the same condition lock used by generation snapshots.
+    return tuple(listener for scope in scopes for listener in _UI_ASYNC_WAITERS.pop(scope, ()))
+
+
+def _resolve_ui_waiter(waiter: asyncio.Future[None]) -> None:
+    if not waiter.done():
+        waiter.set_result(None)
+
+
+def _publish_ui_waiters(listeners) -> None:
+    for loop, waiter in listeners:
+        try:
+            loop.call_soon_threadsafe(_resolve_ui_waiter, waiter)
+        except RuntimeError:
+            # Closed event loop; reconciliation remains authoritative.
+            pass
 
 
 def _scope_for_principal(principal: object) -> tuple[bool, int | None]:
@@ -61,15 +94,20 @@ def notify_ui_state_changed(
     global _GLOBAL_GENERATION
     with _CONDITION:
         _GLOBAL_GENERATION += 1
+        scopes = {("global", 0)}
         if client_id is not None:
             _CLIENT_GENERATIONS[int(client_id)] += 1
+            scopes.add(("client", int(client_id)))
         if organization_id is not None:
             _ORG_GENERATIONS[int(organization_id)] += 1
+            scopes.add(("organization", int(organization_id)))
             generation = int(_ORG_GENERATIONS[int(organization_id)])
         else:
             generation = int(_GLOBAL_GENERATION)
+        listeners = _take_ui_waiters(scopes)
         _CONDITION.notify_all()
-        return generation
+    _publish_ui_waiters(listeners)
+    return generation
 
 
 def notify_ui_fleet_order_changed(organization_ids: set[int]) -> int:
@@ -84,8 +122,11 @@ def notify_ui_fleet_order_changed(organization_ids: set[int]) -> int:
         _GLOBAL_GENERATION += 1
         for organization_id in organization_ids:
             _ORG_GENERATIONS[int(organization_id)] += 1
+        generation = int(_GLOBAL_GENERATION)
+        listeners = _take_ui_waiters({("global", 0)} | {("organization", int(oid)) for oid in organization_ids})
         _CONDITION.notify_all()
-        return int(_GLOBAL_GENERATION)
+    _publish_ui_waiters(listeners)
+    return generation
 
 
 def issue_ui_realtime_capability(
@@ -176,3 +217,46 @@ def wait_for_ui_change(*, claims: dict[str, Any], after: int, timeout: float) ->
         return current_generation(
             global_scope=global_scope, organization_id=organization_id, client_id=client_id
         )
+
+
+async def wait_for_ui_change_async(*, claims: dict[str, Any], after: int, timeout: float) -> int:
+    """Scoped, DB-free long poll without reserving a request worker thread.
+
+    Register atomically with the generation snapshot. Wake only the affected
+    scopes, release waiters on timeout/cancellation, and keep the existing
+    capability and generation protocol unchanged.
+    """
+    bounded_timeout = min(max(float(timeout), 0.0), 30.0)
+    if claims.get("release_admin") is True:
+        return await wait_for_change_async(RELEASE_ADMIN_WAKE_DOMAIN, RELEASE_ADMIN_WAKE_KEY, after, bounded_timeout)
+
+    global_scope = bool(claims.get("global_scope"))
+    organization_id = claims.get("organization_id")
+    organization_id = int(organization_id) if organization_id is not None else None
+    client_id = claims.get("client_id")
+    scope = _wake_scope(global_scope=global_scope, organization_id=organization_id, client_id=client_id)
+
+    def generation() -> int:
+        return current_generation(global_scope=global_scope, organization_id=organization_id, client_id=client_id)
+
+    loop = asyncio.get_running_loop()
+    waiter: asyncio.Future[None] = loop.create_future()
+    subscription = (loop, waiter)
+    with _CONDITION:
+        observed = generation()
+        if observed > int(after) or bounded_timeout <= 0:
+            return observed
+        _UI_ASYNC_WAITERS[scope].add(subscription)
+    try:
+        try:
+            await asyncio.wait_for(waiter, timeout=bounded_timeout)
+        except asyncio.TimeoutError:
+            pass
+    finally:
+        with _CONDITION:
+            subscribers = _UI_ASYNC_WAITERS.get(scope)
+            if subscribers is not None:
+                subscribers.discard(subscription)
+                if not subscribers:
+                    _UI_ASYNC_WAITERS.pop(scope, None)
+    return generation()
