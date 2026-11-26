@@ -74,13 +74,9 @@ def test_brace_expansion_is_patched_and_its_old_audit_waiver_is_removed() -> Non
     allowlist = json.loads(
         (ROOT / "frontend" / "dependency-audit-allowlist.json").read_text(encoding="utf-8")
     )
-    # Den gamle brace-expansion-waiver må ikke genindføres. Den særskilt
-    # reviewede picomatch-only dev-undtagelse testes i test_dependency_security_20261021.py.
-    exceptions = allowlist.get("exceptions", [])
-    assert all(entry.get("package") != "brace-expansion" for entry in exceptions)
-    assert [entry.get("package") for entry in exceptions] == ["picomatch"]
-    assert exceptions[0]["scope"] == "dev-only"
-    assert exceptions[0]["advisories"] == ["GHSA-fc5q-39xc-vjpf"]
+    # Neither the retired brace-expansion waiver nor the withdrawn picomatch
+    # advisory waiver may be reintroduced. All active exceptions must be absent.
+    assert allowlist["exceptions"] == []
 
 
 def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
