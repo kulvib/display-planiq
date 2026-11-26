@@ -296,7 +296,11 @@ def test_agent_upload_authenticates_before_bounded_body_read():
     service_source = read_backend("service1/livestream_v2.py")
 
     assert "MAX_HLS_FILE_BYTES = 64 * 1024 * 1024" in service_source
-    assert "if len(payload) > MAX_HLS_FILE_BYTES:" in service_source
+    assert "if not payload or len(payload) > MAX_HLS_FILE_BYTES:" in service_source
+    assert "MAX_HLS_MANIFEST_BYTES = 64 * 1024" in service_source
+    assert "MAX_HLS_UPLOAD_RESERVED_BYTES = 64 * 1024 * 1024" in router_source
+    assert "MAX_HLS_UPLOADS = 8" in router_source
+    assert "len(payload) + len(chunk) > maximum" in router_source
     assert "async def _read_bounded_body" in router_source
     assert "request.stream()" in router_source
     assert "await request.body()" not in router_source
@@ -305,7 +309,12 @@ def test_agent_upload_authenticates_before_bounded_body_read():
     upload_end = router_source.index("\n\n@router.post", upload_start)
     upload_source = router_source[upload_start:upload_end]
     assert upload_source.index("require_agent_token(auth_session") < upload_source.index("_read_bounded_body(")
-    assert "maximum=MAX_HLS_FILE_BYTES" in upload_source
+    assert 'MAX_HLS_MANIFEST_BYTES if safe_hls_filename(filename) == "index.m3u8" else MAX_HLS_FILE_BYTES' in upload_source
+    assert upload_source.index("_upload_capacity(request, maximum)") < upload_source.index("_reserve_upload(client_id, size)") < upload_source.index("_read_bounded_body(")
+    assert "_read_bounded_body(request, maximum=size)" in upload_source
+    assert "timeout=HLS_UPLOAD_TIMEOUT_SECONDS" in upload_source
+    assert upload_source.index("_read_bounded_body(") < upload_source.index("require_agent_token(session, authorization") < upload_source.index("write_hls_file(")
+    assert upload_source.index("finally:") < upload_source.index("_upload_reservations.pop(client_id, None)")
 
 
 if __name__ == "__main__":
