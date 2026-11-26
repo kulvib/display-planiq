@@ -70,3 +70,15 @@ test("post-write refresh failure cannot masquerade as a failed mutation", () => 
   assert.match(panel, /The domain mutation has already succeeded/);
   assert.match(panel, /await onSaved\?\.\(payload\)/);
 });
+
+
+test("configuration keeps rare sensitive fields closed and distinguishes queued actions from completed writes", () => {
+  const panel = configurationPanelSource();
+  assert.match(panel, /showPasswordFields, setShowPasswordFields\] = React.useState\(false\)/);
+  assert.match(panel, /setCfadminPassword\(""\);[\s\S]*?setCfadminPasswordRepeat\(""\)/);
+  assert.match(panel, /!isSuperadmin \|\| localManagementBusy/);
+  assert.match(panel, /localManagementNeedsAttention && <Alert/);
+  assert.doesNotMatch(panel, /LinearProgress|localManagementProgress/);
+  assert.match(panel, /loading \|\| error \|\| !organizationDirty/);
+  assert.match(panel, /try \{ await onRefresh\?\.\(\); \} catch \{\}/);
+});

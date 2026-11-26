@@ -949,10 +949,10 @@ Ryd hele uploadlisten
                 </Box>
 
                 <Stack direction="row" spacing={0.7} sx={{ flexWrap: "wrap", rowGap: 0.7 }}>
-                  <Button disabled={!canControl || fileBrowserLoading || !canGoBack} size="small" variant="outlined" color="inherit" onClick={goBack} sx={{ minWidth: 36, px: 0.9 }}>
+                  <Button disabled={!canControl || fileBrowserLoading || !canGoBack} size="small" variant="outlined" color="inherit" onClick={goBack} aria-label="Forrige mappe" title="Forrige mappe" sx={{ minWidth: 36, px: 0.9 }}>
                     <ArrowBackIcon fontSize="small" />
                   </Button>
-                  <Button disabled={!canControl || fileBrowserLoading || !canGoForward} size="small" variant="outlined" color="inherit" onClick={goForward} sx={{ minWidth: 36, px: 0.9 }}>
+                  <Button disabled={!canControl || fileBrowserLoading || !canGoForward} size="small" variant="outlined" color="inherit" onClick={goForward} aria-label="Næste mappe" title="Næste mappe" sx={{ minWidth: 36, px: 0.9 }}>
                     <ArrowForwardIcon fontSize="small" />
                   </Button>
                   <Button disabled={!canControl || fileBrowserLoading || !selectableEntries.length || fileOperationBusy} size="small" variant={allVisibleSelected ? "contained" : "outlined"} color={allVisibleSelected ? "primary" : "inherit"} onClick={toggleAllVisible}>
@@ -978,6 +978,7 @@ Ryd hele uploadlisten
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="Søg i aktuel mappe"
+                inputProps={{ "aria-label": "Søg i aktuel mappe" }}
                 disabled={!canControl || fileBrowserLoading}
                 sx={{ maxWidth: 420 }}
                 slotProps={{

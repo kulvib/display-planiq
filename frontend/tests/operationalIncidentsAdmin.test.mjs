@@ -34,3 +34,13 @@ test("fleet report coverage is gated, does not claim scanner execution, and dist
   assert.match(page, /domain\.stale/);
   assert.match(page, /operational-incidents\/report-coverage/);
 });
+
+
+test("daily incident view prioritizes faults and never reports unverified history as empty", () => {
+  assert.match(page, /operationProblems = operations\.filter\(\(row\) => row\.outcome !== "succeeded"\)/);
+  assert.match(page, /visibleOperations = showAllOperations \? operations : operationProblems/);
+  assert.match(page, /operationsVerified && !visibleOperations\.length/);
+  assert.match(page, /setOperationsVerified\(false\)/);
+  assert.match(page, /coverageIncomplete && <Alert/);
+  assert.ok(page.indexOf('aria-label="Driftsfejlhistorik"') < page.indexOf("Dækning af klientrapporter"));
+});

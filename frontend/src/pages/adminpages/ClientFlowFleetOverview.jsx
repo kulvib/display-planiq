@@ -32,12 +32,14 @@ export default function ClientFlowFleetOverview({clients, release, stableVersion
   return <Paper elevation={0} sx={panel}>
     <Stack spacing={2}>
       <Box>
-        <Typography variant="caption" color="text.secondary">Gældende standardrelease i kataloget</Typography>
-        <Typography variant="h4" fontWeight={900}>ClientFlow {stableVersion}</Typography>
-        <Typography variant="body2" color="text.secondary">{release?.release_id} · Installation følger backendens godkendelser</Typography>
+        <Typography variant="caption" color="text.secondary">Gældende standardrelease</Typography>
+        <Stack direction="row" alignItems="baseline" flexWrap="wrap" gap={1}>
+          <Typography variant="h4" fontWeight={900}>ClientFlow {stableVersion}</Typography>
+          <Typography variant="caption" color="text.secondary">Release {release?.release_id?.match(/-seq-(\d+)$/)?.[1] || "–"}</Typography>
+        </Stack>
       </Box>
       <Box sx={{display:"grid",gridTemplateColumns:{xs:"repeat(2,minmax(0,1fr))",md:"repeat(5,minmax(0,1fr))"},gap:1}}>
-        {[["Klienter",counts.total],["Matcher standard",counts.standard],["Ældre",counts.older],["Nyere",counts.newer],["Ukendt",counts.unknown]].map(([label,count]) =>
+        {[["Klienter",counts.total],["På standard",counts.standard],["Ældre",counts.older],["Nyere",counts.newer],["Ukendt",counts.unknown]].map(([label,count]) =>
           <Box key={label} sx={{p:1.5,border:1,borderColor:"divider",borderRadius:2,minWidth:0}}>
             <Typography variant="caption" color="text.secondary">{label}</Typography>
             <Typography variant="h5" fontWeight={800}>{count}</Typography>
@@ -73,7 +75,7 @@ export default function ClientFlowFleetOverview({clients, release, stableVersion
         <Typography variant="caption" color="text.secondary">{filtered.length ? safePage*25+1 : 0}–{Math.min(filtered.length,(safePage+1)*25)} af {filtered.length}</Typography>
         <Box><Button size="small" disabled={safePage===0} onClick={()=>setPage(safePage-1)}>Forrige</Button><Button size="small" disabled={(safePage+1)*25>=filtered.length} onClick={()=>setPage(safePage+1)}>Næste</Button></Box>
       </Stack>
-      <Typography variant="caption" color="text.secondary">Senest rapporterede versioner er ikke et bevis for aktuel online-status eller installationsgodkendelse.</Typography>
+      <Typography variant="caption" color="text.secondary">Senest rapporterede versioner · ikke aktuel online- eller installationsstatus.</Typography>
     </Stack>
   </Paper>;
 }

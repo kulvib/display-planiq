@@ -736,6 +736,7 @@ export default function ClientInfoPage() {
   const isMobile = smallViewport || touchHandset;
 
   const [clients, setClients] = useState([]);
+  const [clientListStatus, setClientListStatus] = useState("loading");
   const [clientSearch, setClientSearch] = useState("");
   const [deletedClients, setDeletedClients] = useState([]);
   const [organizations, setOrganizations] = useState([]);
@@ -811,6 +812,8 @@ export default function ClientInfoPage() {
       requestPromise = (async () => {
         try {
           const data = await getControlRoomClients();
+          if (!Array.isArray(data)) throw new Error("Ugyldig klientliste");
+          setClientListStatus("ready");
 
           if (
             forceUpdate ||
@@ -821,6 +824,7 @@ export default function ClientInfoPage() {
           }
           return true;
         } catch (err) {
+          setClientListStatus("error");
           if (notifyError && (forceUpdate || showLoading)) {
             showSnackbar("Fejl: " + (err?.message || err), "error");
           }
@@ -1693,8 +1697,7 @@ export default function ClientInfoPage() {
                 Control Room
               </Typography>
               <Typography sx={{ color: "rgba(203,213,225,0.68)", mt: 0.35 }}>
-                Se skærme, status, godkendelser og papirkurv på tværs af
-                organisationer.
+                Status og styring af dine skærme.
               </Typography>
             </Box>
           </Stack>
@@ -1723,9 +1726,20 @@ export default function ClientInfoPage() {
           slotProps={{ htmlInput: { maxLength: 160 } }}
           helperText={searchActive
             ? `${visibleApprovedClients.length} godkendte · ${unapprovedClients.length} afventer · Ryd søgningen for at ændre rækkefølge`
-            : "Søgning foregår lokalt, uden ekstra databasekald."}
+            : undefined}
         />
       </Paper>
+      {clientListStatus === "error" && (
+        <MuiAlert severity="warning" sx={{ mb: 2 }}>Klientlisten kunne ikke opdateres. Viste oplysninger kan være forældede.</MuiAlert>
+      )}
+      <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
+        <Chip label={clientListStatus === "ready" ? `${dragClients.length} klienter` : "Klientstatus ikke verificeret"} variant="outlined" />
+        {clientListStatus === "ready" && <>
+          <Chip label={`${dragClients.filter(getClientOnline).length} online`} sx={compactDarkChipSx("success")} />
+          <Chip label={`${dragClients.filter((client) => client?.presence?.is_online === false).length} offline`} variant="outlined" />
+          {dragClients.some((client) => typeof client?.presence?.is_online !== "boolean") && <Chip label={`${dragClients.filter((client) => typeof client?.presence?.is_online !== "boolean").length} ukendt`} variant="outlined" />}
+        </>}
+      </Stack>
       {/* Godkendte klienter */}
       <Typography
         variant="h5"
@@ -1860,7 +1874,7 @@ export default function ClientInfoPage() {
                     {visibleApprovedClients.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={colSpanApproved} align="center">
-                          {searchActive ? "Ingen klienter matcher søgningen." : "Ingen godkendte klienter."}
+                          {clientListStatus !== "ready" ? "Afventer verificeret klientliste." : searchActive ? "Ingen klienter matcher søgningen." : "Ingen godkendte klienter."}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -2381,6 +2395,7 @@ export default function ClientInfoPage() {
                   />
                 }
                 onClick={() => setTrashExpanded((value) => !value)}
+                aria-expanded={trashExpanded}
               >
                 {trashExpanded ? "Skjul papirkurv" : "Vis papirkurv"}
               </Button>

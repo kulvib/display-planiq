@@ -69,3 +69,31 @@ test("mobile client overview preserves access to all data with discoverable scro
   assert.match(detail, /overflowWrap: "anywhere"/);
   assert.match(detail, /maxWidth: "100%", minWidth: 0/);
 });
+
+
+test("System, Network and Diagnostics retain technical details without false current status", () => {
+  assert.match(diagnostics, /Tekniske driftsoplysninger/);
+  assert.match(diagnostics, /NetworkPanel client=\{client\} clientOnline=\{clientOnline\}/);
+  assert.match(diagnostics, /Senest rapporteret · ikke aktuel/);
+  assert.match(diagnostics, /Tekniske netværksoplysninger/);
+  assert.match(diagnostics, /onlineValue !== true && onlineValue !== false/);
+  assert.ok(diagnostics.indexOf("Kræver opmærksomhed") < diagnostics.indexOf("summaryCards.map(renderSummaryCard)"));
+  assert.match(diagnostics, /Faktiske ClientFlow-opdateringstrin/);
+});
+
+
+test("calendar rolls its seven-day view forward at midnight without another network timer", () => {
+  assert.match(diagnostics, /calendarDayStart = startOfLocalDay\(now\)\.getTime\(\)/);
+  assert.match(diagnostics, /const base = new Date\(calendarDayStart\)/);
+  assert.match(diagnostics, /\[markedDays, calendarDayStart\]/);
+});
+
+
+test("Control Room overview distinguishes a failed inventory read from verified empty data", () => {
+  assert.match(listing, /setClientListStatus\("error"\)/);
+  assert.match(listing, /setClientListStatus\("ready"\)/);
+  assert.match(listing, /Klientlisten kunne ikke opdateres/);
+  assert.match(listing, /clientListStatus !== "ready" \? "Afventer verificeret klientliste\."/);
+  assert.match(listing, /presence\?\.is_online === false/);
+  assert.match(listing, /aria-expanded=\{trashExpanded\}/);
+});
