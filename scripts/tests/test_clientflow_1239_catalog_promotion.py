@@ -15,11 +15,11 @@ REFERENCE = "clientflow-1.3.38-seq-1239/abbd8d673a350b6beca5d9e58ddb02fa2edd1c08
 def test_exact_promotion_preserves_no_update_no_rollback_and_historical_evidence() -> None:
     catalog = json.loads((ROOT / "scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json").read_text(encoding="utf-8"))
     source = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
-    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.3.48"
-    assert source["release_sequence"] == 1249
+    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.4.0"
+    assert source["release_sequence"] == 1250
     assert catalog["catalog_sequence"] == 1243
     assert catalog["catalog_sequence"] == 1243  # immutable historical catalog
-    assert source["release_sequence"] == 1249  # current staged source
+    assert source["release_sequence"] == 1250  # current staged source
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert len(catalog["releases"]) == 4
