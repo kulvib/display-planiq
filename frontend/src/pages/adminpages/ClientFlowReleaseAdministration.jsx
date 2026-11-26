@@ -63,6 +63,7 @@ export default function ClientFlowReleaseAdministration() {
   const [password, setPassword] = React.useState("");
   const [dialogError, setDialogError] = React.useState("");
   const [activeVisibleCount, setActiveVisibleCount] = React.useState(20);
+  const [historyVisibleCount, setHistoryVisibleCount] = React.useState(3);
   const controllerRef = React.useRef(null);
   const [liveStatus, setLiveStatus] = React.useState("connecting");
 
@@ -202,6 +203,9 @@ export default function ClientFlowReleaseAdministration() {
   const activeRows = status?.active_deployments ?? EMPTY_CLIENTS;
   const activeComplete = status?.active_deployments_complete === true;
   const activeIds = React.useMemo(() => new Set(activeRows.map((row) => row.id)), [activeRows]);
+  const recentRows = (status?.recent_deployments ?? EMPTY_CLIENTS).filter((row) => !activeIds.has(row.id));
+  const recentProblems = recentRows.filter((row) => ["failed", "recovery_failed", "rolled_back"].includes(row.state)).length;
+  const baselineInstalled = available.some((row) => row.id === 3 && row.reported_version === "1.4.0");
 
   const changeVersion = (value) => {
     setSourceVersion(value);
@@ -312,8 +316,8 @@ export default function ClientFlowReleaseAdministration() {
         <Box sx={{ display: "flex", width: "100%", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
           <Box sx={{ flex: "1 1 320px", minWidth: 0 }}>
             <Typography variant="h5" fontWeight={900}>ClientFlow · Releases</Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              Gældende release, klientversioner og faktiske opdateringer.
+            <Typography variant="body2" color="text.secondary" aria-live="polite" sx={{ mt: 0.5 }}>
+              {liveStatus === "active" ? "Automatisk status aktiv" : liveStatus === "paused" ? "Automatisk status på pause" : liveStatus === "connecting" ? "Opretter live status …" : "Automatisk status afbrudt – Opdater kan bruges manuelt"}
             </Typography>
           </Box>
           <Box sx={{ ml: "auto", flexShrink: 0 }}>
@@ -328,27 +332,29 @@ export default function ClientFlowReleaseAdministration() {
         <>
           <ClientFlowFleetOverview clients={available} release={release} stableVersion={status.stable_version} activeRows={activeRows} activeComplete={activeComplete} />
           {status.phase === "standard_baseline" && <ClientFlowStandardOrderPanel status={status} onAuthorized={refresh} /> }
-          {status.phase === "additive_draft_only" && <ClientFlowBaselinePilotPanel status={status} onAuthorized={refresh} /> }
+          {status.phase === "additive_draft_only" && !baselineInstalled && <ClientFlowBaselinePilotPanel status={status} onAuthorized={refresh} /> }
+          {status.phase === "additive_draft_only" && baselineInstalled && <Alert severity="info">
+            Viborg1 rapporterer ClientFlow 1.4.0. Standardrelease er fortsat {status.stable_version}, indtil den særskilte releasegodkendelse er gennemført.
+          </Alert>}
           <Paper elevation={0} sx={panelSx}>
-            <Typography variant="h6" fontWeight={850}>Faktiske ClientFlow-opdateringer</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-              Aktive opdateringer og de seneste registrerede afsluttede forløb.
-            </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }} aria-live="polite">
-              {liveStatus === "active" ? "Automatisk status aktiv" : liveStatus === "paused" ? "Automatisk status midlertidigt sat på pause" : liveStatus === "connecting" ? "Opretter live status …" : "Automatisk status afbrudt – Opdater kan bruges manuelt"}
-            </Typography>
-            <Typography fontWeight={750} sx={{ mt: 1, mb: 1 }}>Aktive opdateringer {activeComplete ? `(${activeRows.length})` : ""}</Typography>
+            <Typography variant="h6" fontWeight={850} sx={{ mb: 1 }}>Aktive opdateringer {activeComplete ? `(${activeRows.length})` : ""}</Typography>
             {!activeComplete && <Alert severity="warning" sx={{ mb: 1 }}>Den fulde aktive status er ikke tilgængelig. Ingen annullering kan bestilles her.</Alert>}
             {activeComplete && activeRows.length === 0 ? <Typography color="text.secondary">Ingen aktive opdateringer.</Typography> :
               <ClientFlowDeploymentHistory rows={activeRows.slice(0, activeVisibleCount)} onCancel={activeComplete ? openCancelDeployment : undefined} busy={submitting || loading} />}
             {activeRows.length > activeVisibleCount && <Button onClick={() => setActiveVisibleCount((count) => count + 20)}>Vis flere aktive opdateringer</Button>}
-            <Divider sx={{ my: 2 }} />
-            <Typography fontWeight={750} sx={{ mb: 1 }}>Seneste historik</Typography>
-            <ClientFlowDeploymentHistory rows={(status.recent_deployments ?? []).filter((row) => !activeIds.has(row.id))} />
+          </Paper>
+          <Paper elevation={0} sx={panelSx}>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1}>
+              <Typography variant="h6" fontWeight={850}>Seneste opdateringer</Typography>
+              {recentProblems > 0 && <Chip size="small" color="warning" variant="outlined" label={`${recentProblems} fejl eller tilbageførsler i historikken`} />}
+            </Stack>
+            <ClientFlowDeploymentHistory rows={recentRows.slice(0, historyVisibleCount)} compact />
+            {recentRows.length > historyVisibleCount && <Button size="small" sx={{ mt: 1 }} onClick={() => setHistoryVisibleCount((count) => count + 10)}>Vis flere opdateringer ({recentRows.length - historyVisibleCount})</Button>}
+            {historyVisibleCount > 3 && <Button size="small" sx={{ mt: 1 }} onClick={() => setHistoryVisibleCount(3)}>Vis færre</Button>}
           </Paper>
           {status.phase !== "standard_baseline" && <Accordion disableGutters defaultExpanded={false} sx={panelSx}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Typography fontWeight={850}>Tekniske releasedetaljer og historiske pilotplaner</Typography>
+              <Typography variant="body2" fontWeight={750}>Tekniske releasedetaljer og historiske pilotplaner</Typography>
             </AccordionSummary>
             <AccordionDetails sx={{ p: 0 }}>
             <Stack spacing={2.2}>

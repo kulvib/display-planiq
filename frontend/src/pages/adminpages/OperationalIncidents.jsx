@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  Alert, Box, Button, Chip, CircularProgress, Divider, MenuItem,
+  Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button, Chip, CircularProgress, Divider, MenuItem,
   Paper, Stack, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TextField, Typography,
 } from "@mui/material";
 import TroubleshootIcon from "@mui/icons-material/Troubleshoot";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import client from "../../api/client";
 import AdminRefreshButton from "../../components/AdminRefreshButton";
 
@@ -39,8 +40,11 @@ export default function OperationalIncidents() {
   const [events, setEvents] = useState({});
   const [operations, setOperations] = useState([]);
   const [operationError, setOperationError] = useState("");
+  const [operationsVerified, setOperationsVerified] = useState(false);
+  const [showAllOperations, setShowAllOperations] = useState(false);
   const [coverage, setCoverage] = useState(null);
   const [coverageError, setCoverageError] = useState("");
+  const [coverageVerified, setCoverageVerified] = useState(false);
   const [detailsError, setDetailsError] = useState("");
 
   const reload = useCallback(() => setRefreshKey((key) => key + 1), []);
@@ -72,16 +76,30 @@ export default function OperationalIncidents() {
 
   useEffect(() => {
     const abort = new AbortController();
+    setCoverageVerified(false);
     client.get("/api/superadmin/operational-incidents/report-coverage", { signal: abort.signal })
-      .then(({ data }) => { if (!abort.signal.aborted) { setCoverage(data); setCoverageError(""); } })
+      .then(({ data }) => {
+        if (abort.signal.aborted) return;
+        if (!Number.isSafeInteger(data?.approved_clients) || data.approved_clients < 0 ||
+            !Array.isArray(data.domains) || !data.domains.length ||
+            data.domains.some((domain) => ["fresh", "stale", "missing"].some((key) => !Number.isSafeInteger(domain[key]) || domain[key] < 0))) {
+          throw new Error("Ugyldig rapportdækning");
+        }
+        setCoverage(data); setCoverageError(""); setCoverageVerified(true);
+      })
       .catch(() => { if (!abort.signal.aborted) { setCoverage(null); setCoverageError("Rapportdækningen kunne ikke hentes."); } });
     return () => abort.abort();
   }, [refreshKey]);
 
   useEffect(() => {
     const abort = new AbortController();
+    setOperationsVerified(false);
     client.get("/api/superadmin/operational-incidents/operation-outcomes", { signal: abort.signal })
-      .then(({ data }) => { if (!abort.signal.aborted) { setOperations(data.items || []); setOperationError(""); } })
+      .then(({ data }) => {
+        if (abort.signal.aborted) return;
+        if (!Array.isArray(data?.items)) throw new Error("Ugyldig opdateringshistorik");
+        setOperations(data.items); setOperationError(""); setOperationsVerified(true);
+      })
       .catch(() => { if (!abort.signal.aborted) setOperationError("Opdaterings- og rollbackhistorik kunne ikke hentes."); });
     return () => abort.abort();
   }, [refreshKey]);
@@ -100,6 +118,10 @@ export default function OperationalIncidents() {
   }
 
   const change = (setter) => (event) => { setter(event.target.value); setPage(0); };
+  const coverageIncomplete = coverageVerified && (!coverage.approved_clients ||
+    coverage.domains.some((domain) => domain.stale > 0 || domain.missing > 0));
+  const operationProblems = operations.filter((row) => row.outcome !== "succeeded");
+  const visibleOperations = showAllOperations ? operations : operationProblems;
 
   return (
     <Stack spacing={2}>
@@ -107,10 +129,10 @@ export default function OperationalIncidents() {
         <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
           <Box sx={{ minWidth: 0, flex: "1 1 280px" }}>
             <Typography variant="h5" fontWeight={900} display="flex" gap={1} alignItems="center">
-              <TroubleshootIcon /> Driftsfejl og genopretning
+              <TroubleshootIcon /> Driftsfejl
             </Typography>
             <Typography variant="body2" sx={{ color: "#cbd5e1", mt: 0.8 }}>
-              Historik over verificerede fejlrapporter fra Status, Display og System. En genstart løser aldrig automatisk en fejl.
+              Aktuelle fejl og observerede løsninger.
             </Typography>
           </Box>
           <AdminRefreshButton
@@ -134,29 +156,10 @@ export default function OperationalIncidents() {
           <TextField size="small" label="Klient-ID" value={clientId} onChange={change(setClientId)} placeholder="Alle klienter" />
         </Stack>
       </Paper>
-      <Paper sx={paper}>
-        <Typography fontWeight={800} mb={0.7}>Dækning af klientrapporter</Typography>
-        <Typography variant="body2" sx={{ color: "#cbd5e1", mb: 1.5 }}>
-          Viser modtagne rapporter fra godkendte klienter (frisk: højst 180 sekunder).
-          Manglende rapporter er ikke i sig selv en registreret fejl. Denne kontrol beviser ikke, at fejldetektorens baggrundsscanner kører.
-        </Typography>
-        {coverageError && <Alert severity="warning">{coverageError}</Alert>}
-        {coverage && <>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            Godkendte klienter: <strong>{coverage.approved_clients}</strong>
-          </Typography>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {(coverage.domains || []).map((domain) => <Chip
-              key={domain.domain}
-              color={!coverage.approved_clients || domain.missing || domain.stale ? "warning" : "success"}
-              variant="outlined"
-              label={`${domain.domain}: ${domain.fresh} friske · ${domain.stale} forsinkede · ${domain.missing} mangler`}
-            />)}
-          </Stack>
-        </>}
-      </Paper>
       {error && <Alert severity="error">{error}</Alert>}
       {detailsError && <Alert severity="warning">{detailsError}</Alert>}
+      {coverageError && <Alert severity="warning">{coverageError}</Alert>}
+      {coverageIncomplete && <Alert severity="warning">Klientrapporter mangler eller er forsinkede. Fravær af registrerede fejl er ikke bevis for fejlfri drift.</Alert>}
       <Paper sx={paper}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1.5}>
           <Typography fontWeight={800}>Fejlforløb {resultVerified ? `(${result.total ?? 0})` : "· status ikke verificeret"}</Typography>
@@ -194,7 +197,7 @@ export default function OperationalIncidents() {
                   </TableCell></TableRow>}
                 </React.Fragment>
               ))}
-              {!loading && resultVerified && !result.items?.length && <TableRow><TableCell colSpan={6}>Ingen registrerede fejlforløb med disse filtre. Historikken starter ved aktivering af denne funktion.</TableCell></TableRow>}
+              {!loading && resultVerified && !result.items?.length && <TableRow><TableCell colSpan={6}>Ingen registrerede fejl med de valgte filtre.</TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>
@@ -204,23 +207,46 @@ export default function OperationalIncidents() {
           <Button disabled={(page + 1) * 50 >= (result.total || 0)} onClick={() => setPage((p) => p + 1)}>Næste</Button>
         </Stack>
       </Paper>
+      <Accordion disableGutters sx={paper}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+            <Typography fontWeight={800}>Dækning af klientrapporter</Typography>
+            <Chip size="small" variant="outlined" color={coverageError || coverageIncomplete ? "warning" : "default"}
+              label={coverageError ? "Kunne ikke hentes" : !coverageVerified ? "Afventer" : coverageIncomplete ? "Ufuldstændig" : "Rapporter modtaget"} />
+          </Stack>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body2" sx={{ mb: 1.5 }}>Frisk rapport: højst 180 sekunder. Denne kontrol beviser ikke, at fejldetektorens baggrundsscanner kører. En genstart løser aldrig automatisk en fejl.</Typography>
+          {coverageVerified && <>
+            <Typography variant="body2" sx={{ mb: 1 }}>Godkendte klienter: <strong>{coverage.approved_clients}</strong></Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {coverage.domains.map((domain) => <Chip key={domain.domain}
+                color={!coverage.approved_clients || domain.missing || domain.stale ? "warning" : "success"}
+                variant="outlined" label={`${domain.domain}: ${domain.fresh} friske · ${domain.stale} forsinkede · ${domain.missing} mangler`} />)}
+            </Stack>
+          </>}
+        </AccordionDetails>
+      </Accordion>
       <Paper sx={paper}>
-        <Typography variant="h6" fontWeight={900}>ClientFlow-opdateringer og signerede rollbacks</Typography>
-        <Typography variant="body2" sx={{ color: "#cbd5e1", mt: 0.7, mb: 1.5 }}>
-          Seneste afsluttede handlinger fra den eksisterende autoritative hændelsesjournal (90 dage).
-          En senere vellykket handling ophæver ikke automatisk en tidligere registreret fejl.
-        </Typography>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1}>
+          <Typography variant="h6" fontWeight={850}>Opdateringsfejl {operationsVerified ? `(${operationProblems.length})` : ""}</Typography>
+          <Button size="small" disabled={!operationsVerified} aria-pressed={showAllOperations} onClick={() => setShowAllOperations((old) => !old)}>
+            {showAllOperations ? "Vis kun fejl og tilbageførsler" : "Vis også gennemførte"}
+          </Button>
+        </Stack>
+        <Typography variant="caption" color="text.secondary" display="block" mb={1}>Seneste 50 afsluttede handlinger inden for 90 dage.</Typography>
         {operationError && <Alert severity="warning">{operationError}</Alert>}
         <TableContainer><Table size="small" aria-label="Opdaterings- og rollbackhistorik">
           <TableHead><TableRow><TableCell>Klient</TableCell><TableCell>Handling</TableCell><TableCell>Resultat</TableCell><TableCell>Modtaget</TableCell></TableRow></TableHead>
           <TableBody>
-            {!operationError && operations.map((row) => <TableRow key={`${row.category}:${row.id}`}>
+            {operationsVerified && visibleOperations.map((row) => <TableRow key={`${row.category}:${row.id}`}>
               <TableCell>{row.client_name} (#{row.client_id})</TableCell>
               <TableCell>{row.category === "signed_rollback" ? "Signeret rollback" : "ClientFlow-opdatering"}</TableCell>
               <TableCell><Chip size="small" color={row.outcome === "succeeded" ? "success" : row.outcome === "rolled_back" ? "warning" : "error"} label={row.outcome === "succeeded" ? "Gennemført" : row.outcome === "rolled_back" ? "Tilbageført" : "Fejl"} /></TableCell>
               <TableCell>{dateText(row.occurred_at)}</TableCell>
             </TableRow>)}
-            {!operationError && !operations.length && <TableRow><TableCell colSpan={4}>Ingen afsluttede handlinger i de seneste 90 dage.</TableCell></TableRow>}
+            {!operationsVerified && !operationError && <TableRow><TableCell colSpan={4}>Henter opdateringshistorik …</TableCell></TableRow>}
+            {operationsVerified && !visibleOperations.length && <TableRow><TableCell colSpan={4}>{showAllOperations ? "Ingen afsluttede handlinger." : "Ingen registrerede fejl eller tilbageførsler i den viste historik."}</TableCell></TableRow>}
           </TableBody>
         </Table></TableContainer>
       </Paper>

@@ -180,3 +180,17 @@ test("1250 pilot uses explicit review and reauthentication, not the legacy plan"
   assert.match(panel, /authority\.revision !== status\.revision/);
   assert.doesNotMatch(panel, /setInterval\(/);
 });
+
+
+test("daily release view keeps live status, compact recent history and the explicit pre-cutover distinction", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
+  const history = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowDeploymentHistory.jsx", import.meta.url), "utf8");
+  assert.match(ui, /baselineInstalled && <Alert/);
+  assert.match(ui, /status\.stable_version\}, indtil den særskilte releasegodkendelse/);
+  assert.match(ui, /recentRows\.slice\(0, historyVisibleCount\)\} compact/);
+  assert.match(ui, /recentProblems > 0/);
+  assert.match(history, /compact && state\.terminal/);
+  assert.match(history, /state\.color === "error"/);
+  assert.match(history, /component="details"/);
+  assert.match(history, /CANCELLABLE_STATES\.has\(item\.state\)/);
+});

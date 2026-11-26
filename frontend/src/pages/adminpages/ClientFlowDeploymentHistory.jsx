@@ -10,12 +10,27 @@ function dateLabel(value) {
 }
 
 /** Pure view of canonical backend state. No network calls, timers or synthetic percentages. */
-export default function ClientFlowDeploymentHistory({ rows = [], showClient = true, onCancel, busy = false }) {
+export default function ClientFlowDeploymentHistory({ rows = [], showClient = true, onCancel, busy = false, compact = false }) {
   if (!rows.length) return <Typography color="text.secondary">Ingen ClientFlow-deployments registreret.</Typography>;
   return (
-    <Stack spacing={2}>
+    <Stack spacing={compact ? 1 : 2}>
       {rows.map((item) => {
         const state = deploymentPresentation(item.state);
+        if (compact && state.terminal) {
+          return <Box key={item.id} sx={{ borderBottom: 1, borderColor: "divider", pb: 1 }}>
+            <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
+              <Typography fontWeight={750}>{showClient ? `${item.client_name || `Klient #${item.client_id}`} · ` : ""}ClientFlow {item.target_version}</Typography>
+              <Chip size="small" color={state.color} label={state.label} variant="outlined" />
+              <Typography variant="caption" color="text.secondary" sx={{ ml: "auto" }}>{dateLabel(item.completed_at)}</Typography>
+            </Stack>
+            {state.color === "error" && <Alert severity="error" sx={{ mt: 1 }}>{item.failure_message || item.failure_code || "Opdateringen fejlede."}</Alert>}
+            <Box component="details" sx={{ mt: 0.5, color: "text.secondary", fontSize: "0.8rem" }}>
+              <Box component="summary" sx={{ cursor: "pointer", width: "fit-content" }}>Detaljer</Box>
+              <Typography variant="caption" display="block">Bestilt {dateLabel(item.requested_at)} · senest ændret {dateLabel(item.state_updated_at)}</Typography>
+              <Typography variant="caption" display="block" sx={{ overflowWrap: "anywhere" }}>Deployment-ID: {item.id}{item.observed_release_id ? ` · rapporteret: ${item.observed_release_id}` : ""}</Typography>
+            </Box>
+          </Box>;
+        }
         return (
           <Box key={item.id} sx={{ border: "1px solid rgba(148,163,184,0.2)", borderRadius: 2, p: 1.5 }}>
             <Stack direction="row" spacing={1} alignItems="center" useFlexGap flexWrap="wrap">
