@@ -123,3 +123,10 @@ test("newer installed release never defaults to a downgrade", () => {
   assert.equal(defaultClientflowTarget("1.3.43", "1.3.44", releases), "1.3.44");
   assert.equal(defaultClientflowTarget("1.3.44", "1.3.44", []), "");
 });
+
+
+test("updater timer travels on the shared detail hot-state feed", () => {
+  const block = detail.match(/const DETAIL_HOT_FIELDS = \[([\s\S]*?)\];/);
+  assert.ok(block);
+  assert.match(block[1], /"service_selfupdate_status"/);
+});
