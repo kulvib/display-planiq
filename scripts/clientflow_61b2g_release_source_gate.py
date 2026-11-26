@@ -17,8 +17,8 @@ from clientflow_63d6_active_catalog_contract import projected_stable_1245, verif
 
 BASELINE_VERSION = (1, 3, 44)
 BASELINE_SEQUENCE = 1245
-EXPECTED_CANDIDATE_VERSION = (1, 4, 0)
-EXPECTED_CANDIDATE_SEQUENCE = 1250
+EXPECTED_CANDIDATE_VERSION = (1, 4, 1)
+EXPECTED_CANDIDATE_SEQUENCE = 1251
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 VERSION_RE = re.compile(r'\d+\.\d+\.\d+\Z')
 REQUIRED_SOURCES = (
@@ -39,6 +39,7 @@ REQUIRED_SOURCES = (
     'client/release/lib/clientflow_release/builder.py',
     'backend/service1/clientflow_release_catalog.json',
     'backend/service1/clientflow_pilot_1245_approval.json',
+    'backend/service1/clientflow_pilot_1250_approval.json',
     'backend/service1/clientflow_1245_fleet_acceptance.json',
 )
 
@@ -230,6 +231,13 @@ def inspect(root: Path) -> dict:
         return '1245_stays_sole_stable_target_1246_update_only_separately_gated'
 
     check('unchanged_approved_stable_catalog_and_disarmed_pilot', stable_1245_still_immutable)
+    def immutable_1250():
+        raw = _read(root, 'backend/service1/clientflow_pilot_1250_approval.json')
+        if hashlib.sha256(raw).hexdigest() != 'fc851982c39de0b7f92b9274f822b70bf61ca014bcbd88e62d7570a08d58f334':
+            raise ValueError('approved_1250_lock_changed')
+        return 'approved_1250_lock_preserved'
+
+    check('unchanged_approved_1250_lock', immutable_1250)
     identity = check('release_source_identity', lambda: _identity(root))
     version = identity[0] if identity is not None else None
     sequence = identity[1] if identity is not None else None
