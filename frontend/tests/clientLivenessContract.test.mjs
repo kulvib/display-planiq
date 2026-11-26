@@ -29,10 +29,19 @@ test("live-only legacy actions use canonical Status liveness and not network dia
   assert.doesNotMatch(info, /systemReady|presence\?\.display\?\.ready/);
 });
 
-test("ClientFlow deployment is durable and not heartbeat gated", () => {
+test("ClientFlow deployment remains durable; new standard orders require fresh online status", () => {
   const block = info.split("function ClientFlowUpdateControl", 2)[1].split("function getUbuntuStep", 1)[0];
-  assert.doesNotMatch(block, /clientOnline/);
-  assert.match(block, /requestClientflowDeployment/);
+  const legacy = block.split("const executeClientFlowUpdate =", 2)[1].split("const cancelDeployment =", 1)[0];
+  const cancel = block.split("const cancelDeployment =", 2)[1].split("const reviewStandardUpdate =", 1)[0];
+  const standardEligibility = block.split("const standardEligible =", 2)[1].split("const selectedReleaseRequiresReboot", 1)[0];
+  assert.doesNotMatch(legacy, /clientOnline/);
+  assert.doesNotMatch(cancel, /clientOnline/);
+  assert.match(legacy, /requestClientflowDeployment/);
+  assert.match(cancel, /cancelClientflowDeployment/);
+  assert.match(standardEligibility, /clientOnline === true/);
+  assert.match(block, /const inProgress = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES\.has\(state\)/);
+  assert.match(block, /const canCancel = CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES\.has\(state\)/);
+  assert.match(block, /\(standardBaseline && !standardEligible\)/);
 });
 
 test("network diagnostics do not redefine global liveness", () => {

@@ -85,10 +85,19 @@ function LivestreamTile({ client, pageMediaActive }) {
   const [activeViewers, setActiveViewers] = useState(null);
   const [latencySeconds, setLatencySeconds] = useState(null);
   const [mediaTransport, setMediaTransport] = useState(null);
+  const [videoResolution, setVideoResolution] = useState(null);
   const [needsTapToPlay, setNeedsTapToPlay] = useState(false);
 
   const clientOnline = client?.presence?.is_online === true;
   const shouldRun = Boolean(pageMediaActive && intersecting && clientOnline && mobileViewerActive);
+
+  const updateVideoResolution = useCallback(() => {
+    const video = videoRef.current;
+    const width = video?.videoWidth;
+    const height = video?.videoHeight;
+    setVideoResolution(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
+      ? width + " × " + height : null);
+  }, []);
 
   const updateLatency = useCallback(() => {
     if (wssActiveRef.current) return;
@@ -138,6 +147,7 @@ function LivestreamTile({ client, pageMediaActive }) {
     }
     setLatencySeconds(null);
     setMediaTransport(null);
+    setVideoResolution(null);
     setNeedsTapToPlay(false);
     const video = videoRef.current;
     if (video) {
@@ -160,6 +170,7 @@ function LivestreamTile({ client, pageMediaActive }) {
     }
     destroyPlayer();
     mediaCapabilityRef.current = "";
+    setActiveViewers(null);
     if (leave && activeRef.current) {
       activeRef.current = false;
       void sendViewerLeave(client.id, viewerIdRef.current, "livestream_wall_inactive");
@@ -230,9 +241,16 @@ function LivestreamTile({ client, pageMediaActive }) {
         }),
       });
       let reportedPlayable = false;
+      let nativeHls = false;
       const reportPlayable = () => queueMicrotask(() => {
         if (cancelled || reportedPlayable || video.paused || video.readyState < 2) return;
         reportedPlayable = true;
+        if (nativeHls) {
+          mediaReady = true;
+          window.clearTimeout(startupWarning);
+          setState("live");
+          setMessage("");
+        }
         setMediaTransport(httpTransport);
         callbacks.onHttpTransport?.(httpTransport);
         callbacks.onPlayable?.();
@@ -322,15 +340,12 @@ function LivestreamTile({ client, pageMediaActive }) {
         }
 
         if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          nativeHls = true;
           video.crossOrigin = "use-credentials";
           video.src = hlsUrl;
           video.muted = true;
           video.autoplay = true;
           video.playsInline = true;
-          mediaReady = true;
-          window.clearTimeout(startupWarning);
-          setState("live");
-          setMessage("");
           video.play().then(() => { if (!cancelled) setNeedsTapToPlay(false); }).catch(() => { if (!cancelled) setNeedsTapToPlay(true); });
           return;
         }
@@ -437,9 +452,8 @@ function LivestreamTile({ client, pageMediaActive }) {
         if (payload?.media_capability) {
           mediaCapabilityRef.current = String(payload.media_capability);
         }
-        if (Number.isFinite(Number(payload?.active_viewers))) {
-          setActiveViewers(Number(payload.active_viewers));
-        }
+        const viewers = payload?.active_viewers;
+        setActiveViewers(Number.isSafeInteger(viewers) && viewers >= 0 ? viewers : null);
         const nextGeneration = pilotGenerationFromHeartbeat(payload);
         const nextObservedGeneration = generationFromHeartbeat(payload);
         const generationChanged = generation !== nextGeneration ||
@@ -543,7 +557,10 @@ function LivestreamTile({ client, pageMediaActive }) {
           ref={videoRef}
           muted
           playsInline
-          onPlaying={() => setNeedsTapToPlay(false)}
+          onPlaying={() => { setNeedsTapToPlay(false); updateVideoResolution(); }}
+          onLoadedMetadata={updateVideoResolution}
+          onResize={updateVideoResolution}
+          onEmptied={() => setVideoResolution(null)}
           onTimeUpdate={updateLatency}
           style={{ width: "100%", height: "100%", display: "block", objectFit: "contain" }}
         />
@@ -623,7 +640,8 @@ function LivestreamTile({ client, pageMediaActive }) {
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between", minWidth: 0, flexWrap: "wrap" }}>
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
             {[
-              activeViewers == null ? "" : `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}`,
+              state === "live" && shouldRun && videoResolution ? videoResolution : "",
+              shouldRun && activeViewers != null ? `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}` : "",
             ].filter(Boolean).join(" · ")}
           </Typography>
           <Button
@@ -646,20 +664,38 @@ export default function LivestreamOverview() {
   const [organizations, setOrganizations] = useState([]);
   const [search, setSearch] = useState("");
   const [sortOrder, setSortOrder] = useState("online");
+  const [presenceFilter, setPresenceFilter] = useState("all");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 12;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pageMediaActive, setPageMediaActive] = useState(document.visibilityState !== "hidden");
   const hiddenTimerRef = useRef(null);
+  const inventoryRequest = useRef(null);
+  const inventoryActive = useRef(false);
+  const [inventoryValid, setInventoryValid] = useState(false);
 
   const load = useCallback(async () => {
+    if (!inventoryActive.current || inventoryRequest.current) return;
+    const request = {};
+    inventoryRequest.current = request;
+    setLoading(true);
     try {
       const data = await getControlRoomClients();
-      setClients(Array.isArray(data) ? data.filter((client) => String(client.status || "").toLowerCase() === "approved") : []);
+      if (!inventoryActive.current || inventoryRequest.current !== request) return;
+      if (!Array.isArray(data)) throw new Error("Klientoversigten kunne ikke verificeres");
+      setClients(data.filter((client) => String(client.status || "").toLowerCase() === "approved"));
+      setInventoryValid(true);
       setError("");
     } catch (err) {
+      if (!inventoryActive.current || inventoryRequest.current !== request) return;
+      setInventoryValid(false);
       setError(err?.message || "Kunne ikke hente klienter.");
     } finally {
-      setLoading(false);
+      if (inventoryRequest.current === request) {
+        inventoryRequest.current = null;
+        if (inventoryActive.current) setLoading(false);
+      }
     }
   }, []);
 
@@ -676,11 +712,16 @@ export default function LivestreamOverview() {
   }, []);
 
   useEffect(() => {
+    inventoryActive.current = true;
     void load();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "hidden") void load();
     }, 60_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      inventoryActive.current = false;
+      inventoryRequest.current = null;
+      window.clearInterval(timer);
+    };
   }, [load]);
 
   useEffect(() => {
@@ -710,12 +751,16 @@ export default function LivestreamOverview() {
   const organizationNameMap = useMemo(() => organizationNamesById(organizations), [organizations]);
   const sortedClients = useMemo(
     () => sortLivestreamClients(
-      clients.filter((client) => clientMatchesSearch(client, search, organizationNameMap)),
+      clients.filter((client) => clientMatchesSearch(client, search, organizationNameMap) &&
+        (presenceFilter === "all" || (client?.presence?.is_online === true) === (presenceFilter === "online"))),
       sortOrder,
       organizationNameMap,
     ),
-    [clients, search, sortOrder, organizationNameMap],
+    [clients, search, sortOrder, organizationNameMap, presenceFilter],
   );
+  const safePage = Math.min(page, Math.max(0, Math.ceil(sortedClients.length / PAGE_SIZE) - 1));
+  const visibleClients = sortedClients.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const onlineCount = clients.filter((client) => client?.presence?.is_online === true).length;
 
   return (
     <Stack spacing={2}>
@@ -751,7 +796,7 @@ export default function LivestreamOverview() {
             label="Søg i livestream"
             placeholder="Organisation, klient, lokation eller klient-ID"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => { setSearch(event.target.value); setPage(0); }}
             slotProps={{ htmlInput: { maxLength: 160 } }}
           />
           <TextField
@@ -759,7 +804,7 @@ export default function LivestreamOverview() {
             size="small"
             label="Sortér efter"
             value={sortOrder}
-            onChange={(event) => setSortOrder(event.target.value)}
+            onChange={(event) => { setSortOrder(event.target.value); setPage(0); }}
             sx={{ minWidth: { xs: "100%", md: 250 } }}
           >
             <MenuItem value="online">Online først</MenuItem>
@@ -769,10 +814,24 @@ export default function LivestreamOverview() {
             <MenuItem value="location">Lokation A–Å</MenuItem>
             <MenuItem value="manual">Rækkefølge fra Clientlist</MenuItem>
           </TextField>
+          <TextField select size="small" label="Klientstatus" value={presenceFilter}
+            onChange={(event) => { setPresenceFilter(event.target.value); setPage(0); }}
+            disabled={!inventoryValid} sx={{ minWidth: { xs: "100%", md: 160 } }}>
+            <MenuItem value="all">Alle</MenuItem>
+            <MenuItem value="online">Online</MenuItem>
+            <MenuItem value="offline">Ikke online</MenuItem>
+          </TextField>
         </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-          {sortedClients.length} af {clients.length} godkendte klienter · Søgning og sortering foregår lokalt.
-        </Typography>
+        <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" sx={{ mt: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            {sortedClients.length} af {clients.length} godkendte klienter
+            {inventoryValid ? " · " + onlineCount + " online" : " · Status ikke verificeret"}
+          </Typography>
+          <Box sx={{ flex: 1 }} />
+          <Typography variant="caption" color="text.secondary">{sortedClients.length ? safePage * PAGE_SIZE + 1 : 0}–{Math.min(sortedClients.length, (safePage + 1) * PAGE_SIZE)}</Typography>
+          <Button size="small" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>Forrige</Button>
+          <Button size="small" disabled={(safePage + 1) * PAGE_SIZE >= sortedClients.length} onClick={() => setPage(safePage + 1)}>Næste</Button>
+        </Stack>
       </Paper>
 
       {error && <Alert severity="error">{error}</Alert>}
@@ -792,8 +851,8 @@ export default function LivestreamOverview() {
             gap: 1.5,
           }}
         >
-          {sortedClients.map((client) => (
-            <LivestreamTile key={client.id} client={client} pageMediaActive={pageMediaActive} />
+          {visibleClients.map((client) => (
+            <LivestreamTile key={client.id} client={client} pageMediaActive={pageMediaActive && inventoryValid} />
           ))}
         </Box>
       )}
