@@ -12,11 +12,11 @@ import sys
 
 PINS = {
     "clientflow_63d29_persistent_rdp_guard.py": "b1ece1303f524fd81b2ea7d86c4a3131cf26cf1bb343c0e4025ed8e9a84231fa",
-    "clientflow_63d30_local_rdp_pilot.py": "3cbe65ead5c1c520eeda6767bf4fae36c96bc74dbc2ac6fd25e8af320f97ee5e",
+    "clientflow_63d30_local_rdp_pilot.py": "e2465bf68687ba9de866c4ba359f9196df743193a513b2f83f54b66eb8aaaee0",
     "clientflow_native_rdp_browser_pilot.py": "a347e87f013a45f15d125eb7f74f0b6210e1bba302894744f2414ee2290167ff",
-    "clientflow_63d49_autologin_broker.py": "eb46d11c76825764e6dd601bb5f8f286ebc5729a4fe2ba3c755c89c0ed9a572c",
+    "clientflow_63d49_autologin_broker.py": "35137bc631748b0abb091c7b4cc12af93f0a86689738b78f2357caafccbe3d58",
     "clientflow_63d53_rdp_proof.py": "9a610abf8c2e7f9eb1d41f6c81add9eaa4d79a1ec15ba4873fea9deba64c9790",
-    "clientflow_63d53_rdp_lifecycle.py": "a7aa44dcd016574a8613e498a3410ac2e8e063266018d706513f56b1b18be941",
+    "clientflow_63d53_rdp_lifecycle.py": "b3db078499d21087b2462aff8820ac7c2d39a927b69571b15a78d696942cf15c",
     "clientflow_63d53_rdp_ipc.py": "17b7145b1236edf4811108b90015cbc6d54fb0e2e7f255431839549b5204ee4a",
     "__init__.py": "2ecd4ea28f445c6a1f4cf7d8ebecc07cee9ff55ee138cd945f3fb2defcb2676d"
 }

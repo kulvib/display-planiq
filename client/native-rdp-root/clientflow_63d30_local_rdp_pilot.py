@@ -23,6 +23,7 @@ import signal
 import termios
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -63,6 +64,8 @@ SECRET_FILE = SECRET_ROOT / "credentials"
 MAX_SECONDS = 6 * 60
 EXPECTED_GUARD_SHA256 = "b1ece1303f524fd81b2ea7d86c4a3131cf26cf1bb343c0e4025ed8e9a84231fa"
 LOCK_PATH = Path("/run/clientflow-63d30-pilot.lock")
+APPROVAL_MARKER = Path("/run/clientflow/native-rdp-approved")
+SESSION_PROOF = Path("/run/clientflow/rdp-session-proof-v1.json")
 BASE_KEYS = (
     "port", "negotiate-port", "screen-share-mode", "view-only",
     "enable", "auth-methods", "tls-cert", "tls-key",
@@ -115,13 +118,19 @@ def run_ok(*args: str, input: str | None = None, timeout: int = 15) -> None:
         raise RuntimeError("STOP: Kommando mislykkedes: " + args[0])
 
 
-def target() -> tuple[int, Path]:
-    guard.local_client_id()
+def _local_kiosk() -> tuple[int, Path]:
+    if os.geteuid() != 0:
+        raise RuntimeError("RDP_ROOT_REQUIRED")
     entry = pwd.getpwnam(KIOSK)
     runtime = Path("/run/user") / str(entry.pw_uid)
     if not (runtime / "bus").is_socket():
         raise RuntimeError("STOP: kiosk-D-Bus ikke tilgængelig; behold firewall")
     return entry.pw_uid, runtime
+
+
+def target() -> tuple[int, Path]:
+    guard.local_client_id()
+    return _local_kiosk()
 
 
 def kiosk(uid: int, *args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -398,17 +407,72 @@ def write_private(path: Path, text: str, mode: int = 0o600) -> None:
         os.fsync(file.fileno())
 
 
-def state_load() -> dict | None:
-    if STATE_FILE.is_symlink():
-        raise RuntimeError("STOP: Pilot-state er symlink")
-    if not STATE_FILE.is_file():
+def cleanup_state() -> dict | None:
+    """Only local root-owned evidence may authorize shutdown of owned state.
+
+    Enrollment changes cannot prevent safety cleanup. This evidence is never
+    sufficient to start, renew or seal an RDP session.
+    """
+    if os.geteuid() != 0:
+        raise RuntimeError("RDP_ROOT_REQUIRED")
+    try:
+        STATE_FILE.lstat()
+    except FileNotFoundError:
         return None
     data = guard.read_private_json(STATE_FILE)
-    if (data.get("phase") != "63D-30" or type(data.get("client_id")) is not int
-            or data["client_id"] != guard.local_client_id()
-            or data.get("hostname") != socket.gethostname()):
-        raise RuntimeError("STOP: Ukendt eller forkert sessionsbundet RDP-state")
+    if (data.get("phase") != "63D-30"
+            or type(data.get("client_id")) is not int or data["client_id"] <= 0
+            or type(data.get("kiosk_uid")) is not int or data["kiosk_uid"] <= 0
+            or not isinstance(data.get("hostname"), str) or not data["hostname"]
+            or not isinstance(data.get("boot_id"), str) or not data["boot_id"]
+            or data.get("baseline") != EXPECTED_BASE):
+        raise RuntimeError("STOP: Ukendt RDP recovery-state; behold firewall")
     return data
+
+
+def identity_matches(data: dict) -> bool:
+    try:
+        return (data["client_id"] == guard.local_client_id()
+                and data["hostname"] == socket.gethostname()
+                and data["kiosk_uid"] == pwd.getpwnam(KIOSK).pw_uid)
+    except (RuntimeError, OSError, ValueError, KeyError):
+        return False
+
+
+def state_load() -> dict | None:
+    data = cleanup_state()
+    if data is not None and not identity_matches(data):
+        raise RuntimeError("STOP: Klientidentiteten er ændret; kun sikker oprydning tilladt")
+    return data
+
+
+def _remove_owned_attestation(path: Path, data: dict, mode: int, *, hostname: bool) -> None:
+    """Remove only an exact root-owned grant/proof for this recovery record."""
+    try:
+        meta = path.lstat()
+    except FileNotFoundError:
+        return
+    parent = path.parent.lstat()
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022
+            or not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0
+            or stat.S_IMODE(meta.st_mode) != mode or not 0 < meta.st_size <= 2048):
+        raise RuntimeError("STOP: Ukendt RDP attestation; behold firewall")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (opened.st_dev, opened.st_ino) != (meta.st_dev, meta.st_ino):
+            raise RuntimeError("STOP: RDP attestation ændret")
+        raw = stream.read(2049)
+    value = json.loads(raw)
+    if (len(raw) > 2048 or type(value) is not dict or type(value.get("schema")) is not int
+            or value["schema"] != 1 or type(value.get("client_id")) is not int
+            or value["client_id"] != data["client_id"] or value.get("boot_id") != data["boot_id"]
+            or (hostname and value.get("hostname") != data["hostname"])):
+        raise RuntimeError("STOP: Fremmed RDP attestation; behold firewall")
+    current = path.lstat()
+    if (current.st_dev, current.st_ino) != (meta.st_dev, meta.st_ino):
+        raise RuntimeError("STOP: RDP attestation ændret")
+    path.unlink()
 
 
 def boot_id() -> str:
@@ -418,10 +482,11 @@ def boot_id() -> str:
 def deadline_expired(data: dict) -> bool:
     if data.get("boot_id") != boot_id():
         return True
-    return (
-        time.time() >= float(data.get("deadline_wall", 0))
-        or time.monotonic() >= float(data.get("deadline_mono", 0))
-    )
+    wall, mono = data.get("deadline_wall"), data.get("deadline_mono")
+    if any(type(value) not in (int, float) or not math.isfinite(value) for value in (wall, mono)):
+        return True
+    return (time.time() >= wall or time.monotonic() >= mono
+            or wall - time.time() > MAX_SECONDS or mono - time.monotonic() > MAX_SECONDS)
 
 
 def watchdog_verified() -> bool:
@@ -556,6 +621,7 @@ def start() -> None:
         "phase": "63D-30",
         "client_id": guard.local_client_id(),
         "hostname": socket.gethostname(),
+        "kiosk_uid": uid,
         "baseline": baseline,
         "temporary_session_alias": True,
         "boot_id": boot_id(),
@@ -615,10 +681,12 @@ def start() -> None:
 
 
 def stop() -> None:
-    uid, _ = target()
-    data = state_load()
+    data = cleanup_state()
     if data is None:
         raise RuntimeError("STOP: Intet pilot-state; manuel audit før sletning")
+    uid, _ = _local_kiosk()
+    if uid != data["kiosk_uid"]:
+        raise RuntimeError("STOP: Kiosk UID ændret; behold firewall")
     original = data.get("baseline")
     if original != EXPECTED_BASE:
         raise RuntimeError("STOP: Ukendt baseline; behold firewall")
@@ -643,6 +711,10 @@ def stop() -> None:
     if data.get("temporary_session_alias") is True:
         clear_temporary_default_alias(uid)
     guard.ensure_rdp_off(str(uid))
+    # Watchdog cleanup must also revoke orphaned grants after a killed owner.
+    # Unknown files are never removed and network protection remains on doubt.
+    _remove_owned_attestation(SESSION_PROOF, data, 0o600, hostname=False)
+    _remove_owned_attestation(APPROVAL_MARKER, data, 0o644, hostname=True)
     if guard.guard_exists():
         guard.remove_guard(str(uid))
     elif guard.DIRECTORY.exists() or guard.UNIT_PATH.exists() or guard.DROPIN_PATH.exists():
@@ -675,10 +747,10 @@ def stop() -> None:
 
 
 def tick() -> None:
-    data = state_load()
+    data = cleanup_state()
     if data is None:
         return
-    expired = deadline_expired(data)
+    expired = not identity_matches(data) or deadline_expired(data)
     # A transient disappearance of nftables drops is treated as a potential
     # security incident: attempt GNOME-first shutdown immediately, instead of
     # keeping RDP enabled for the remainder of the six-minute pilot.
@@ -843,7 +915,10 @@ def main() -> int:
     try:
         # A concurrently expiring watchdog cannot remove network protection
         # while the pilot is still starting.
-        guard.local_client_id()
+        if os.geteuid() != 0:
+            raise RuntimeError("RDP_ROOT_REQUIRED")
+        if args.action not in {"stop", "tick", "unstage"}:
+            guard.local_client_id()
         parent = LOCK_PATH.parent.lstat()
         if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022:
             raise RuntimeError("STOP: Ubetroet watchdog-låsekatalog")
@@ -858,7 +933,7 @@ def main() -> int:
                 raise RuntimeError("STOP: Anden pilotoperation kører allerede") from exc
             {"stage": stage, "start": start, "stop": stop,
              "tick": tick, "status": status,
-             "unstage": lambda: unstage(target()[0]),
+             "unstage": lambda: unstage(_local_kiosk()[0]),
              "probe": probe,
              "auth-probe": auth_probe,
              "exercise-auth": exercise_auth}[args.action]()

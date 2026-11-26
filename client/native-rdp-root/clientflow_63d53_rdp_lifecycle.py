@@ -24,7 +24,7 @@ RUNNER = "clientflow_63d30_local_rdp_pilot.py"
 GUARD = "clientflow_63d29_persistent_rdp_guard.py"
 BROWSER = "clientflow_native_rdp_browser_pilot.py"
 PINNED = {
-    RUNNER: "3cbe65ead5c1c520eeda6767bf4fae36c96bc74dbc2ac6fd25e8af320f97ee5e",
+    RUNNER: "e2465bf68687ba9de866c4ba359f9196df743193a513b2f83f54b66eb8aaaee0",
     GUARD: "b1ece1303f524fd81b2ea7d86c4a3131cf26cf1bb343c0e4025ed8e9a84231fa",
     BROWSER: "a347e87f013a45f15d125eb7f74f0b6210e1bba302894744f2414ee2290167ff",
 }
