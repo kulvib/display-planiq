@@ -20,7 +20,7 @@ test("Control Room list uses DB-free realtime invalidation with bounded reconcil
   );
   assert.match(controlRoomTransport, /\/api\/clients\/control-room-summary/);
   assert.match(controlRoomTransport, /cache: "no-store"/);
-  assert.match(controlRoomTransport, /\n    signal,\n/);
+  assert.match(controlRoomTransport, /\n {4}signal,\n/);
   assert.match(page, /getControlRoomClients/);
   assert.match(api, /export async function createControlRoomRealtimeCapability\(signal\)/);
   assert.match(api, /export async function waitForControlRoomRealtime\(/);
