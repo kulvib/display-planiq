@@ -203,7 +203,7 @@ export default function ClientFlowReleaseAdministration() {
   const activeRows = status?.active_deployments ?? EMPTY_CLIENTS;
   const activeComplete = status?.active_deployments_complete === true;
   const activeIds = React.useMemo(() => new Set(activeRows.map((row) => row.id)), [activeRows]);
-  const recentRows = (status?.recent_deployments ?? EMPTY_CLIENTS).filter((row) => !activeIds.has(row.id));
+  const recentRows = (status ? (status.recent_deployments ?? EMPTY_CLIENTS) : EMPTY_CLIENTS).filter((row) => !activeIds.has(row.id));
   const recentProblems = recentRows.filter((row) => ["failed", "recovery_failed", "rolled_back"].includes(row.state)).length;
   const baselineInstalled = available.some((row) => row.id === 3 && row.reported_version === "1.4.0");
 
