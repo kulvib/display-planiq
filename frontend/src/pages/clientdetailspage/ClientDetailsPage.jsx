@@ -354,6 +354,15 @@ const UPDATE_LIVE_FIELDS = [
   "ubuntu_update_progress",
   "ubuntu_update_package_count",
   "ubuntu_update_reboot_required",
+  "firmware",
+  "pending_firmware_update",
+  "firmware_update_status",
+  "firmware_update_message",
+  "firmware_update_error",
+  "firmware_update_started_at",
+  "firmware_update_updated_at",
+  "firmware_update_finished_at",
+  "firmware_update_reboot_required",
   // Local-management is projected by the same System batch that powers the
   // hot read; carrying it here removes the separate 2-second DB poll.
   "local_management_action",

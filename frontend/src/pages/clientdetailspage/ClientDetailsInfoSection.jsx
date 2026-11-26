@@ -182,7 +182,7 @@ function UpdateStepTimeline({ steps, currentIndex = -1, terminal = false, error 
   );
 }
 
-function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
+function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, pendingFirmwareUpdate, showSnackbar, onFinished, deployment, onDeploymentChange }) {
   const [polling, setPolling] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
   const [cancelling, setCancelling] = React.useState(false);
@@ -206,7 +206,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
   const meta = getClientflowDeploymentStepMeta(state);
   const inProgress = CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(state);
   const finished = CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES.has(state);
-  const otherUpdateInProgress = !inProgress && pendingOsUpdate === true;
+  const otherUpdateInProgress = !inProgress && (pendingOsUpdate === true || pendingFirmwareUpdate === true);
   const installedVersion = clientVersion;
   const latestVersion = releaseCatalog?.latest_stable || null;
   const selectableReleases = React.useMemo(
@@ -323,6 +323,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     try {
       const options = buildClientflowUpdateRequest({
         targetVersion: resolvedSelectedVersion,
+        sourceVersion: installedVersion,
         confirmDowngrade,
         reason,
       });
@@ -358,14 +359,14 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
     event?.preventDefault?.();
     event?.stopPropagation?.();
     if (disabled) return;
-    // Backend requires an auditable reason for every authorized update,
-    // not only for a downgrade. Never submit without explicit confirmation.
+    // Keep an explicit confirmation; ordinary updates generate audit text.
+    setUpdateReason("");
     setUpdateReasonDialogOpen(true);
   };
 
   const confirmClientFlowUpdate = async () => {
     const reason = updateReason.trim();
-    if (!reason || reason.length > 500) return;
+    if ((isDowngrade && !reason) || reason.length > 500) return;
     setUpdateReasonDialogOpen(false);
     setUpdateReason("");
     await executeClientFlowUpdate({ confirmDowngrade: isDowngrade, reason });
@@ -513,13 +514,13 @@ function ClientFlowUpdateControl({ clientId, clientVersion, pendingOsUpdate, sho
         <DialogContent>
           <Alert severity={isDowngrade ? "warning" : "info"} sx={{ mb: 2 }}>
             Du er ved at ændre ClientFlow fra {installedVersion ? `v${installedVersion}` : "en ukendt version"} til v{resolvedSelectedVersion}.
-            {isDowngrade ? " Nedgraderingen logges som en kritisk administratorhandling." : " Angiv en begrundelse, før deploymenten kan autoriseres."}
+            {isDowngrade ? " Nedgraderingen logges som en kritisk administratorhandling." : " Opdateringen registreres automatisk i auditloggen."}
           </Alert>
-          <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={updateReason} onChange={(event) => setUpdateReason(event.target.value)} helperText={`${updateReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />
+          {isDowngrade && <TextField autoFocus fullWidth multiline minRows={3} label="Begrundelse" value={updateReason} onChange={(event) => setUpdateReason(event.target.value)} helperText={`${updateReason.trim().length}/500 · obligatorisk`} slotProps={{ htmlInput: { maxLength: 500 } }} />}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setUpdateReasonDialogOpen(false)}>Annuller</Button>
-          <Button color={isDowngrade ? "warning" : "primary"} variant="contained" disabled={!updateReason.trim() || starting || inProgress} onClick={confirmClientFlowUpdate}>
+          <Button color={isDowngrade ? "warning" : "primary"} variant="contained" disabled={(isDowngrade && !updateReason.trim()) || starting || inProgress || disabled} onClick={confirmClientFlowUpdate}>
             {isDowngrade ? "Bekræft nedgradering" : "Bestil ClientFlow-opdatering"}
           </Button>
         </DialogActions>
@@ -781,7 +782,7 @@ function getUbuntuPhaseTimestamp(client) {
   );
 }
 
-function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) {
+function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted, clientflowUpdateInProgress = false }) {
   const [starting, setStarting] = React.useState(false);
   const [localStatus, setLocalStatus] = React.useState({
     phase: null,
@@ -803,7 +804,7 @@ function UbuntuUpdateControl({ client, clientOnline, showSnackbar, onStarted }) 
   const inProgress = UBUNTU_UPDATE_BUSY_STEPS.has(phase) || !!client?.pending_os_update || starting;
   const otherUpdateInProgress =
     !inProgress &&
-    String(client?.state || "").trim().toLowerCase() === "updating";
+    (clientflowUpdateInProgress || client?.pending_firmware_update === true || String(client?.state || "").trim().toLowerCase() === "updating");
   const finished = phase === "success" || phase === "up_to_date" || phase === "error";
   const ubuntuVersion = client?.ubuntu_version || "ukendt";
   const message = getUbuntuHumanMessage(client, localStatus);
@@ -1812,7 +1813,7 @@ function ScheduleStrip({ markedDays, onOpenCalendar, calendarLoading, clientId, 
   );
 }
 
-function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }) {
+function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, otherUpdateInProgress = false }) {
   const { user } = useAuth();
   const isSuperadmin = user?.role === "superadmin";
   const firmware = client?.firmware || null;
@@ -1822,7 +1823,7 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted }
   const updateAvailable = firmware?.update_available === true && updateCount > 0;
   const requiresShutdown = firmware?.requires_shutdown === true;
   const inProgress = client?.pending_firmware_update === true || ["requested", "installing"].includes(String(client?.firmware_update_status || ""));
-  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || requiresShutdown || starting || inProgress || client?.pending_os_update === true;
+  const disabled = !isSuperadmin || clientOnline !== true || !supported || !updateAvailable || Boolean(firmware?.error) || requiresShutdown || starting || inProgress || otherUpdateInProgress || client?.pending_os_update === true;
 
   const startFirmwareUpdate = async () => {
     if (disabled || !client?.id) return;
@@ -1957,6 +1958,7 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               clientId={client?.id}
               clientVersion={client?.client_version}
               pendingOsUpdate={client?.pending_os_update}
+              pendingFirmwareUpdate={client?.pending_firmware_update}
               showSnackbar={showSnackbar}
               onFinished={onDiagnosticsRefresh}
               deployment={clientflowDeployment}
@@ -1967,12 +1969,14 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
               clientOnline={clientOnline}
               showSnackbar={showSnackbar}
               onStarted={onUbuntuUpdateStarted}
+              clientflowUpdateInProgress={CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(clientflowDeployment?.state))}
             />
             <FirmwareUpdateControl
               client={client}
               clientOnline={clientOnline}
               showSnackbar={showSnackbar}
               onStarted={onDiagnosticsRefresh}
+              otherUpdateInProgress={CLIENTFLOW_DEPLOYMENT_ACTIVE_STATES.has(normalizeClientflowDeploymentState(clientflowDeployment?.state))}
             />
           </Stack>
         </DataPanel>

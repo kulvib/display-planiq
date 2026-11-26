@@ -11,10 +11,12 @@ test("pilot forward update sends exact version, a non-empty audit reason, and no
   });
 });
 
-test("no API request may be constructed without a valid reason and concrete version", () => {
-  for (const reason of [undefined, null, "", " ", "  \n ", "x".repeat(501)]) {
-    assert.throws(() => buildClientflowUpdateRequest({ targetVersion: "1.3.39", reason }), /begrundelse/);
+test("forward updates generate audit text but downgrades require a human reason", () => {
+  for (const reason of [undefined, null, "", " ", "  \n "]) {
+    assert.equal(buildClientflowUpdateRequest({ sourceVersion: "1.3.47", targetVersion: "1.4.0", reason }).reason, "ClientFlow-opdatering 1.3.47 → 1.4.0");
+    assert.throws(() => buildClientflowUpdateRequest({ targetVersion: "1.3.39", reason, confirmDowngrade: true }), /begrundelse/);
   }
+  assert.throws(() => buildClientflowUpdateRequest({ targetVersion: "1.3.39", reason: "x".repeat(501) }), /begrundelse/);
   for (const targetVersion of [undefined, "", " ", "latest", "LATEST"]) {
     assert.throws(() => buildClientflowUpdateRequest({ targetVersion, reason: "Pilot" }), /målversion/);
   }

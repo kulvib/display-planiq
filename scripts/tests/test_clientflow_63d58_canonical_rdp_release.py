@@ -201,7 +201,7 @@ def test_temporary_media_blocks_before_activation_intent_or_target_disable(tmp_p
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.symlink_to(tmp_path / "missing")
     previous = "clientflow-1.3.47-seq-1248"
-    target = "clientflow-1.3.48-seq-1249"
+    target = "clientflow-1.4.0-seq-1250"
     state = {"installed": {target: {}}, "active_release_id": previous}
     monkeypatch.setattr(transaction, "_read_active_release_id", lambda _: previous)
     monkeypatch.setattr(transaction, "_activation_intent", lambda *a, **k: pytest.fail("intent mutated"))

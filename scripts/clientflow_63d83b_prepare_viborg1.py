@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit, one-time Viborg1 1248 -> 1249 preparation; never invoked by updater.
+"""Explicit, one-time Viborg1 1248 -> 1250 preparation; never invoked by updater.
 
 Run only after candidate build/approval and after closing Remote Desktop and
 explicitly stopping Livestream. No download, no release activation, no reboot.
@@ -236,7 +236,7 @@ def prepare():
     target()
     print("LIVESTREAM_SEGMENT_SECONDS=1\nLIVESTREAM_CONTINUOUS_WSS=False")
     print("CONFIG_BACKUP_VERIFIED=PASS\nACTIVE_RELEASE_UNCHANGED=1248")
-    print("VIBORG1_1249_PREPARED=PASS")
+    print("VIBORG1_1250_PREPARED=PASS")
 
 
 def main():

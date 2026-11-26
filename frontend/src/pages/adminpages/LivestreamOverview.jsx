@@ -36,12 +36,6 @@ function isRequestTimeout(error) {
   return error?.name === "TimeoutError" || /signal.*timed out|timeout/i.test(String(error?.message || ""));
 }
 
-function formatLatency(seconds) {
-  const value = seconds;
-  if (!Number.isFinite(value) || value < 0) return "måler …";
-  return `${value.toFixed(1).replace(".", ",")} sek.`;
-}
-
 function makeViewerId(clientId) {
   const suffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -175,7 +169,8 @@ function LivestreamTile({ client, pageMediaActive }) {
   useEffect(() => {
     const node = rootRef.current;
     if (!node || typeof IntersectionObserver === "undefined") {
-      setIntersecting(true);
+      // Do not activate every stream when viewport observation is unavailable.
+      setIntersecting(false);
       return undefined;
     }
     const observer = new IntersectionObserver(
@@ -620,7 +615,7 @@ function LivestreamTile({ client, pageMediaActive }) {
             {mediaTransport && shouldRun && <Chip size="small" label={mediaTransport === "WSS" ? "WSS" : `HLS · ${mediaTransport}`} sx={compactDarkChipSx("neutral")} />}
             <Chip
               size="small"
-              label={state === "live" ? latencyStatus.text : state === "offline" ? "Offline" : state === "error" ? "Fejl" : "Klargør"}
+              label={state === "live" ? latencyStatus.text : state === "offline" ? "Offline" : state === "error" ? "Fejl" : state === "paused" ? "På pause" : "Klargør"}
               sx={statusChipSx}
             />
           </Stack>
@@ -629,7 +624,6 @@ function LivestreamTile({ client, pageMediaActive }) {
           <Typography variant="caption" color="text.secondary" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
             {[
               activeViewers == null ? "" : `${activeViewers} aktiv${activeViewers === 1 ? "" : "e"} seer${activeViewers === 1 ? "" : "e"}`,
-              `Forsinkelse: ${formatLatency(state === "live" && shouldRun ? latencySeconds : null)}`,
             ].filter(Boolean).join(" · ")}
           </Typography>
           <Button
