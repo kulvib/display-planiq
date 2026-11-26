@@ -195,6 +195,10 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
         ("Navn / Lokation", "name_locality"),
         ("Backend-status", "backend"),
         ("ClientFlow version", "version"),
+        # 1.4 extends the existing layout with host inventory, retaining all legacy fields.
+        ("Ubuntu version", "ubuntu_version"),
+        ("Ledig diskplads", "disk_free"),
+        ("RAM i brug", "memory_used"),
         ("Backend sync", "backend_sync"),
         ("Kalender service", "calendar_service"),
         ("Browser Guard", "browser_guard"),
@@ -203,6 +207,7 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
         ("Remote desktop", "remote_desktop"),
         ("ClientFlow update", "update"),
         ("Ubuntu update", "ubuntu_update"),
+        ("Firmware update", "firmware_update"),
         # 61B-2A adds explicit update-maintenance state without changing the
         # identity, order, or key names of the deployed legacy fields.
         ("Vedligeholdelse", "maintenance"),
@@ -233,7 +238,9 @@ def test_gui_system_network_kiosk_and_calendar_fields_match_deployed_legacy_cont
     for token in (
         '("Dato", "Status", "Åbner", "Lukker")',
         '"💤 Skærm slukket — klient online"',
-        'self._set("version", _version_display(), COLOR_GREEN)',
+        'version = _version_display()',
+        'self._set("version", version, COLOR_GRAY if version == "v-" else COLOR_GREEN)',
+        'for key, value in _local_system_info().items():',
         '"Pending / Venter på godkendelse"',
         '"Pending – venter på godkendelse"',
         'DISPLAY_RESOLUTION_PRESET_LABELS',
