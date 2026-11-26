@@ -48,3 +48,15 @@ test("native toolbar centers confirmed physical resolution independently of canv
   assert.match(source, /error\?\.name === "AbortError"/);
   assert.doesNotMatch(source, /getAuthToken/);
 });
+
+test("native toolbar pins zoom to the left and fullscreen/disconnect to the right of a true centered resolution", () => {
+  const viewer = readFileSync(new URL("../src/pages/clientdetailspage/remotedesktop/NativeRdpViewer.jsx", import.meta.url), "utf8");
+  const toolbar = viewer.slice(viewer.indexOf('{working && (\n          <Box sx={{ display: "grid"'), viewer.indexOf('{working && fullscreenError'));
+  assert.match(toolbar, /gridTemplateColumns: \{ xs: "1fr auto", lg: "minmax\(0, 1fr\) auto minmax\(0, 1fr\)" \}/);
+  assert.match(toolbar, /gridColumn: 1, gridRow: 1, justifySelf: "start"/);
+  assert.match(toolbar, /gridColumn: \{ xs: "1 \/ -1", lg: "2" \}, gridRow: \{ xs: 2, lg: 1 \},\s*justifySelf: "center", alignSelf: "center"/);
+  const right = toolbar.slice(toolbar.indexOf('justifyContent="flex-end"'));
+  assert.match(right, /gridColumn: \{ xs: 2, lg: 3 \}, gridRow: 1,\s*justifySelf: "end", width: "max-content", maxWidth: "100%"/);
+  assert.match(right, /onClick=\{toggleFullscreen\}/);
+  assert.match(right, /onClick=\{disconnect\}>Afbryd/);
+});

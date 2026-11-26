@@ -407,7 +407,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
               border: "1px solid rgba(148,163,184,0.14)",
               "& .MuiButton-root": { height: 36, textTransform: "none", fontWeight: 650 },
               "& .MuiIconButton-root": { width: 36, height: 36 } }}>
-            <Stack direction="row" useFlexGap flexWrap="wrap" gap={1} alignItems="center">
+            <Stack direction="row" useFlexGap flexWrap="wrap" gap={1} alignItems="center"
+              sx={{ gridColumn: 1, gridRow: 1, justifySelf: "start", minWidth: 0, maxWidth: "100%" }}>
             <ButtonGroup size="small" variant="outlined" aria-label="Visning" sx={{ "& .MuiButton-root": { borderColor: "rgba(148,163,184,0.26)" } }}>
               <Button variant={displayMode === "fit" ? "contained" : "outlined"}
                 color={displayMode === "fit" ? "primary" : "inherit"} startIcon={<FitScreenIcon />}
@@ -445,7 +446,8 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
               </Typography>
             </Tooltip>
             <Stack direction="row" gap={1} alignItems="center" justifyContent="flex-end"
-              sx={{ gridColumn: { xs: 2, lg: 3 }, gridRow: 1 }}>
+              sx={{ gridColumn: { xs: 2, lg: 3 }, gridRow: 1,
+                justifySelf: "end", width: "max-content", maxWidth: "100%" }}>
             <Tooltip title={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"}>
               <IconButton size="small" color="inherit" onClick={toggleFullscreen} aria-label={fullscreen ? "Afslut fuldskærm" : "Fuldskærm"} sx={{ border: "1px solid rgba(148,163,184,0.26)", borderRadius: 1 }}>
                 {fullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
