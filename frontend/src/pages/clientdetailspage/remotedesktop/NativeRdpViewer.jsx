@@ -193,7 +193,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
     try {
       await verifyWasm();
       if (operationRef.current !== operation) return;
-      const handle = await createNativeRdpAutologin(sessionId);
+      const handle = await createNativeRdpAutologin(sessionId, Number(clientId));
       if (operationRef.current !== operation) return;
       autoLoginRef.current = handle;
       setAutoPendingRequestId(handle.request.request_id);

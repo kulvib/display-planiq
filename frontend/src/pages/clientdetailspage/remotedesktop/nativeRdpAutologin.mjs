@@ -38,9 +38,9 @@ function validateEnvelope(envelope, sessionId, requestId) {
   const secondsLeft = envelope.expires_unix - Math.floor(Date.now() / 1000);
   if (!(secondsLeft > 0 && secondsLeft <= 60)) throw new Error("RDP-autologin er udløbet.");
 }
-export async function createNativeRdpAutologin(sessionId, subtle = globalThis.crypto?.subtle,
+export async function createNativeRdpAutologin(sessionId, clientId, subtle = globalThis.crypto?.subtle,
   randomUUID = () => globalThis.crypto.randomUUID()) {
-  if (!canonicalUuid(sessionId) || !subtle) throw new Error("Sikker RDP-autologin er ikke tilgængelig.");
+  if (!canonicalUuid(sessionId) || !Number.isSafeInteger(clientId) || clientId <= 0 || !subtle) throw new Error("Sikker RDP-autologin er ikke tilgængelig.");
   const requestId = randomUUID();
   if (!canonicalUuid(requestId)) throw new Error("Ugyldigt RDP-autologin request-id.");
   const pair = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
@@ -69,7 +69,7 @@ export async function createNativeRdpAutologin(sessionId, subtle = globalThis.cr
       const shared = await subtle.deriveBits({ name: "ECDH", public: peerKey }, pair.privateKey, 256);
       const hkdf = await subtle.importKey("raw", shared, "HKDF", false, ["deriveKey"]);
       const info = encoder.encode(`${DOMAIN}|${sessionId}|${requestId}`);
-      const aad = encoder.encode(`${DOMAIN}|3|${sessionId}|${requestId}`);
+      const aad = encoder.encode(`${DOMAIN}|${clientId}|${sessionId}|${requestId}`);
       const key = await subtle.deriveKey(
         { name: "HKDF", hash: "SHA-256", salt, info }, hkdf,
         { name: "AES-GCM", length: 256 }, false, ["decrypt"]

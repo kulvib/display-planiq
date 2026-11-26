@@ -142,15 +142,15 @@ def test_build_rejects_mismatched_root_helper_before_packaging(tmp_path):
     import shutil
     repo = tmp_path / "repo"
     for name in builder.NATIVE_RDP_ROOT_SOURCES:
-        target = repo / "scripts" / name
+        target = repo / builder.NATIVE_RDP_ROOT_SOURCE_DIR / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / "scripts" / name, target)
+        shutil.copy2(ROOT / builder.NATIVE_RDP_ROOT_SOURCE_DIR / name, target)
     for name in ("entrypoint.py", "scripts/__init__.py"):
         target = repo / "client/libexec/native-rdp" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / "client/libexec/native-rdp" / name, target)
     builder._validate_native_rdp_root_pins(repo)
-    helper = repo / "scripts" / builder.NATIVE_RDP_ROOT_SOURCES[0]
+    helper = repo / builder.NATIVE_RDP_ROOT_SOURCE_DIR / builder.NATIVE_RDP_ROOT_SOURCES[0]
     helper.write_bytes(helper.read_bytes() + b"\n")
     with pytest.raises(ValueError, match="root helper pin mismatch"):
         builder._validate_native_rdp_root_pins(repo)

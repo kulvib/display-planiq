@@ -24,7 +24,7 @@ async function sealed(request, options = {}) {
   const salt = webcrypto.getRandomValues(new Uint8Array(16));
   const iv = webcrypto.getRandomValues(new Uint8Array(12));
   const info = encoder.encode(`planiq-clientflow-rdp-v1|${SESSION}|${request.request_id}`);
-  const aad = encoder.encode(`planiq-clientflow-rdp-v1|3|${SESSION}|${request.request_id}`);
+  const aad = encoder.encode(`planiq-clientflow-rdp-v1|${options.clientId ?? 3}|${SESSION}|${request.request_id}`);
   const key = await subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt, info }, source,
     { name: "AES-GCM", length: 256 }, false, ["encrypt"]
@@ -49,7 +49,7 @@ async function sealed(request, options = {}) {
 }
 
 test("63D-49 ECDH one-time GNOME login decrypts in requesting browser only", async () => {
-  const handle = await createNativeRdpAutologin(SESSION, subtle, id);
+  const handle = await createNativeRdpAutologin(SESSION, 3, subtle, id);
   assert.deepEqual(Object.keys(handle.request).sort(), ["public_key", "request_id", "type"]);
   assert.equal(handle.request.type, "native_rdp_autologin_request");
   const envelope = await sealed(handle.request);
@@ -71,7 +71,7 @@ test("63D-49 fails closed on wrong session, challenge, expiry and tampering", as
     (x) => { x.ciphertext = x.ciphertext.slice(0, -3) + "AAA"; },
     (x) => { x.extra_plaintext_password = "x"; },
   ]) {
-    const handle = await createNativeRdpAutologin(SESSION, subtle, id);
+    const handle = await createNativeRdpAutologin(SESSION, 3, subtle, id);
     const envelope = await sealed(handle.request);
     modify(envelope);
     await assert.rejects(handle.open(envelope));
@@ -79,8 +79,8 @@ test("63D-49 fails closed on wrong session, challenge, expiry and tampering", as
 });
 
 test("63D-49 rejects malformed public parameters and never exports a private key", async () => {
-  await assert.rejects(createNativeRdpAutologin("wrong", subtle, id));
-  const handle = await createNativeRdpAutologin(SESSION, subtle, id);
+  await assert.rejects(createNativeRdpAutologin("wrong", 3, subtle, id));
+  const handle = await createNativeRdpAutologin(SESSION, 3, subtle, id);
   assert.equal(Object.keys(handle).includes("privateKey"), false);
   const envelope = await sealed(handle.request);
   envelope.public_key = "X";
@@ -123,4 +123,17 @@ test("managed pilot requests and cancels the exact one-time login", async () => 
   assert.match(ui, /requestAutologin\(\{ \.\.\.handle\.request, managed: true \}\)/);
   assert.match(ui, /type: "native_rdp_autologin_cancel", request_id: requestId/);
   assert.match(ui, /const disconnect = \(\) => \{\s*operationRef\.current \+= 1;\s*cancelManaged\(\)/);
+});
+
+
+test("canonical login envelope is bound to the actual non-pilot client", async () => {
+  for (const clientId of [37, 1001]) {
+    const handle = await createNativeRdpAutologin(SESSION, clientId, subtle, id);
+    assert.equal((await handle.open(await sealed(handle.request, {clientId}))).username, "cfpilotabcdef12");
+    const wrong = await createNativeRdpAutologin(SESSION, clientId, subtle, id);
+    await assert.rejects(wrong.open(await sealed(wrong.request, {clientId: 3})), /verificeres/);
+  }
+  for (const invalid of [null, 0, -1, "37", true, 1.5]) {
+    await assert.rejects(createNativeRdpAutologin(SESSION, invalid, subtle, id));
+  }
 });

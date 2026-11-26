@@ -1,4 +1,4 @@
-"""Root-only immutable native RDP release entrypoint (Viborg1 gate retained)."""
+"""Root-only immutable native RDP release entrypoint."""
 from __future__ import annotations
 
 import fcntl
@@ -11,13 +11,13 @@ import stat
 import sys
 
 PINS = {
-    "clientflow_63d29_persistent_rdp_guard.py": "709a5d9b1eba3364dfd2ac21f4e24525b0dc3261236456a9127aac7cfd54c000",
-    "clientflow_63d30_local_rdp_pilot.py": "78972f7c7173a4894abc22d4518b1fc4d3189c76e30dd463715af03ef069af69",
-    "clientflow_native_rdp_browser_pilot.py": "02c63fc10deb3c0329c5309bdcb19a0edf8fa694c1c0045257cd79c304849e7f",
-    "clientflow_63d49_autologin_broker.py": "00dc81e3215b3605503cbd03ed8a3ebcc899b8489bb268a0668f5c98c4a7445e",
-    "clientflow_63d53_rdp_proof.py": "daec30c30191f3dd6d9b0b4b12b773023bf5287ff34379150ef1b14f0df2e4f6",
-    "clientflow_63d53_rdp_lifecycle.py": "5ee6afc5d8bf5a3d4401f77d8f36bb8eda47e1fcaea210466af0755bc9a8e2bb",
-    "clientflow_63d53_rdp_ipc.py": "393c971b624ad7805f3cec5c395184200c8831e8d8d8033c309acaed6a0c7b7f",
+    "clientflow_63d29_persistent_rdp_guard.py": "b1ece1303f524fd81b2ea7d86c4a3131cf26cf1bb343c0e4025ed8e9a84231fa",
+    "clientflow_63d30_local_rdp_pilot.py": "3cbe65ead5c1c520eeda6767bf4fae36c96bc74dbc2ac6fd25e8af320f97ee5e",
+    "clientflow_native_rdp_browser_pilot.py": "a347e87f013a45f15d125eb7f74f0b6210e1bba302894744f2414ee2290167ff",
+    "clientflow_63d49_autologin_broker.py": "eb46d11c76825764e6dd601bb5f8f286ebc5729a4fe2ba3c755c89c0ed9a572c",
+    "clientflow_63d53_rdp_proof.py": "9a610abf8c2e7f9eb1d41f6c81add9eaa4d79a1ec15ba4873fea9deba64c9790",
+    "clientflow_63d53_rdp_lifecycle.py": "a7aa44dcd016574a8613e498a3410ac2e8e063266018d706513f56b1b18be941",
+    "clientflow_63d53_rdp_ipc.py": "17b7145b1236edf4811108b90015cbc6d54fb0e2e7f255431839549b5204ee4a",
     "__init__.py": "2ecd4ea28f445c6a1f4cf7d8ebecc07cee9ff55ee138cd945f3fb2defcb2676d"
 }
 ACTIVE = Path("/opt/clientflow/active")
@@ -163,10 +163,12 @@ def main() -> None:
         if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022:
             raise RuntimeError("RDP_ACTIVE_RELEASE_UNSAFE")
     verify_sources(directory)
-    verify_installed_identity(active)
+    client_id = verify_installed_identity(active)
     sys.path.insert(0, str(directory))
     from scripts import clientflow_63d53_rdp_ipc as ipc
     from scripts import clientflow_63d53_rdp_lifecycle as lifecycle
+    from scripts import clientflow_63d53_rdp_proof as proof
+    proof.EXPECTED_CLIENT_ID = client_id
     lifecycle.SOURCE = directory / "scripts"
     if sys.argv[1] == "lifecycle":
         ipc.lifecycle_main()

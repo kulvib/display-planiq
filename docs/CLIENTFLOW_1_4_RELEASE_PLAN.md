@@ -23,3 +23,5 @@ Status: development candidate; not an approved or published release. Active cata
 6. Establish one current standard centrally; future local rollback may retain the immediately previous approved version, subject to security and explicit operator approval. At the 1.4.0 baseline retire 1.3 packages only after physical acceptance and dependency audit.
 
 A deleted package cannot be selected as a rollback target. Never bypass signature, revoked-version, compatibility, authorization, maintenance or recovery gates.
+
+- Canonical privileged GNOME helper sources are independently pinned under `client/native-rdp-root/`; historical `scripts/` are not modified or repackaged. The installed identity is rechecked in lifecycle, proof, renewal, and credential sealing. Client ID is authenticated as AES-GCM additional data in the browser. The agent and server fleet gate remain closed pending their coordinated integration and physical acceptance.
