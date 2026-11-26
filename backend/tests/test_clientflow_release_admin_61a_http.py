@@ -25,11 +25,13 @@ from service1.clientflow_release_admin_models import (
 from service1.db import get_session
 from service1.clientflow_releases import load_catalog as load_canonical_catalog
 from service1 import clientflow_release_pilot_stage_1246 as pilot_stage_1246
-from service1.client_domain_models import ClientDomainCredential, ClientDomainStatus
-from service1.clientflow_update_models import ClientFlowDeployment
+from service1.client_domain_models import ClientDomainCredential, ClientDomainStatus, ClientCommand
+from service1.clientflow_update_models import ClientFlowDeployment, ClientFlowDeploymentEvent, ClientFlowUpdateCredential
 from service1.auth import get_current_superadmin_user
 from service1.models import User, Client, Organization, AuditLog
 from service1.routers import clientflow_release_administration as route
+from service1.routers import clientflow_standard_deployments as standard_route
+from service1.clientflow_standard_release import BASELINE_ID, BASELINE_VERSION
 
 SHA = "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5"
 RELEASE_ID = "clientflow-1.3.44-seq-1245"
@@ -150,8 +152,8 @@ def environment(monkeypatch):
         ClientFlowPhysicalAcceptance.__table__,
         # 63D-8's bounded read-only deployment history uses this existing
         # production table. This isolated SQLite fixture must model it too.
-        ClientFlowDeployment.__table__,
-        ClientDomainCredential.__table__, ClientDomainStatus.__table__,
+        ClientFlowDeployment.__table__, ClientFlowUpdateCredential.__table__, ClientFlowDeploymentEvent.__table__,
+        ClientDomainCredential.__table__, ClientDomainStatus.__table__, ClientCommand.__table__,
     ])
     with Session(engine) as session:
         admin = User(id=1, username="admin-test", email="admin@example.com", hashed_password="stored", role="superadmin", is_active=True)
@@ -181,6 +183,7 @@ def environment(monkeypatch):
 
         app = FastAPI()
         app.include_router(route.router, prefix="/api")
+        app.include_router(standard_route.router, prefix="/api")
         app.dependency_overrides[get_current_superadmin_user] = lambda: admin
         app.dependency_overrides[get_session] = lambda: session
         yield _ASGITestClient(app), session
@@ -702,3 +705,125 @@ def test_active_deployment_is_visible_even_outside_recent_history(environment):
     assert [row["id"] for row in data["active_deployments"]] == [active_id]
     assert data["active_deployments"][0]["state"] == "downloading"
     assert data["authorization_active"] is False
+
+
+def _synthetic_standard_catalog():
+    release = deepcopy(load_canonical_catalog()["releases"][-1])
+    release.update(release_id=BASELINE_ID, revision=BASELINE_ID, version=BASELINE_VERSION,
+                   client_version=BASELINE_VERSION, release_sequence=1250,
+                   status="stable", installable=True, update_allowed=True,
+                   install_modes=["fresh_install", "in_place_update"],
+                   min_current_version="1.3.47", max_current_version="1.3.47")
+    return {"manifest_schema":4, "channel":"canonical-release-catalog", "catalog_sequence":1250,
+            "latest_stable":BASELINE_VERSION, "default_install_version":BASELINE_VERSION,
+            "retention_policy":{"max_selectable_versions":1,"max_installable_versions":1,
+                                "keep_blocked_metadata":False}, "releases":[release]}
+
+
+def _standard_payload(ids=(3,), **changes):
+    body = {"target_release_id":BASELINE_ID, "expected_bundle_sha256":"a"*64,
+            "expected_revision":2, "targets":[{"client_id":id_, "expected_source_version":"1.3.47"} for id_ in ids],
+            "confirmed":True, "password":"correct-password"}
+    body.update(changes)
+    return body
+
+
+def test_standard_route_denied_before_any_artifact_io_while_cutover_closed(environment, monkeypatch):
+    http, session = environment
+    monkeypatch.setattr(standard_route, "deployment_release_snapshot",
+                        lambda *a, **k: pytest.fail("closed gate read artifact"))
+    path = "/api/clientflow/standard-deployments"
+    assert http.get(path + "/availability").json()["available"] is False
+    assert http.post(path, json=_standard_payload()).status_code == 409
+    synthetic = _synthetic_standard_catalog()
+    monkeypatch.setattr(standard_route, "load_catalog", lambda: synthetic)
+    monkeypatch.setattr(route, "load_catalog", lambda: synthetic)
+    overview = http.get("/api/clientflow/release-administration")
+    assert overview.status_code == 200, overview.text
+    data = overview.json()
+    assert data["phase"] == "standard_baseline"
+    assert data["standard_order_review_available"] is False
+    assert data["authorization_active"] is False and data["fresh_install_open"] is False
+    assert http.get(path + "/availability").json()["available"] is False
+    assert http.post(path, json=_standard_payload()).status_code == 409
+    assert session.exec(select(ClientFlowDeployment)).all() == []
+    ordinary = User(id=6, username="regular", email="regular@example.com", hashed_password="stored", role="user", is_active=True)
+    http.app.dependency_overrides[get_current_superadmin_user] = lambda: ordinary
+    assert http.get(path + "/availability").status_code == 403
+    assert http.post(path, json=_standard_payload()).status_code == 403
+
+
+def test_standard_multi_client_order_is_atomic_and_auditable(environment, monkeypatch):
+    from datetime import timezone
+    from uuid import uuid4
+
+    http, session = environment
+    synthetic = _synthetic_standard_catalog()
+    artifact = {"target_release_id":BASELINE_ID, "bundle_sha256":"a"*64, "bundle_size":100,
+                "release_approval_reference":"test-only-approved-reference",
+                "release_candidate_sha256":"b"*64, "source_commit":"c"*40}
+    monkeypatch.setattr(standard_route, "load_catalog", lambda: synthetic)
+    monkeypatch.setattr(standard_route, "resolve_release", lambda version: synthetic["releases"][0])
+    # Real bundle I/O is exercised in the existing publication tests; this
+    # fixture simulates an already verified immutable artifact, never a live package.
+    monkeypatch.setattr(standard_route, "deployment_release_snapshot", lambda release: artifact)
+    control = session.get(ClientFlowReleaseControl, 1)
+    control.stable_release_id = BASELINE_ID
+    control.stable_bundle_sha256 = artifact["bundle_sha256"]
+    control.revision = 2
+    control.cutover_enabled = True
+    control.fleet_open = True
+    session.add(control)
+    session.add(User(id=2, username="tester", email="tester@example.com", hashed_password="stored", role="superadmin", is_active=True))
+    for client_id in (7, 8):
+        session.add(Client(id=client_id, name=f"Test {client_id}", status="approved", ubuntu_version="26.04"))
+    session.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for client_id, version in ((7, "1.3.47"), (8, "1.3.46")):
+        _record_status_version(session, client_id=client_id, version=version)
+        row = session.get(ClientDomainStatus, f"test-status-row-{client_id}")
+        if row is None:
+            session.flush()
+            row = session.get(ClientDomainStatus, f"test-status-row-{client_id}")
+        row.reported_at = now
+        session.add(row)
+        session.add(ClientFlowUpdateCredential(id=str(uuid4()), client_id=client_id,
+                    key_id=f"test-key-{client_id}", public_key_pem="fixture-only", created_at=now))
+    session.add(ClientFlowDeployment(
+        id=str(uuid4()), client_id=3, target_release_id=BASELINE_ID, target_version=BASELINE_VERSION,
+        target_release_sequence=1250, bundle_sha256=artifact["bundle_sha256"],
+        bundle_size=artifact["bundle_size"], release_approval_reference=artifact["release_approval_reference"],
+        release_candidate_sha256=artifact["release_candidate_sha256"], source_commit=artifact["source_commit"],
+        requested_at=now, state_updated_at=now, completed_at=now, state="succeeded",
+    ))
+    session.add(ClientFlowPhysicalAcceptance(
+        id=str(uuid4()), release_id=BASELINE_ID, bundle_sha256=artifact["bundle_sha256"],
+        client_id=3, actor_user_id=1, decision="accepted", created_at=now,
+        evidence={"physical_pilot_verified":True, "recovery_verified":True,
+                  "pilot_client_id":3, "release_id":BASELINE_ID, "bundle_sha256":artifact["bundle_sha256"],
+                  "tested_by_user_id":2, "observed_version":BASELINE_VERSION,
+                  "pilot_reference":"test-pilot-reference", "recovery_reference":"test-recovery-reference"},
+    ))
+    session.commit()
+    path = "/api/clientflow/standard-deployments"
+    assert http.get(path + "/availability").json()["available"] is True
+    # Client 7 is eligible, client 8 has a different canonical source.
+    # No partial authorization may survive the transaction.
+    rejected = http.post(path, json=_standard_payload(ids=(7,8)))
+    assert rejected.status_code == 409, rejected.text
+    assert session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all() == []
+    row = session.get(ClientDomainStatus, "test-status-row-8")
+    row.agent_version = "1.3.47"
+    row.reported_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.add(row)
+    session.commit()
+    result = http.post(path, json=_standard_payload(ids=(8,7)))
+    assert result.status_code == 201, result.text
+    assert [row["client_id"] for row in result.json()["deployments"]] == [7,8]
+    rows = session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all()
+    assert {row.client_id for row in rows} == {7,8}
+    assert all(row.reason == "ClientFlow-opdatering 1.3.47 → 1.4.0" and not row.allow_downgrade for row in rows)
+    logs = session.exec(select(AuditLog).where(AuditLog.action == "clientflow_standard_deployment_authorized")).all()
+    assert len(logs) == 2
+    assert http.post(path, json=_standard_payload(ids=(7,8))).status_code == 409
+    assert len(session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all()) == 2
