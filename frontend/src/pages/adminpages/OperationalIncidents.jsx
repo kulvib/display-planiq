@@ -42,6 +42,7 @@ export default function OperationalIncidents() {
   const [operationError, setOperationError] = useState("");
   const [operationsVerified, setOperationsVerified] = useState(false);
   const [showAllOperations, setShowAllOperations] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [coverage, setCoverage] = useState(null);
   const [coverageError, setCoverageError] = useState("");
   const [coverageVerified, setCoverageVerified] = useState(false);
@@ -94,6 +95,7 @@ export default function OperationalIncidents() {
   useEffect(() => {
     const abort = new AbortController();
     setOperationsVerified(false);
+    if (!historyOpen) return () => abort.abort();
     client.get("/api/superadmin/operational-incidents/operation-outcomes", { signal: abort.signal })
       .then(({ data }) => {
         if (abort.signal.aborted) return;
@@ -102,7 +104,7 @@ export default function OperationalIncidents() {
       })
       .catch(() => { if (!abort.signal.aborted) setOperationError("Opdaterings- og rollbackhistorik kunne ikke hentes."); });
     return () => abort.abort();
-  }, [refreshKey]);
+  }, [refreshKey, historyOpen]);
 
   async function toggleTimeline(id) {
     if (events[id]) { setEvents((old) => ({ ...old, [id]: null })); return; }
@@ -132,7 +134,7 @@ export default function OperationalIncidents() {
               <TroubleshootIcon /> Driftsfejl
             </Typography>
             <Typography variant="body2" sx={{ color: "#cbd5e1", mt: 0.8 }}>
-              Aktuelle fejl og observerede løsninger.
+              Aktuelle driftsfejl. Afsluttede forløb findes i historikken.
             </Typography>
           </Box>
           <AdminRefreshButton
@@ -145,7 +147,7 @@ export default function OperationalIncidents() {
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
           <TextField size="small" select label="Status" value={status} onChange={change(setStatus)} sx={{ minWidth: 185 }}>
             <MenuItem value="active">Aktive fejl</MenuItem>
-            <MenuItem value="resolved">Observeret løst</MenuItem>
+            <MenuItem value="resolved">Historik · løste fejl</MenuItem>
             <MenuItem value="all">Alle forløb</MenuItem>
           </TextField>
           <TextField size="small" select label="Alvorlighed" value={severity} onChange={change(setSeverity)} sx={{ minWidth: 175 }}>
@@ -162,7 +164,7 @@ export default function OperationalIncidents() {
       {coverageIncomplete && <Alert severity="warning">Klientrapporter mangler eller er forsinkede. Fravær af registrerede fejl er ikke bevis for fejlfri drift.</Alert>}
       <Paper sx={paper}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1.5}>
-          <Typography fontWeight={800}>Fejlforløb {resultVerified ? `(${result.total ?? 0})` : "· status ikke verificeret"}</Typography>
+          <Typography fontWeight={800}>{status === "active" ? "Aktive driftsfejl" : "Fejlhistorik"} {resultVerified ? `(${result.total ?? 0})` : "· status ikke verificeret"}</Typography>
           {loading && <CircularProgress size={18} aria-label="Henter fejlhistorik" />}
         </Stack>
         <TableContainer sx={{ overflowX: "auto" }}>
@@ -197,7 +199,7 @@ export default function OperationalIncidents() {
                   </TableCell></TableRow>}
                 </React.Fragment>
               ))}
-              {!loading && resultVerified && !result.items?.length && <TableRow><TableCell colSpan={6}>Ingen registrerede fejl med de valgte filtre.</TableCell></TableRow>}
+              {!loading && resultVerified && !result.items?.length && <TableRow><TableCell colSpan={6}>{status === "active" ? "Ingen registrerede aktive fejl med de valgte filtre." : "Ingen historiske fejl med de valgte filtre."}</TableCell></TableRow>}
             </TableBody>
           </Table>
         </TableContainer>
@@ -227,14 +229,16 @@ export default function OperationalIncidents() {
           </>}
         </AccordionDetails>
       </Accordion>
-      <Paper sx={paper}>
+      <Accordion disableGutters expanded={historyOpen} onChange={(_, expanded) => setHistoryOpen(expanded)} sx={paper}>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography fontWeight={800}>Opdaterings- og rollbackhistorik</Typography></AccordionSummary>
+        <AccordionDetails>
         <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1}>
-          <Typography variant="h6" fontWeight={850}>Opdateringsfejl {operationsVerified ? `(${operationProblems.length})` : ""}</Typography>
+          <Typography fontWeight={750}>Historiske resultater {operationsVerified ? `(${visibleOperations.length})` : ""}</Typography>
           <Button size="small" disabled={!operationsVerified} aria-pressed={showAllOperations} onClick={() => setShowAllOperations((old) => !old)}>
             {showAllOperations ? "Vis kun fejl og tilbageførsler" : "Vis også gennemførte"}
           </Button>
         </Stack>
-        <Typography variant="caption" color="text.secondary" display="block" mb={1}>Seneste 50 afsluttede handlinger inden for 90 dage.</Typography>
+        <Typography variant="caption" color="text.secondary" display="block" mb={1}>Seneste 50 afsluttede handlinger inden for 90 dage. Et historisk resultat er ikke i sig selv en aktiv driftsfejl.</Typography>
         {operationError && <Alert severity="warning">{operationError}</Alert>}
         <TableContainer><Table size="small" aria-label="Opdaterings- og rollbackhistorik">
           <TableHead><TableRow><TableCell>Klient</TableCell><TableCell>Handling</TableCell><TableCell>Resultat</TableCell><TableCell>Modtaget</TableCell></TableRow></TableHead>
@@ -249,7 +253,8 @@ export default function OperationalIncidents() {
             {operationsVerified && !visibleOperations.length && <TableRow><TableCell colSpan={4}>{showAllOperations ? "Ingen afsluttede handlinger." : "Ingen registrerede fejl eller tilbageførsler i den viste historik."}</TableCell></TableRow>}
           </TableBody>
         </Table></TableContainer>
-      </Paper>
+        </AccordionDetails>
+      </Accordion>
     </Stack>
   );
 }

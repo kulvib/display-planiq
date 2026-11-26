@@ -195,3 +195,8 @@ test("daily release view keeps live status, compact recent history and the expli
   assert.match(history, /component="details"/);
   assert.match(history, /CANCELLABLE_STATES\.has\(item\.state\)/);
 });
+
+test("finished deployment history is separate from active operations", () => {
+  const ui = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowReleaseAdministration.jsx", import.meta.url), "utf8");
+  assert.match(ui, /<Accordion disableGutters defaultExpanded=\{false\} sx=\{panelSx\}>\s*<AccordionSummary[^>]*>.*Afsluttede opdateringer · historik/);
+});

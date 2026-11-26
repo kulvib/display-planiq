@@ -6,7 +6,7 @@ import { deploymentPresentation } from "./clientflowDeploymentHistory.mjs";
 const STATES = {
   standard: {label:"Matcher standard", color:"success"},
   older: {label:"Ældre version", color:"warning"},
-  newer: {label:"Nyere version", color:"info"},
+  newer: {label:"Nyere end standard", color:"info"},
   unknown: {label:"Version ukendt", color:"default"},
 };
 const panel = {p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.16)"};
@@ -32,7 +32,7 @@ export default function ClientFlowFleetOverview({clients, release, stableVersion
   return <Paper elevation={0} sx={panel}>
     <Stack spacing={2}>
       <Box>
-        <Typography variant="caption" color="text.secondary">Gældende standardrelease</Typography>
+        <Typography variant="caption" color="text.secondary">Godkendt standardrelease (ikke nødvendigvis installeret)</Typography>
         <Stack direction="row" alignItems="baseline" flexWrap="wrap" gap={1}>
           <Typography variant="h4" fontWeight={900}>ClientFlow {stableVersion}</Typography>
           <Typography variant="caption" color="text.secondary">Release {release?.release_id?.match(/-seq-(\d+)$/)?.[1] || "–"}</Typography>
