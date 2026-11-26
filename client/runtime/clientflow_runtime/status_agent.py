@@ -214,24 +214,73 @@ def _time_status() -> dict[str, Any]:
     }
 
 
+def _parse_service_properties(output: str, units: set[str]) -> dict[str, str]:
+    """Accept only explicit, named observations; never infer states by position."""
+    states: dict[str, str] = {}
+    seen: set[str] = set()
+    ambiguous: set[str] = set()
+    for block in output.strip().split("\n\n"):
+        fields: dict[str, str] = {}
+        duplicate_key = False
+        for line in block.splitlines():
+            key, separator, value = line.partition("=")
+            if not separator:
+                continue
+            if key in fields:
+                duplicate_key = True
+                if key == "Id" and value in units:
+                    ambiguous.add(value)
+            else:
+                fields[key] = value
+        unit = fields.get("Id", "")
+        if unit not in units:
+            continue
+        if unit in seen or duplicate_key:
+            ambiguous.add(unit)
+        seen.add(unit)
+        if duplicate_key:
+            continue
+        load = fields.get("LoadState")
+        state = fields.get("ActiveState")
+        if load == "not-found":
+            state = "not-found"
+        elif load in {"error", "bad-setting", "masked"}:
+            state = "error"
+        elif load != "loaded" or state not in {
+            "active", "inactive", "failed", "activating", "deactivating",
+            "reloading", "maintenance", "refreshing",
+        }:
+            continue
+        states[unit] = state
+    return {unit: state for unit, state in states.items() if unit not in ambiguous}
+
+
 def _service_status() -> dict[str, str]:
     try:
         units = sorted(
             path.name
             for path in ACTIVE_SYSTEMD_ROOT.iterdir()
-            if path.is_file() and path.suffix in {".service", ".socket", ".target", ".timer"}
+            if path.is_file()
+            and path.suffix in {".service", ".socket", ".target", ".timer"}
+            and "@." not in path.name
+            and not any(char in path.name for char in "*?[")
         )
     except OSError:
         return {}
     if not units:
         return {}
-    result = _safe_run(["/usr/bin/systemctl", "is-active", *units], timeout=15)
+    # Templates are definitions, not running instances. Query concrete names
+    # once, and correlate the response by Id rather than line count/order.
+    # systemctl may return nonzero for individual units while supplying valid
+    # properties for others. A missing record stays unknown, not failed.
+    result = _safe_run(
+        ["/usr/bin/systemctl", "show", "--all", "--property=Id",
+         "--property=LoadState", "--property=ActiveState", "--", *units],
+        timeout=15,
+    )
     if result is None:
         return {}
-    states = (result.stdout or "").splitlines()
-    if len(states) != len(units):
-        return {}
-    return {unit: state.strip() or "unknown" for unit, state in zip(units, states)}
+    return _parse_service_properties(result.stdout or "", set(units))
 
 
 def _ubuntu_version() -> str | None:
