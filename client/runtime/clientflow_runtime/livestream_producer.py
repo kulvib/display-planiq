@@ -14,6 +14,7 @@ from pathlib import Path
 import pwd
 import shutil
 import signal
+import stat
 import subprocess
 import time
 from typing import Any
@@ -241,6 +242,31 @@ class Producer:
         os.chmod(cache_dir, 0o700)
         return cache_dir
 
+    def _prune_retired_generations(self, generation_id: str) -> None:
+        """Keep current and one most recent retired generation on the host."""
+        root = GENERATIONS_DIR
+        metadata = root.lstat()
+        if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0
+                or metadata.st_mode & 0o022 or not shutil.rmtree.avoids_symlink_attacks):
+            raise RuntimeError("Ubetroet Livestream generationlager")
+        retired = []
+        for child in root.iterdir():
+            if child.name == generation_id:
+                continue
+            try:
+                if str(uuid.UUID(child.name)) != child.name:
+                    continue
+            except ValueError:
+                continue
+            meta = child.lstat()
+            if stat.S_ISDIR(meta.st_mode):
+                retired.append((meta.st_mtime_ns, child.name, child))
+            elif stat.S_ISLNK(meta.st_mode):
+                raise RuntimeError("Ubetroet Livestream generationsti")
+        for _, _, path in sorted(retired, reverse=True)[1:]:
+            shutil.rmtree(path)
+
+
     def _prepare_output(self, generation_id: str, username: str, uid: int) -> Path:
         control_gid = self._control_gid()
         GENERATIONS_DIR.mkdir(mode=0o750, parents=True, exist_ok=True)
@@ -248,13 +274,18 @@ class Producer:
         os.chmod(GENERATIONS_DIR, 0o750)
         self._acl_traverse(username, STATE_DIR)
         self._acl_traverse(username, GENERATIONS_DIR)
+        self._prune_retired_generations(generation_id)
 
         generation = GENERATIONS_DIR / generation_id
         output = generation / "out"
         generation.mkdir(mode=0o750, parents=True, exist_ok=True)
+        if not stat.S_ISDIR(generation.lstat().st_mode):
+            raise RuntimeError("Ubetroet Livestream generationsti")
         os.chown(generation, uid, control_gid)
         os.chmod(generation, 0o750)
         output.mkdir(mode=0o750, parents=True, exist_ok=True)
+        if not stat.S_ISDIR(output.lstat().st_mode):
+            raise RuntimeError("Ubetroet Livestream outputsti")
         os.chown(output, uid, control_gid)
         os.chmod(output, 0o2750)
         for child in output.iterdir():
