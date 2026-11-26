@@ -157,7 +157,17 @@ def load_catalog() -> dict[str, Any]:
     # 1244+ selector policy is explicit and strictly bounded by this runtime
     # validator; immutable client/VERSION alone cannot authorize a release.
     # The current reset is a fresh-only exception, not a generic update permit.
-    if data["catalog_sequence"] >= 1244:
+    if data["catalog_sequence"] >= 1250:
+        # A new baseline is a catalog shape, NOT physical acceptance or a
+        # deployment grant. Future successors require a separately reviewed
+        # retention/rollback contract rather than falling through legacy gates.
+        from .clientflow_standard_release import StandardReleaseDenied, validate_baseline_catalog
+        try:
+            validate_baseline_catalog(data)
+        except StandardReleaseDenied as exc:
+            raise ClientFlowCatalogError(str(exc)) from exc
+
+    if 1244 <= data["catalog_sequence"] < 1250:
         policy = data.get("retention_policy")
         if not isinstance(policy, dict) or (
             policy.get("max_selectable_versions") != 3

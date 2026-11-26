@@ -56,6 +56,8 @@ def require_stable_rollout(
     artifact: dict[str, Any] | None = None,
 ) -> None:
     """Check both before and after acquiring the per-client deployment lock."""
+    if type(release.get("release_sequence")) is int and release["release_sequence"] >= 1250:
+        raise ClientFlowStableRolloutDenied("1.4+ kræver den nye databasebundne releaseautorisation")
     if os.environ.get(ENABLED_FLAG) != "1":
         raise ClientFlowStableRolloutDenied("Stabil udrulning er ikke aktiveret")
     release_id = str(release.get("release_id") or "")

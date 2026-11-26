@@ -33,6 +33,7 @@ from .routers.terminal_auth import router as terminal_auth_router
 from .routers import enrollment
 from .routers import clientflow_releases
 from .routers import clientflow_release_administration
+from .routers import clientflow_standard_deployments
 from .routers import clientflow_release_pilot_63d7
 from .routers import clientflow_release_pilot_63d11
 from .routers import clientflow_release_pilot_63d17
@@ -686,6 +687,7 @@ app.include_router(users.router,      prefix="/api")
 app.include_router(enrollment.router, prefix="/api")
 app.include_router(clientflow_releases.router, prefix="/api")
 app.include_router(clientflow_release_administration.router, prefix="/api")
+app.include_router(clientflow_standard_deployments.router, prefix="/api")
 app.include_router(clientflow_release_pilot_63d7.router, prefix="/api")
 app.include_router(clientflow_release_pilot_63d11.router, prefix="/api")
 app.include_router(clientflow_release_pilot_63d17.router, prefix="/api")
