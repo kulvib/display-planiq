@@ -83,10 +83,12 @@ export default function ClientFlowReleaseAdministration() {
       setSelectedIds((previous) => previous.filter((id) => checked.available_clients.some(
         (value) => value.id === id && value.reported_version !== checked.stable_version,
       )));
+      return true;
     } catch (err) {
-      if (controller.signal.aborted || err?.name === "AbortError") return;
+      if (controller.signal.aborted || err?.name === "AbortError") return false;
       setStatus(null); // Any unavailable or unexpected policy is a HARD STOP.
       setError(err?.message || "Releaseadministrationen kunne ikke hentes");
+      return false;
     } finally {
       authSignal?.removeEventListener("abort", onLogout);
       if (!controller.signal.aborted) setLoading(false);
@@ -133,8 +135,9 @@ export default function ClientFlowReleaseAdministration() {
                 throw new Error("Release-realtime-capability mangler");
               }
               attemptedSnapshot = true;
-              await refresh();
+              const snapshotOk = await refresh();
               if (signal.aborted) break;
+              if (!snapshotOk) throw new Error("Release-status kunne ikke verificeres");
               setLiveStatus("active");
             }
             const result = await waitForControlRoomRealtime(capability, generation, 25, signal);
@@ -149,7 +152,7 @@ export default function ClientFlowReleaseAdministration() {
             if (result?.changed === true || next > generation) {
               generation = next;
               if (!await waitForRealtimeRetry(750, signal)) break;
-              await refresh();
+              if (!await refresh()) throw new Error("Release-status kunne ikke verificeres");
             }
           } catch (error) {
             capability = null;

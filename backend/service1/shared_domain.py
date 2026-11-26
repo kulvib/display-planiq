@@ -24,6 +24,7 @@ from .auth import SECRET_KEY, verify_password
 from .client_domain_models import ClientCommand, ClientDomainCredential, ClientDomainStatus
 from .display_control import apply_display_command_failure, display_agent_supports_commands
 from .models import Client
+from .realtime_wakeup import queue_release_version_observation
 
 SHARED_DOMAINS = frozenset({"status", "display", "system"})
 COMMAND_DOMAINS = frozenset({"display", "system"})
@@ -348,6 +349,11 @@ def upsert_shared_status(
                 setattr(row, key, value)
         session.add(row)
 
+    if credential.domain == "status":
+        queue_release_version_observation(
+            session, client_id=credential.client_id, credential_id=credential.id,
+            agent_version=normalized_agent_version,
+        )
     return SharedStatusReceipt(
         client_id=credential.client_id,
         domain=credential.domain,
