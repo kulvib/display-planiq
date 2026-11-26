@@ -63,7 +63,7 @@ def test_fleet_admission_bounded_and_revocation_clears_decision(monkeypatch):
     clock = [100.0]
     calls = []
     decisions = ["eligible", "cutover_closed"]
-    monkeypatch.setattr(policy, "_FLEET_ADMITTED_AT", {})
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
     monkeypatch.setattr(policy.time, "monotonic", lambda: clock[0])
     def check(client_id):
         calls.append(client_id)
@@ -85,7 +85,7 @@ def test_fleet_admission_bounded_and_revocation_clears_decision(monkeypatch):
 
 def test_fleet_transport_decision_expires_without_database_call(monkeypatch):
     from service1 import remote_desktop_v2 as policy
-    monkeypatch.setattr(policy, "_FLEET_ADMITTED_AT", {37: 100.0})
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {37: (100.0, "eligible")})
     monkeypatch.setattr(policy.time, "monotonic", lambda: 131.0)
     monkeypatch.setattr(policy, "_load_native_release_eligibility", lambda _: pytest.fail("hot-path DB read"))
     assert not policy.native_rdp_client_admitted(37)
@@ -115,3 +115,126 @@ def test_actual_artifact_snapshot_shape_and_cache_invalidation(monkeypatch, tmp_
         assert calls == [1, 1]
     finally:
         admission._verified_baseline_artifact.cache_clear()
+
+
+
+def test_all_identities_require_fresh_admission_and_only_legacy_allows_unmanaged(monkeypatch):
+    from service1 import remote_desktop_v2 as policy
+    clock = [100.0]
+    decision = ["legacy_pilot_eligible"]
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
+    monkeypatch.setattr(policy.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(policy, "_load_native_release_eligibility", lambda _: decision[0])
+    assert not policy.native_rdp_client_admitted(3)
+    assert not policy.native_rdp_pilot_admitted(3)
+    assert policy.authorize_native_rdp_client(3, force=True)
+    assert policy.native_rdp_pilot_admitted(3)
+    for mode in ("physical_test_eligible", "eligible"):
+        decision[0] = mode
+        assert policy.authorize_native_rdp_client(3, force=True)
+        assert not policy.native_rdp_pilot_admitted(3)
+        assert policy.native_rdp_transport_allowed(3, "browser", "wss")
+    decision[0] = "cutover_closed"
+    assert not policy.authorize_native_rdp_client(3, force=True)
+    assert not policy.native_rdp_client_admitted(3)
+
+
+def test_admission_capacity_and_packet_gate_at_100_clients(monkeypatch):
+    from service1 import remote_desktop_v2 as policy
+    clock = [100.0]
+    calls = []
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
+    monkeypatch.setattr(policy.time, "monotonic", lambda: clock[0])
+    def check(client_id):
+        calls.append(client_id)
+        return "eligible"
+    monkeypatch.setattr(policy, "_load_native_release_eligibility", check)
+    for cid in range(1, 129):
+        assert policy.authorize_native_rdp_client(cid, force=True)
+    assert len(calls) == 128
+    assert not policy.authorize_native_rdp_client(129, force=True)
+    for cid in range(1, 101):
+        for _ in range(100):
+            assert policy.native_rdp_transport_allowed(cid, "browser", "wss")
+            assert policy.native_rdp_transport_allowed(cid, "agent", "wss")
+    assert len(calls) == 128
+    clock[0] += 31
+    assert not policy.native_rdp_client_admitted(3)
+    assert policy.authorize_native_rdp_client(129, force=True)
+    assert len(policy._NATIVE_ADMISSION_DECISIONS) == 1
+
+
+def test_preacceptance_and_standard_admission_use_real_deployment_rows(monkeypatch):
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from sqlmodel import SQLModel, Session, create_engine
+    from service1 import native_rdp_admission as admission
+    from service1.clientflow_update_models import ClientFlowDeployment, ClientFlowDeploymentEvent
+    from service1.clientflow_release_admin_models import ClientFlowReleaseControl, ClientFlowPhysicalAcceptance
+    from service1.models import Client, User, Organization
+    from service1.remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
+
+    engine = create_engine("sqlite://")
+    SQLModel.metadata.create_all(engine, tables=[
+        Organization.__table__, User.__table__, Client.__table__,
+        ClientFlowReleaseControl.__table__, ClientFlowPhysicalAcceptance.__table__,
+        ClientFlowDeployment.__table__, ClientFlowDeploymentEvent.__table__,
+        RemoteDesktopClient.__table__, RemoteDesktopCredential.__table__,
+    ])
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    versions = {3: "1.3.47", 37: "1.4.0"}
+    monkeypatch.setattr(admission, "load_client_presence", lambda _db, client:
+        SimpleNamespace(status=SimpleNamespace(is_online=True, agent_version=versions[client.id])))
+    monkeypatch.setenv("CLIENTFLOW_FRESH_INSTALL_SUSPENDED", "1")
+    from service1.clientflow_pilot_1250 import CONFLICTING_FLAGS
+    for flag in CONFLICTING_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
+    monkeypatch.setattr(admission, "load_catalog", lambda: {
+        "catalog_sequence": 1248, "latest_stable": "1.3.44", "default_install_version": "1.3.44"})
+    approved = {"approved_bundle_sha256": ARTIFACT["bundle_sha256"],
+        "approved_bundle_size": ARTIFACT["bundle_size"], "approval_reference": ARTIFACT["release_approval_reference"],
+        "candidate_sha256": ARTIFACT["release_candidate_sha256"], "source_commit": ARTIFACT["source_commit"]}
+    monkeypatch.setattr(admission, "approval_lock_1250", lambda: approved)
+    monkeypatch.setattr(admission, "canonical_baseline_artifact", lambda **_: dict(ARTIFACT))
+    with Session(engine) as db:
+        control = ClientFlowReleaseControl(id=1, stable_release_id="clientflow-1.3.44-seq-1245",
+            stable_bundle_sha256="28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5",
+            revision=1, updated_at=now)
+        db.add(control)
+        for cid, name in ((3, "Viborg1"), (37, "Other")):
+            db.add(Client(id=cid, name=name, status="approved", ubuntu_version="26.04"))
+            db.add(RemoteDesktopClient(id=cid, status="approved", created_at=now))
+            db.add(RemoteDesktopCredential(id=str(uuid4()), client_id=cid, secret_hash="fixture", created_at=now))
+        db.commit()
+        assert admission.release_eligibility(db, client_id=3) == "legacy_pilot_eligible"
+        assert admission.release_eligibility(db, client_id=37) == "cutover_closed"
+        versions[3] = "1.4.0"
+        assert admission.release_eligibility(db, client_id=3) == "update_evidence_mismatch"
+        deployment = ClientFlowDeployment(id=str(uuid4()), client_id=3, **ARTIFACT,
+            requested_at=now, state_updated_at=now, state="succeeded", completed_at=now,
+            observed_release_id=ARTIFACT["target_release_id"], observed_release_sequence=1250)
+        db.add(deployment)
+        db.commit()
+        assert admission.release_eligibility(db, client_id=3) == "physical_test_eligible"
+        approved["approved_bundle_size"] += 1
+        assert admission.release_eligibility(db, client_id=3) == "release_evidence_unavailable"
+        approved["approved_bundle_size"] -= 1
+        deployment.observed_release_sequence = 1248
+        db.add(deployment)
+        db.commit()
+        assert admission.release_eligibility(db, client_id=3) == "update_evidence_mismatch"
+        deployment.observed_release_sequence = 1250
+        db.add(deployment)
+        db.commit()
+        control.stable_release_id = ARTIFACT["target_release_id"]
+        control.stable_bundle_sha256 = ARTIFACT["bundle_sha256"]
+        control.cutover_enabled = True
+        control.fleet_open = True
+        db.add(control)
+        db.commit()
+        assert admission.release_eligibility(db, client_id=3) == "physical_acceptance_unavailable"
+        control.fleet_open = False
+        db.add(control)
+        db.commit()
+        assert admission.release_eligibility(db, client_id=3) == "cutover_closed"
+    engine.dispose()

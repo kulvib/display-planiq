@@ -36,6 +36,9 @@ def envelope():
 
 
 def setup_broker(monkeypatch, *, admin=True):
+    from service1 import remote_desktop_v2 as policy
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
+    monkeypatch.setattr(policy, "_load_native_release_eligibility", lambda _: "legacy_pilot_eligible")
     item = browser()
     forwarded = []
     delivered = []

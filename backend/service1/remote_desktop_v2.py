@@ -58,21 +58,28 @@ _FLEET_POLICY = NativeRdpTransportPolicy(frozenset({"wss", "https"}), frozenset(
 _NATIVE_ADMISSION_MAX = 128
 _NATIVE_ADMISSION_TTL = 30.0
 _NATIVE_ADMISSION_REFRESH = 12.0
-_FLEET_ADMITTED_AT: dict[int, float] = {}
+_NATIVE_ADMISSION_DECISIONS: dict[int, tuple[float, str]] = {}
+
+
+def _cached_native_admission(client_id: int) -> str | None:
+    if type(client_id) is not int or client_id <= 0:
+        return None
+    checked = _NATIVE_ADMISSION_DECISIONS.get(client_id)
+    if checked is None or not 0 <= time.monotonic() - checked[0] < _NATIVE_ADMISSION_TTL:
+        return None
+    return checked[1]
 
 
 def native_rdp_pilot_admitted(client_id: int) -> bool:
-    return type(client_id) is int and client_id in NATIVE_RDP_CLIENT_POLICIES
+    """Legacy unmanaged transport requires fresh, verified 1248 evidence."""
+    return _cached_native_admission(client_id) == "legacy_pilot_eligible"
 
 
 def native_rdp_client_admitted(client_id: int) -> bool:
-    """Pure transport gate; never a DB read on the packet hot path."""
-    if type(client_id) is not int or client_id <= 0:
-        return False
-    if native_rdp_pilot_admitted(client_id):
-        return True
-    checked = _FLEET_ADMITTED_AT.get(client_id)
-    return checked is not None and 0 <= time.monotonic() - checked < _NATIVE_ADMISSION_TTL
+    """Pure transport gate for every identity, including the former pilot."""
+    return _cached_native_admission(client_id) in {
+        "eligible", "physical_test_eligible", "legacy_pilot_eligible",
+    }
 
 
 def _load_native_release_eligibility(client_id: int) -> str:
@@ -88,27 +95,27 @@ def authorize_native_rdp_client(client_id: int, *, force: bool = False) -> bool:
     The short decision is not a session grant; all user, credential, channel,
     generation and independent root checks remain mandatory.
     """
-    if native_rdp_pilot_admitted(client_id):
-        return True
     if type(client_id) is not int or client_id <= 0:
         return False
+    from .native_rdp_admission import ADMITTED_RELEASE_MODES
     now = time.monotonic()
-    checked = _FLEET_ADMITTED_AT.get(client_id)
-    if not force and checked is not None and 0 <= now - checked < _NATIVE_ADMISSION_REFRESH:
+    checked = _NATIVE_ADMISSION_DECISIONS.get(client_id)
+    if (not force and checked is not None and checked[1] in ADMITTED_RELEASE_MODES
+            and 0 <= now - checked[0] < _NATIVE_ADMISSION_REFRESH):
         return True
-    for identity, at in tuple(_FLEET_ADMITTED_AT.items()):
+    for identity, (at, _) in tuple(_NATIVE_ADMISSION_DECISIONS.items()):
         if not 0 <= now - at < _NATIVE_ADMISSION_TTL:
-            _FLEET_ADMITTED_AT.pop(identity, None)
-    if client_id not in _FLEET_ADMITTED_AT and len(_FLEET_ADMITTED_AT) >= _NATIVE_ADMISSION_MAX:
+            _NATIVE_ADMISSION_DECISIONS.pop(identity, None)
+    if client_id not in _NATIVE_ADMISSION_DECISIONS and len(_NATIVE_ADMISSION_DECISIONS) >= _NATIVE_ADMISSION_MAX:
         return False
     try:
-        approved = _load_native_release_eligibility(client_id) == "eligible"
+        decision = _load_native_release_eligibility(client_id)
     except Exception:
-        approved = False
-    if not approved:
-        _FLEET_ADMITTED_AT.pop(client_id, None)
+        decision = None
+    if decision not in ADMITTED_RELEASE_MODES:
+        _NATIVE_ADMISSION_DECISIONS.pop(client_id, None)
         return False
-    _FLEET_ADMITTED_AT[client_id] = time.monotonic()
+    _NATIVE_ADMISSION_DECISIONS[client_id] = (time.monotonic(), decision)
     return True
 
 
@@ -116,7 +123,8 @@ def native_rdp_transport_allowed(client_id: int, role: str, mode: str) -> bool:
     """Server policy, separate from identity authorization; no fallback."""
     if not native_rdp_client_admitted(client_id) or mode not in ("wss", "https"):
         return False
-    policy = NATIVE_RDP_CLIENT_POLICIES.get(client_id, _FLEET_POLICY)
+    policy = (NATIVE_RDP_CLIENT_POLICIES.get(client_id, _FLEET_POLICY)
+              if native_rdp_pilot_admitted(client_id) else _FLEET_POLICY)
     if role == "browser":
         allowed = policy.browser_modes
     elif role == "agent":

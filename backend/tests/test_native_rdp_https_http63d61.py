@@ -11,11 +11,17 @@ from service1.routers import native_rdp_https_http as http
 
 
 def test_default_gate_and_exact_pilot(monkeypatch):
+    from service1 import remote_desktop_v2 as policy
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
+    monkeypatch.setattr(policy, "_load_native_release_eligibility", lambda _: "legacy_pilot_eligible")
     monkeypatch.delenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", raising=False)
     with pytest.raises(HTTPException) as denied:
         http._gate(3)
     assert denied.value.status_code == 404
     monkeypatch.setenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", "true")
+    with pytest.raises(HTTPException):
+        http._gate(3)
+    assert policy.authorize_native_rdp_client(3, force=True)
     http._gate(3)
     with pytest.raises(HTTPException):
         http._gate(4)
@@ -196,6 +202,9 @@ def test_stable_browser_sequence_header_requires_one_canonical_value():
 def test_native_policy_keeps_roles_independent_and_unknown_clients_denied(monkeypatch):
     from service1 import remote_desktop_v2 as policy
 
+    monkeypatch.setattr(policy, "_NATIVE_ADMISSION_DECISIONS", {})
+    monkeypatch.setattr(policy, "_load_native_release_eligibility", lambda _: "legacy_pilot_eligible")
+    assert policy.authorize_native_rdp_client(3, force=True)
     monkeypatch.delenv("CLIENTFLOW_NATIVE_BINARY_HTTPS_ENABLED", raising=False)
     for role in ("browser", "agent"):
         assert policy.native_rdp_transport_allowed(3, role, "wss")

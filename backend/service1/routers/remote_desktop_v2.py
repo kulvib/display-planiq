@@ -843,13 +843,17 @@ async def _handle_control_agent_message(
             return
         browser.native_rdp_autologin_pending = None
         browser.native_rdp_autologin_expires_at = 0.0
-        if not native_rdp_pilot_admitted(client_id) and managed_channel is None:
-            return
-        if message_type == "native_rdp_autologin_envelope" and not authorize_native_rdp_client(client_id, force=True):
-            if managed_channel is not None:
-                await _send_agent(managed_channel, {"type": "native_rdp_autologin_cancel",
-                    "session_id": session_id, "request_id": request_id})
+        if message_type == "native_rdp_autologin_envelope" and (
+                not authorize_native_rdp_client(client_id, force=True)
+                or (managed_channel is None and not native_rdp_pilot_admitted(client_id))):
             message_type = "native_rdp_autologin_denied"
+            if managed_channel is not None:
+                # A failed cancellation write cannot preserve local admission.
+                try:
+                    await _send_agent(managed_channel, {"type": "native_rdp_autologin_cancel",
+                        "session_id": session_id, "request_id": request_id})
+                except Exception:
+                    logger.warning("Native RDP cancellation delivery failed")
         if message_type == "native_rdp_autologin_denied":
             if managed_channel is not None:
                 browser.native_idle = None
@@ -1488,8 +1492,8 @@ async def _browser_control_message(client_id: int, session_id: str, message: dic
             return
         now = time.monotonic()
         managed = message.get("managed") is True
-        if ((not managed and not native_rdp_pilot_admitted(client_id))
-                or not authorize_native_rdp_client(client_id, force=True)):
+        if (not authorize_native_rdp_client(client_id, force=True)
+                or (not managed and not native_rdp_pilot_admitted(client_id))):
             await _send_browser(session_id, client_id, {
                 "type": "native_rdp_autologin_denied", "request_id": request_id,
             })
@@ -2091,7 +2095,7 @@ def remote_desktop_browser_download(client_id: int, transfer_id: str, request: R
 @router.get("/remote-desktop/clients/{client_id}/native-release-eligibility")
 def native_release_eligibility(client_id: int, request: Request, response: Response):
     """Explicit superadmin-only inspection; never allocates a native session."""
-    from ..native_rdp_admission import release_eligibility
+    from ..native_rdp_admission import ADMITTED_RELEASE_MODES, release_eligibility
     user = _require_superadmin(_get_http_user(request))
     if not _platform_client_accessible(client_id, user):
         raise HTTPException(status_code=404, detail="Klient ikke fundet")
@@ -2101,7 +2105,7 @@ def native_release_eligibility(client_id: int, request: Request, response: Respo
     return {"client_id": client_id, "release_eligible": reason == "eligible",
             "reason": reason,
             # Advisory capability; the managed request separately authorizes.
-            "native_transport_admitted": native_rdp_pilot_admitted(client_id) or reason == "eligible"}
+            "native_transport_admitted": reason in ADMITTED_RELEASE_MODES}
 
 
 @router.get("/remote-desktop/clients/{client_id}/status")

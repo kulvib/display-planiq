@@ -18,6 +18,9 @@ from .clientflow_release_artifacts import _artifact_path
 from .clientflow_release_admin_models import ClientFlowPhysicalAcceptance, ClientFlowReleaseControl
 from .clientflow_release_security_policy import require_centrally_eligible_release
 from .clientflow_releases import deployment_release_snapshot, load_catalog, resolve_release
+from .clientflow_pilot_1250 import (
+    approval_lock_1250, match_approved_artifact, pilot_release, require_pilot_holds,
+)
 from .clientflow_standard_release import (
     BASELINE_ID, BASELINE_SEQUENCE, BASELINE_VERSION, require_cutover_authority,
 )
@@ -34,8 +37,8 @@ def _artifact_fingerprint(path: Path) -> tuple:
 
 
 @lru_cache(maxsize=2)
-def _verified_baseline_artifact(path: Path, fingerprint: tuple) -> dict:
-    release = resolve_release(BASELINE_VERSION)
+def _verified_baseline_artifact(path: Path, fingerprint: tuple, physical_test: bool = False) -> dict:
+    release = pilot_release() if physical_test else resolve_release(BASELINE_VERSION)
     if (release.get("release_id") != BASELINE_ID or release.get("version") != BASELINE_VERSION
             or release.get("release_sequence") != BASELINE_SEQUENCE):
         raise ValueError("baseline identity mismatch")
@@ -46,12 +49,12 @@ def _verified_baseline_artifact(path: Path, fingerprint: tuple) -> dict:
             "target_release_sequence": BASELINE_SEQUENCE}
 
 
-def canonical_baseline_artifact() -> dict:
+def canonical_baseline_artifact(*, physical_test: bool = False) -> dict:
     # Do not rehash hundreds of MB on every session recheck. File replacement,
     # mutation, permission change or deletion invalidates cached verification.
     path = _artifact_path(BASELINE_ID)
     fingerprint = _artifact_fingerprint(path)
-    artifact = _verified_baseline_artifact(path, fingerprint)
+    artifact = _verified_baseline_artifact(path, fingerprint, physical_test)
     if _artifact_fingerprint(path) != fingerprint:
         raise ValueError("artifact changed after verification")
     return dict(artifact)
@@ -84,6 +87,9 @@ def matches_completed_enrollment(token: Any, receipt: Any, *, client: Client, ar
         and token.fresh_install_source_commit == artifact["source_commit"])
 
 
+ADMITTED_RELEASE_MODES = frozenset({"eligible", "physical_test_eligible", "legacy_pilot_eligible"})
+
+
 def release_eligibility(session: Session, *, client_id: int) -> str:
     """Return a bounded reason code; unknown evidence never implies eligibility."""
     if type(client_id) is not int or client_id <= 0:
@@ -100,11 +106,44 @@ def release_eligibility(session: Session, *, client_id: int) -> str:
     if credential is None:
         return "credential_unavailable"
     control = session.get(ClientFlowReleaseControl, 1)
-    if (control is None or control.stable_release_id != BASELINE_ID
-            or control.cutover_enabled is not True or control.fleet_open is not True):
+    if control is None:
         return "cutover_closed"
     try:
         catalog = load_catalog()
+        if (active_deployment(session, client_id=client_id) is not None
+                or unacknowledged_recovery_failure(session, client_id=client_id) is not None):
+            return "installation_in_progress_or_failed"
+        presence = load_client_presence(session, client).status
+        if not presence.is_online:
+            return "canonical_runtime_unavailable"
+        latest = session.exec(select(ClientFlowDeployment).where(
+            ClientFlowDeployment.client_id == client_id,
+        ).order_by(ClientFlowDeployment.requested_at.desc(), ClientFlowDeployment.id.desc()).limit(1)).first()
+        if control.stable_release_id != BASELINE_ID:
+            # Closed historical policy is not a fleet grant. Only the exact
+            # existing physical test host may cross the pre-acceptance boundary.
+            require_pilot_holds(catalog, control.model_dump(), control.revision)
+            if client_id != 3 or client.name != "Viborg1" or client.ubuntu_version != "26.04":
+                return "cutover_closed"
+            if presence.agent_version == "1.3.47":
+                require_centrally_eligible_release(release_id="clientflow-1.3.47-seq-1248", release_sequence=1248)
+                if latest is not None and latest.target_release_sequence >= BASELINE_SEQUENCE:
+                    return "update_evidence_mismatch"
+                return "legacy_pilot_eligible"
+            if presence.agent_version != BASELINE_VERSION:
+                return "canonical_runtime_unavailable"
+            # Physical test must precede physical acceptance, but not signed
+            # artifact approval, successful deployment or canonical presence.
+            approval = approval_lock_1250()
+            artifact = canonical_baseline_artifact(physical_test=True)
+            match_approved_artifact(approval, artifact)
+            require_centrally_eligible_release(release_id=BASELINE_ID, release_sequence=BASELINE_SEQUENCE)
+            return ("physical_test_eligible" if matches_completed_update(latest, client_id=client_id, artifact=artifact)
+                    else "update_evidence_mismatch")
+        if control.cutover_enabled is not True or control.fleet_open is not True:
+            return "cutover_closed"
+        if presence.agent_version != BASELINE_VERSION:
+            return "canonical_runtime_unavailable"
         artifact = canonical_baseline_artifact()
         require_centrally_eligible_release(release_id=BASELINE_ID, release_sequence=BASELINE_SEQUENCE)
         acceptances = session.exec(select(ClientFlowPhysicalAcceptance).where(
@@ -128,15 +167,6 @@ def release_eligibility(session: Session, *, client_id: int) -> str:
             return "physical_deployment_unverified"
         if unacknowledged_recovery_failure(session, client_id=acceptance.client_id) is not None:
             return "physical_deployment_unverified"
-        if (active_deployment(session, client_id=client_id) is not None
-                or unacknowledged_recovery_failure(session, client_id=client_id) is not None):
-            return "installation_in_progress_or_failed"
-        presence = load_client_presence(session, client).status
-        if not presence.is_online or presence.agent_version != BASELINE_VERSION:
-            return "canonical_runtime_unavailable"
-        latest = session.exec(select(ClientFlowDeployment).where(
-            ClientFlowDeployment.client_id == client_id,
-        ).order_by(ClientFlowDeployment.requested_at.desc(), ClientFlowDeployment.id.desc()).limit(1)).first()
         if latest is not None:
             return "eligible" if matches_completed_update(latest, client_id=client_id, artifact=artifact) else "update_evidence_mismatch"
         token = session.get(EnrollmentToken, client.enrollment_token_id) if client.enrollment_token_id is not None else None
