@@ -69,3 +69,14 @@ test("mobile client overview preserves access to all data with discoverable scro
   assert.match(detail, /overflowWrap: "anywhere"/);
   assert.match(detail, /maxWidth: "100%", minWidth: 0/);
 });
+
+
+test("System, Network and Diagnostics retain technical details without false current status", () => {
+  assert.match(diagnostics, /Tekniske driftsoplysninger/);
+  assert.match(diagnostics, /NetworkPanel client=\{client\} clientOnline=\{clientOnline\}/);
+  assert.match(diagnostics, /Senest rapporteret · ikke aktuel/);
+  assert.match(diagnostics, /Tekniske netværksoplysninger/);
+  assert.match(diagnostics, /onlineValue !== true && onlineValue !== false/);
+  assert.ok(diagnostics.indexOf("Kræver opmærksomhed") < diagnostics.indexOf("summaryCards.map(renderSummaryCard)"));
+  assert.match(diagnostics, /Faktiske ClientFlow-opdateringstrin/);
+});

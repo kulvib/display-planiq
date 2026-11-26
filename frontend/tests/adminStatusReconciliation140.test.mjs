@@ -15,7 +15,10 @@ test("failed maintenance read invalidates old authorization state", () => {
 
 test("incident and wall status distinguish unavailable from empty and refresh on visibility", () => {
   assert.match(incidents, /!loading && resultVerified && !result.items/);
-  assert.match(incidents, /!operationError && !operations.length/);
+  assert.match(incidents, /operationsVerified && !visibleOperations\.length/);
+  assert.match(incidents, /setOperationsVerified\(false\)/);
+  assert.match(incidents, /setOperationsVerified\(true\)/);
+  assert.match(incidents, /if \(!Array\.isArray\(data\?\.items\)\)/);
   assert.match(wall, /inventoryValid \? "Ingen godkendte klienter matcher søgningen\." : "Klientoversigten er ikke verificeret\."/);
   assert.match(wall, /inventoryRequest.current\?\.abort\(\)/);
   for (const source of [incidents, wall]) {

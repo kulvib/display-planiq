@@ -187,7 +187,8 @@ test("daily release view keeps live status, compact recent history and the expli
   const history = fs.readFileSync(new URL("../src/pages/adminpages/ClientFlowDeploymentHistory.jsx", import.meta.url), "utf8");
   assert.match(ui, /baselineInstalled && <Alert/);
   assert.match(ui, /status\.stable_version\}, indtil den særskilte releasegodkendelse/);
-  assert.match(ui, /recentRows\.slice\(0, historyVisibleCount\)\} compact/);
+  assert.match(ui, /recentRows\.slice\(0, 1\)/);
+  assert.match(ui, /recentRows\.slice\(1, historyVisibleCount\)\} compact/);
   assert.match(ui, /recentProblems > 0/);
   assert.match(history, /compact && state\.terminal/);
   assert.match(history, /state\.color === "error"/);

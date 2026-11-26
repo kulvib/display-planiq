@@ -348,7 +348,10 @@ export default function ClientFlowReleaseAdministration() {
               <Typography variant="h6" fontWeight={850}>Seneste opdateringer</Typography>
               {recentProblems > 0 && <Chip size="small" color="warning" variant="outlined" label={`${recentProblems} fejl eller tilbageførsler i historikken`} />}
             </Stack>
-            <ClientFlowDeploymentHistory rows={recentRows.slice(0, historyVisibleCount)} compact />
+            <ClientFlowDeploymentHistory rows={recentRows.slice(0, 1)} />
+            {recentRows.length > 1 && <Box sx={{ mt: 1.5 }}>
+              <ClientFlowDeploymentHistory rows={recentRows.slice(1, historyVisibleCount)} compact />
+            </Box>}
             {recentRows.length > historyVisibleCount && <Button size="small" sx={{ mt: 1 }} onClick={() => setHistoryVisibleCount((count) => count + 10)}>Vis flere opdateringer ({recentRows.length - historyVisibleCount})</Button>}
             {historyVisibleCount > 3 && <Button size="small" sx={{ mt: 1 }} onClick={() => setHistoryVisibleCount(3)}>Vis færre</Button>}
           </Paper>

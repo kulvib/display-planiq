@@ -469,13 +469,13 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
     <Box sx={{ p: 1.15, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>ClientFlow-opdatering</Typography>
+          <Typography variant="subtitle2" sx={{ color: TEXT, fontWeight: 950 }}>ClientFlow</Typography>
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", mt: 0.45 }}>
             <Typography variant="caption" sx={{ color: MUTED }}>
               Installeret: {installedVersion ? `v${String(installedVersion).replace(/^v/i, "")}` : "ikke rapporteret"}
             </Typography>
             {latestVersion && <Typography variant="caption" sx={{ color: MUTED }}>Seneste: v{String(latestVersion).replace(/^v/i, "")}</Typography>}
-            {deployment?.target_version && <Typography variant="caption" sx={{ color: MUTED }}>Deployment: v{String(deployment.target_version).replace(/^v/i, "")}</Typography>}
+            {inProgress && deployment?.target_version && <Typography variant="caption" sx={{ color: MUTED }}>Mål: v{String(deployment.target_version).replace(/^v/i, "")}</Typography>}
             <Typography variant="caption" sx={{ color: statusColor, fontWeight: 850 }}>{statusText}</Typography>
           </Stack>
         </Box>
@@ -492,7 +492,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
             </Button>
           )}
           <Button size="small" variant="outlined" color={isDowngrade ? "warning" : "info"} startIcon={starting || inProgress ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />} disabled={disabled} type="button" onClick={startClientFlowUpdate} sx={{ borderRadius: 2, fontWeight: 850, whiteSpace: "nowrap" }}>
-            {starting || inProgress ? "Opdaterer ClientFlow…" : sameVersionSelected ? "Versionen er installeret" : isDowngrade ? `Nedgrader til v${resolvedSelectedVersion}` : "Tjek/opdater ClientFlow"}
+            {starting || inProgress ? "Opdaterer ClientFlow…" : sameVersionSelected ? "Versionen er installeret" : isDowngrade ? `Nedgrader til v${resolvedSelectedVersion}` : "Opdater ClientFlow"}
           </Button>
         </Stack>
       </Stack>
@@ -562,7 +562,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
         <Box sx={{ mt: 1, p: 1, borderRadius: 2, background: stateIsError ? "rgba(248,113,113,0.10)" : stateIsWarning ? "rgba(251,191,36,0.10)" : "rgba(56,189,248,0.10)", border: stateIsError ? "1px solid rgba(248,113,113,0.28)" : stateIsWarning ? "1px solid rgba(251,191,36,0.28)" : "1px solid rgba(56,189,248,0.24)" }}>
           <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
             <Stack spacing={0.15} sx={{ minWidth: 0 }}>
-              <Typography variant="caption" sx={{ color: MUTED, fontWeight: 850, textTransform: "uppercase", letterSpacing: 0.6 }}>Canonical deployment</Typography>
+              <Typography variant="caption" sx={{ color: MUTED, fontWeight: 850 }}>ClientFlow-opdatering</Typography>
               <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
                 {(starting || inProgress) && <CircularProgress size={15} sx={{ color: "#7dd3fc" }} />}
                 <Typography variant="body2" sx={{ color: TEXT, fontWeight: 900 }}>{meta.label}{deployment?.target_version ? ` · v${deployment.target_version}` : ""}</Typography>
@@ -573,12 +573,14 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
           <Typography variant="body2" sx={{ mt: 0.5, color: stateIsError ? "#fca5a5" : MUTED }}>
             {error || meta.description}
           </Typography>
-          {(inProgress || stateIsSuccess) && (
-            <Box sx={{ mt: 1, height: 6, borderRadius: 999, background: "rgba(15,23,42,0.75)", overflow: "hidden" }}>
-              <Box sx={{ height: "100%", width: `${Math.max(6, Math.min(100, meta.progress || 6))}%`, borderRadius: 999, background: stateIsSuccess ? "#22c55e" : "#38bdf8", transition: "width 250ms ease" }} />
-            </Box>
-          )}
-          <UpdateStepTimeline steps={CLIENTFLOW_DEPLOYMENT_STEPS} currentIndex={meta.index} terminal={stateIsSuccess} error={stateIsError} />
+          <Stack direction="row" spacing={0.5} sx={{ my: 1.5 }} role="group" aria-label="Faktiske ClientFlow-opdateringstrin">
+            {CLIENTFLOW_DEPLOYMENT_STEPS.map((step, index) => {
+              const passed = stateIsSuccess || (inProgress && meta.index >= 0 && index < meta.index);
+              const activeStep = inProgress && index === meta.index;
+              return <Box key={step.key} title={step.label} aria-label={`${step.label}: ${passed ? "passeret" : activeStep ? "aktuelt" : "ikke bekræftet"}`}
+                sx={{ flex: 1, height: 8, borderRadius: 999, background: passed ? "#22c55e" : activeStep ? "#38bdf8" : "rgba(148,163,184,0.20)" }} />;
+            })}
+          </Stack>
           {(requestedAt || updatedAt || finishedAt) && (
             <Stack direction="row" spacing={1.25} useFlexGap sx={{ flexWrap: "wrap", mt: 0.75 }}>
               {requestedAt && <Typography variant="caption" sx={{ color: MUTED }}>Bestilt: {requestedAt}</Typography>}
@@ -2024,11 +2026,14 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
           md: 5
         }}>
         <DataPanel title="Drift">
-          <InfoRow label="Online" value={clientOnline === true ? "Ja" : "Nej"} color={clientOnline === true ? "#22c55e" : "#f87171"} />
-          <InfoRow label="State" value={client?.state || "ukendt"} />
+          <InfoRow label="Forbindelse" value={clientOnline === true ? "Online" : clientOnline === false ? "Offline" : "Ukendt"} color={clientOnline === true ? "#22c55e" : clientOnline === false ? "#f87171" : MUTED} />
           <InfoRow label="Oppetid" value={formatUptime(uptime ?? client?.uptime)} />
           <InfoRow label="Sidst set" value={formatDateTime(lastSeen || client?.presence?.status?.reported_at, true)} />
-          <InfoRow label="Tilføjet" value={formatDateTime(client?.created_at, true)} />
+          <Box component="details" sx={{ mt: 1 }}>
+            <Box component="summary" sx={{ cursor: "pointer", color: MUTED, fontSize: "0.8rem" }}>Tekniske driftsoplysninger</Box>
+            <InfoRow label="Intern tilstand" value={client?.state || "ukendt"} />
+            <InfoRow label="Tilføjet" value={formatDateTime(client?.created_at, true)} />
+          </Box>
         </DataPanel>
       </Grid>
       <Grid
@@ -2037,7 +2042,7 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
           md: 7
         }}>
         <DataPanel
-          title="Software"
+          title="Opdateringer"
           action={
             onDiagnosticsRefresh ? (
               <Tooltip title="Opdater data">
@@ -2068,7 +2073,7 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
                       : client.update_maintenance.action === "update_clientflow"
                         ? "ClientFlows releasekontrol og rollback håndteres af den eksisterende controller. "
                         : "Kioskbrowseren er midlertidigt spærret under installationen. "}
-                    Ingen installationsprocent eller sluttid er anslået.
+                    
                   </Typography>
                 </Alert>
               )}
@@ -2105,17 +2110,20 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
   );
 }
 
-function NetworkPanel({ client }) {
+function NetworkPanel({ client, clientOnline }) {
   const level = networkStatusLevel(client);
   const message = networkStatusMessage(client);
+  const current = clientOnline === true;
+  const tone = current ? level === "ok" ? "#22c55e" : level === "error" ? "#f87171" : "#fbbf24" : MUTED;
 
   const activeRows = [
-    ["Netværksstatus", message],
+    ["Forbindelse", client?.active_network_type],
+    ["IP-adresse", client?.active_network_ip],
+    ["Interface", client?.active_network_interface],
+  ];
+  const technicalRows = [
     ["Statuskode", client?.network_status || "unknown"],
-    ["Aktiv forbindelse", client?.active_network_type],
-    ["Aktiv IP", client?.active_network_ip],
-    ["Aktivt interface", client?.active_network_interface],
-    ["Aktiv MAC", client?.active_network_mac],
+    ["MAC-adresse", client?.active_network_mac],
     ["Diagnostik opdateret", formatDateTime(client?.diagnostics_updated_at, true)],
   ];
 
@@ -2134,9 +2142,17 @@ function NetworkPanel({ client }) {
           md: 6
         }}>
         <DataPanel title="Aktiv forbindelse">
+          <Typography fontWeight={850} sx={{ color: tone, mb: 0.75 }}>{current ? level === "ok" ? "Forbundet" : level === "error" ? "Ingen forbindelse" : "Ikke verificeret" : "Senest rapporteret · ikke aktuel"}</Typography>
+          {(!current || level !== "ok") && <Typography variant="body2" sx={{ color: MUTED, mb: 1 }}>{message}</Typography>}
           {activeRows.map(([label, value]) => (
-            <InfoRow key={label} label={label} value={normalize(value) || "ukendt"} copy={label.includes("IP") || label.includes("MAC") || label === "Aktivt interface"} />
+            <InfoRow key={label} label={label} value={normalize(value) || "ukendt"} copy={Boolean(normalize(value)) && label !== "Forbindelse"} />
           ))}
+          <Box component="details" sx={{ mt: 1 }}>
+            <Box component="summary" sx={{ cursor: "pointer", color: MUTED, fontSize: "0.8rem" }}>Tekniske netværksoplysninger</Box>
+            {technicalRows.map(([label, value]) => (
+              <InfoRow key={label} label={label} value={normalize(value) || "ukendt"} copy={label === "MAC-adresse" && Boolean(normalize(value))} />
+            ))}
+          </Box>
         </DataPanel>
       </Grid>
       <Grid
@@ -2144,7 +2160,7 @@ function NetworkPanel({ client }) {
           xs: 12,
           md: 6
         }}>
-        <DataPanel title="Adaptere">
+        <DataPanel title="Wi-Fi og LAN">
           {adapterRows.map(([label, value]) => (
             <InfoRow key={label} label={label} value={normalize(value) || "ukendt"} copy />
           ))}
@@ -2858,6 +2874,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
 
   const attentionItems = [
     onlineValue === false ? { label: "Klienten er offline", level: "error", value: "Seneste kontakt fremgår af tekniske detaljer" } : null,
+    onlineValue !== true && onlineValue !== false ? { label: "Forbindelse ikke verificeret", level: "neutral", value: "Aktuel online-status mangler" } : null,
     networkUnavailable ? { label: "Netværk mangler", level: "error", value: networkMessage } : null,
     systemdIssues.length > 0 ? { label: `${systemdIssues.length} systemd-status kræver tjek`, level: "error", value: systemdIssues.map((row) => row.label).join(", ") } : null,
     livestreamProcessIssues.length > 0 ? { label: "Livestream-proces kræver tjek", level: "error", value: "Processtatus afviger fra ønsket livestream-tilstand" } : null,
@@ -2887,9 +2904,9 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const summaryCards = [
     {
       label: "Klient",
-      value: isOnline ? "Online" : "Offline",
-      helper: `${statusText(client?.state)} · ${statusText(client?.client_version ? `v${String(client.client_version).replace(/^v/i, "")}` : "")}`,
-      level: isOnline ? "ok" : "error",
+      value: isOnline ? "Online" : onlineValue === false ? "Offline" : "Ukendt",
+      helper: statusText(client?.client_version ? `v${String(client.client_version).replace(/^v/i, "")}` : ""),
+      level: isOnline ? "ok" : onlineValue === false ? "error" : "neutral",
     },
     {
       label: "Netværk",
@@ -3253,13 +3270,13 @@ function DiagnosticsPanel({ client, onRefresh }) {
   return (
     <DataPanel
       title="Diagnostik"
-      description="Aktuelle fejl og ubekræftede statusser vises først. Supplerende driftsfelter og rå tekniske data kan foldes ud. Synlig for superadministratorer og brugere med Se-adgang."
+      description="Aktuelle fejl og status. Synlig for superadministratorer og brugere med Se-adgang."
       action={
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{
           alignItems: { xs: "flex-start", sm: "center" }
         }}>
           <Typography variant="caption" sx={{ color: MUTED, fontWeight: 800 }}>
-            Opdateret: {formatDiagnosticDate(client?.diagnostics_updated_at)} · live-status
+            Seneste rapport: {formatDiagnosticDate(client?.diagnostics_updated_at)}
           </Typography>
           {onRefresh ? (
             <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={onRefresh} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}>
@@ -3270,12 +3287,6 @@ function DiagnosticsPanel({ client, onRefresh }) {
       }
     >
       <Stack spacing={1.5}>
-        <Grid container spacing={1} sx={{
-          alignItems: "stretch"
-        }}>
-          {summaryCards.map(renderSummaryCard)}
-        </Grid>
-
         <Box
           sx={{
             p: 1.15,
@@ -3286,7 +3297,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         >
           <Stack spacing={0.75}>
             <Typography sx={{ color: TEXT, fontWeight: 950 }}>
-              {attentionItems.length ? "Kræver opmærksomhed eller verificering" : "Ingen aktuelle diagnostikproblemer"}
+              {attentionItems.length ? "Kræver opmærksomhed" : "Ingen registrerede diagnostikproblemer"}
             </Typography>
             {attentionItems.length ? attentionItems.map((item) => (
               <Stack key={item.label} direction={{ xs: "column", sm: "row" }} spacing={0.75} sx={{
@@ -3298,11 +3309,17 @@ function DiagnosticsPanel({ client, onRefresh }) {
               </Stack>
             )) : (
               <Typography variant="body2" sx={{ color: MUTED }}>
-                Ingen registrerede problemer eller ubekræftede statusser i den aktuelle diagnosticering.
+                Ingen problemer i den senest rapporterede diagnostik.
               </Typography>
             )}
           </Stack>
         </Box>
+
+        <Grid container spacing={1} sx={{
+          alignItems: "stretch"
+        }}>
+          {summaryCards.map(renderSummaryCard)}
+        </Grid>
 
         <Box
           sx={{ p: 1.15, borderRadius: 2, background: "rgba(15,23,42,0.24)", border: `1px solid ${BORDER}` }}
@@ -3310,7 +3327,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" }, justifyContent: "space-between" }}>
             <Box>
               <Typography sx={{ color: TEXT, fontWeight: 950 }}>Supplerende driftsoplysninger</Typography>
-              <Typography variant="body2" sx={{ color: MUTED }}>Browser, systemtid og udvalgte services – felterne findes også i de relevante fagfaner.</Typography>
+ 
             </Box>
             <Button
               size="small"
@@ -3346,9 +3363,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
             }}>
             <Box>
               <Typography sx={{ color: TEXT, fontWeight: 950 }}>Tekniske detaljer</Typography>
-              <Typography variant="body2" sx={{ color: MUTED, lineHeight: 1.35 }}>
-                Fuld liste med rå statusfelter for services, netværk, display, livestream, lifecycle og opdateringer.
-              </Typography>
+ 
             </Box>
             <Button
               size="small"
@@ -3365,11 +3380,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
             <Grid container spacing={1.25} sx={{ mt: 1.15 }}>
               {technicalSections.map(renderSection)}
             </Grid>
-          ) : (
-            <Typography variant="body2" sx={{ mt: 1, color: MUTED }}>
-              Detaljerne er skjult for at gøre Diagnostik mere overskuelig. Fold dem ud ved dybere fejlsøgning.
-            </Typography>
-          )}
+          ) : null}
         </Box>
       </Stack>
     </DataPanel>
@@ -3483,7 +3494,7 @@ export default function ClientDetailsInfoSection({
         />
       )}
 
-      {currentTab === "network" && <NetworkPanel client={client} />}
+      {currentTab === "network" && <NetworkPanel client={client} clientOnline={clientOnline} />}
 
       {currentTab === "config" && (
         <ConfigurationPanel
