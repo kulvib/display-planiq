@@ -159,6 +159,9 @@ def publish(
             raise RuntimeError("Approved bundle matcher ikke den forventede bundle-SHA-256")
 
         source_version, source_sequence, source_release_id = _source_release_identity()
+        if source_sequence >= 1251 and any((authorized_1243_transition, authorized_1244_reset,
+                                           authorized_1248_viborg1_fourth, authorized_1250_baseline_storage)):
+            raise RuntimeError("From release 1251 the three-release cap has no storage exceptions")
         if str(manifest["version"]) != source_version:
             raise RuntimeError("Approved bundle matcher ikke canonical source VERSION")
         if str(manifest["release_id"]) != source_release_id:
