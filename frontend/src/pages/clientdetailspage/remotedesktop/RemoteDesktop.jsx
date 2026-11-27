@@ -1682,7 +1682,7 @@ export default function RemoteDesktop() {
           borderRadius: 2,
           overflow: "auto",
           minHeight: { xs: 360, md: 560 },
-          border: "1px solid rgba(148,163,184,0.16)",
+          border: "1px solid rgba(148,163,184,0.30)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.28)",
           outline: keyboardEnabled ? "2px solid" : "none",
           outlineColor: keyboardEnabled ? "primary.main" : "transparent",
@@ -1833,7 +1833,7 @@ export default function RemoteDesktop() {
     <Container maxWidth={nativeRequested ? false : "xl"} sx={{ py: { xs: 1.25, md: 2 }, color: "#f8fafc", ...(nativeRequested ? { bgcolor: "#020617", minHeight: "100vh" } : {}) }}>
       <Stack spacing={1.5}>
         {nativeRequested ? (
-          <Paper elevation={0} sx={{ px: { xs: 1.5, md: 2.5 }, py: { xs: 1.25, md: 1.6 }, bgcolor: "rgba(15,23,42,0.88)", border: "1px solid rgba(148,163,184,0.16)", borderRadius: 2 }}>
+          <Paper elevation={0} sx={{ px: { xs: 1.5, md: 2.5 }, py: { xs: 1.25, md: 1.6 }, bgcolor: "rgba(15,23,42,0.88)", border: "1px solid rgba(148,163,184,0.30)", borderRadius: 2 }}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} alignItems={{ xs: "stretch", md: "center" }}>
               <Stack direction="row" spacing={1.2} sx={{ alignItems: "center", flex: 1, minWidth: 0 }}>
                 <Box sx={{ width: 42, height: 42, borderRadius: 1.5, bgcolor: "rgba(37,99,235,0.20)", border: "1px solid rgba(96,165,250,0.30)", display: "grid", placeItems: "center", flex: "0 0 auto" }}><MonitorIcon /></Box>
