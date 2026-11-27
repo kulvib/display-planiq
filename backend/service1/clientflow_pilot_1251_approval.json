@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "approved": true,
+  "release_id": "clientflow-1.4.1-seq-1251",
+  "source_commit": "16bfb850aea148894b6d1cb28a09c7e6e188323c",
+  "candidate_sha256": "908b48060d2e8e82d912e3f85107b1aa81b64074c71be11cad19e6985b4cd31f",
+  "installer_sha256": "98b3dd7e86ef8b2ec395a9d0d2bdf5bb8afebfc491780670f6447082ef301ca2",
+  "approved_bundle_sha256": "835610b0a59510b2119601468ad47c0aa1fb418b96c4cfaaa8cdd81042dc1ab6",
+  "approved_bundle_size": 223897600,
+  "approval_reference": "ClientFlow-1.4.1-1251-PR444-build57",
+  "approval_run_id": 46039991574,
+  "github_release_tag": "clientflow-1.4.1-1251-approved-transport"
+}
