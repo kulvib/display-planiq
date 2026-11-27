@@ -37,12 +37,13 @@ def fixture(tmp_path: Path) -> Path:
     for name in REQUIRED:
         destination = repo / name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, destination)
+        source = "backend/service1/clientflow_release_catalog_1248_pilot.stage.json" if name.endswith("/clientflow_release_catalog.json") else name
+        shutil.copy2(ROOT / source, destination)
     return repo
 
 
-def test_exact_new_identity_staged_without_any_deployment_authority():
-    result = inspect_source(ROOT)
+def test_exact_new_identity_staged_without_any_deployment_authority(tmp_path):
+    result = inspect_source(fixture(tmp_path))
     assert result["source_stage_ready"], result["checks"]
     assert result["target"] == "clientflow-1.3.44-seq-1245"
     assert result["stage"] == "source_approved_single_stable_catalog_ready"
@@ -53,7 +54,7 @@ def test_exact_new_identity_staged_without_any_deployment_authority():
 
 def test_staged_identity_is_now_exact_live_pilot_catalog():
     release = json.loads((ROOT / "client/release/release-input.json").read_text())
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json").read_text())
     assert release["release_sequence"] == 1251  # unsigned candidate
     assert catalog["catalog_sequence"] == 1248  # 1245 stable + 1247/1248 update-only
     assert len(catalog["releases"]) == 3
