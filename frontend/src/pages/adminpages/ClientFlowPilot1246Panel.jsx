@@ -75,7 +75,7 @@ export default function ClientFlowPilot1246Panel({ status, onAuthorized }) {
   if (candidate?.release_id !== RELEASE_ID || candidate?.active_catalog_promoted !== true) return null;
 
   return (
-    <Paper elevation={0} sx={{ p: { xs: 2, md: 2.5 }, borderRadius: 2, border: "1px solid rgba(148,163,184,0.25)", bgcolor: "rgba(15,23,42,0.74)" }}>
+    <Paper elevation={0} sx={{ p: { xs: 2, md: 2.5 }, borderRadius: 2, border: "1px solid rgba(148,163,184,0.30)", bgcolor: "rgba(15,23,42,0.74)" }}>
       <Stack spacing={1.5}>
         <Box>
           <Typography variant="h6" fontWeight={850}>Fysisk pilot · 1.3.45 / 1246</Typography>
