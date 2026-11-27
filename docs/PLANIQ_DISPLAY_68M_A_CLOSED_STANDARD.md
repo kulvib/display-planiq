@@ -1,0 +1,9 @@
+# 68M-A – closed 1251 standard transition preparation
+
+The operator reported all items in the 68L physical acceptance checklist PASS on 27 November 2026. Technical acceptance output verified active 1251, previous 1250, installed provenance/structure, idle coordinator, and five required systemd units. Read-only backend evidence verified one succeeded 1250-to-1251 deployment on client 3 with exact approved bundle identity, zero active deployments and closed control revision 2. Store audit verified exactly 1248/1250/1251 with no invalid artifacts. These are operator-reported observations, not an independent review or a failed-update recovery exercise.
+
+Prepare an exact 1251 catalog, closed control revision 3, read-only status, bounded native RDP continuity and operator-only transition. The active catalog is deliberately unchanged in this preparation PR. No deployment, fresh-install, fleet or manual downgrade authorization is introduced. Existing 1250/1251 approved artifacts and their source commits remain immutable. No build of a new ClientFlow release.
+
+The next reviewed catalog activation must preserve historical fixtures, source guard checks and existing runtime authorization boundaries. During that activation the exact 1251 host may remain eligible with either the previous closed 1250 binding or final closed 1251 binding, never an arbitrary version/client. Rebind the control only after exact store and DB evidence verification and explicit operator attestation. Do not insert a fabricated ClientFlowPhysicalAcceptance row: existing governance requires independent reviewer and actual recovery evidence for broader rollout. Neither has been established here.
+
+No production data, file or environment mutation is performed by this preparation. No further physical retest is requested solely to prepare this code. Independent recovery exercise, fleet scale and off-host restore remain separate outstanding gates.

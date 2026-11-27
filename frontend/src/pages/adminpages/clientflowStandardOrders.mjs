@@ -3,16 +3,25 @@ import { validateActiveDeployments, validateDeploymentHistory } from "./clientfl
 export const BASELINE_ID = "clientflow-1.4.0-seq-1250";
 export const BASELINE_VERSION = "1.4.0";
 export const MAX_ORDER_CLIENTS = 25;
+export const CLOSED_STANDARD_ID = "clientflow-1.4.1-seq-1251";
+export const CLOSED_STANDARD_VERSION = "1.4.1";
 
 export function validateStandardBaselineResponse(data) {
-  if (!data || data.phase !== "standard_baseline" || data.stable_release_id !== BASELINE_ID ||
-      data.stable_version !== BASELINE_VERSION || data.authorization_active !== false ||
+  const successor = data?.stable_release_id === CLOSED_STANDARD_ID;
+  const expectedId = successor ? CLOSED_STANDARD_ID : BASELINE_ID;
+  const expectedVersion = successor ? CLOSED_STANDARD_VERSION : BASELINE_VERSION;
+  if (!data || data.phase !== "standard_baseline" || data.stable_release_id !== expectedId ||
+      data.stable_version !== expectedVersion || data.authorization_active !== false ||
+      (successor && (data.cutover_enabled !== false || data.fleet_open !== false ||
+        data.standard_order_review_available !== false || data.successor_pilot_review_available !== false ||
+        typeof data.closed_standard_transition_pending !== "boolean" ||
+        data.revision !== (data.closed_standard_transition_pending ? 2 : 3))) ||
       data.rollback_available !== false || data.fresh_install_open !== false ||
       typeof data.standard_order_review_available !== "boolean" ||
       data.client_inventory_complete !== true || !Array.isArray(data.available_clients) ||
       data.available_clients.length > 1000 || !Array.isArray(data.available_releases) ||
-      data.available_releases.length !== 1 || data.available_releases[0]?.release_id !== BASELINE_ID ||
-      data.available_releases[0]?.version !== BASELINE_VERSION ||
+      data.available_releases.length !== 1 || data.available_releases[0]?.release_id !== expectedId ||
+      data.available_releases[0]?.version !== expectedVersion ||
       data.available_releases[0]?.status !== "stable" ||
       data.available_releases[0]?.deployment_authorized !== false ||
       !Array.isArray(data.waves) || data.waves.length !== 0) {

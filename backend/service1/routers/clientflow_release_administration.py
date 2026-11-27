@@ -37,7 +37,8 @@ from ..clientflow_release_admin_models import (
     ClientFlowPhysicalAcceptance,
 )
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog, compare_versions
-from ..clientflow_pilot_1251 import Pilot1251Denied, require_closed_baseline
+from ..clientflow_pilot_1251 import Pilot1251Denied, require_closed_baseline, SUCCESSOR_ID, SUCCESSOR_VERSION, SUCCESSOR_SEQUENCE
+from ..clientflow_closed_standard_1251 import require_closed_standard_control
 from ..clientflow_pilot_1250 import Pilot1250Denied
 from ..clientflow_standard_release import BASELINE_ID, BASELINE_VERSION, BASELINE_SEQUENCE, StandardReleaseDenied, validate_baseline_catalog
 from ..db import get_session
@@ -409,6 +410,29 @@ def _standard_baseline_status(session: Session, catalog: dict) -> dict:
     }
 
 
+def _closed_1251_status(session: Session, catalog: dict) -> dict:
+    control = session.get(ClientFlowReleaseControl, 1)
+    if control is None:
+        raise HTTPException(status_code=503, detail="Releasebinding mangler")
+    try:
+        mode = require_closed_standard_control(catalog, control.model_dump(), allow_predecessor=True)
+    except (Pilot1251Denied, Pilot1250Denied, StandardReleaseDenied) as exc:
+        raise HTTPException(status_code=503, detail="Lukket 1251-reference kunne ikke verificeres") from exc
+    return {
+        **_release_inventory(session),
+        "phase": "standard_baseline",
+        "successor_pilot_review_available": False,
+        "closed_standard_transition_pending": mode == "pending",
+        "revision": control.revision,
+        "cutover_enabled": False, "fleet_open": False,
+        "stable_release_id": SUCCESSOR_ID, "stable_version": SUCCESSOR_VERSION,
+        "available_releases": [{"release_id": SUCCESSOR_ID, "version": SUCCESSOR_VERSION,
+                                "status": "stable", "deployment_authorized": False}],
+        "standard_order_review_available": False, "authorization_active": False,
+        "rollback_available": False, "fresh_install_open": False, "waves": [],
+    }
+
+
 @router.get("")
 def read_release_administration(
     request: Request,
@@ -422,6 +446,8 @@ def read_release_administration(
         catalog = load_catalog()
     except ClientFlowCatalogError as exc:
         raise HTTPException(status_code=503, detail="Releasekatalogets kryptografiske autoritet er utilgængelig") from exc
+    if catalog.get("catalog_sequence") == SUCCESSOR_SEQUENCE:
+        return _closed_1251_status(session, catalog)
     if catalog.get("catalog_sequence") == BASELINE_SEQUENCE:
         return _standard_baseline_status(session, catalog)
     control = _bound_control(session)

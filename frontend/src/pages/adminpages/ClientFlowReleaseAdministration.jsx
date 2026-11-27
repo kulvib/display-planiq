@@ -16,7 +16,7 @@ import ClientFlowFleetOverview from "./ClientFlowFleetOverview";
 import ClientFlowStandardOrderPanel from "./ClientFlowStandardOrderPanel";
 import ClientFlowBaselinePilotPanel from "./ClientFlowBaselinePilotPanel";
 import ClientFlowSuccessorPilotPanel from "./ClientFlowSuccessorPilotPanel";
-import { validateStandardBaselineResponse } from "./clientflowStandardOrders.mjs";
+import { validateStandardBaselineResponse, BASELINE_ID, CLOSED_STANDARD_ID } from "./clientflowStandardOrders.mjs";
 import { CANCELLABLE_STATES } from "./clientflowDeploymentHistory.mjs";
 import {
   MAX_PLAN_CLIENTS, planVersionGroups, preparePlan,
@@ -332,7 +332,12 @@ export default function ClientFlowReleaseAdministration() {
         : <Alert severity="error">Release- og klientdata er ikke verificeret. Alle handlinger er spærret.</Alert>) : (
         <>
           <ClientFlowFleetOverview clients={available} release={release} stableVersion={status.stable_version} activeRows={activeRows} activeComplete={activeComplete} />
-          {status.phase === "standard_baseline" && <ClientFlowStandardOrderPanel status={status} onAuthorized={refresh} /> }
+          {status.phase === "standard_baseline" && status.stable_release_id === BASELINE_ID && <ClientFlowStandardOrderPanel status={status} onAuthorized={refresh} /> }
+          {status.phase === "standard_baseline" && status.stable_release_id === CLOSED_STANDARD_ID && <Alert severity={status.closed_standard_transition_pending ? "info" : "success"}>
+            {status.closed_standard_transition_pending
+              ? "ClientFlow 1.4.1 er forberedt som standard. Afventer verificeret, lukket databasebinding."
+              : "ClientFlow 1.4.1 er standardrelease. Nyinstallation, udrulning og manuel rollback er fortsat lukket."}
+          </Alert>}
           {status.phase === "standard_baseline" && status.successor_pilot_review_available === true && <ClientFlowSuccessorPilotPanel status={status} onAuthorized={refresh} /> }
           {status.phase === "additive_draft_only" && !baselineInstalled && <ClientFlowBaselinePilotPanel status={status} onAuthorized={refresh} /> }
           {status.phase === "additive_draft_only" && baselineInstalled && <Alert severity="info">

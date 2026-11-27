@@ -29,6 +29,9 @@ from .clientflow_pilot_1251 import (
     SUCCESSOR_ID, SUCCESSOR_VERSION, SUCCESSOR_SEQUENCE, require_closed_baseline,
     successor_release, match_successor_artifact, match_successor_order, closed_baseline_catalog,
 )
+from .clientflow_closed_standard_1251 import (
+    require_closed_standard_control, require_completed_successor,
+)
 from .enrollment_models import ClientEnrollmentReceipt
 from .models import Client, EnrollmentToken
 from .remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
@@ -152,6 +155,25 @@ def _closed_baseline_eligibility(session, *, client, catalog, control, latest, v
     return "update_evidence_mismatch"
 
 
+def _closed_standard_eligibility(session, *, client, catalog, control, latest, version):
+    # A closed selector is not a fleet grant. Preserve only the exact
+    # already installed Viborg1 across the old/new control binding.
+    require_closed_standard_control(catalog, control.model_dump(), allow_predecessor=True)
+    if (client.id != 3 or client.name != "Viborg1" or client.ubuntu_version != "26.04"
+            or version != SUCCESSOR_VERSION):
+        return "cutover_closed"
+    predecessors = session.exec(select(ClientFlowDeployment).where(
+        ClientFlowDeployment.client_id == 3,
+        ClientFlowDeployment.target_release_id == BASELINE_ID,
+    ).limit(2)).all()
+    if len(predecessors) != 1:
+        return "update_evidence_mismatch"
+    require_completed_successor(latest, predecessors[0], client_id=3)
+    require_centrally_eligible_release(release_id=SUCCESSOR_ID, release_sequence=SUCCESSOR_SEQUENCE)
+    match_successor_artifact(canonical_successor_artifact())
+    return "physical_test_eligible"
+
+
 ADMITTED_RELEASE_MODES = frozenset({"eligible", "physical_test_eligible", "legacy_pilot_eligible"})
 
 
@@ -184,6 +206,9 @@ def release_eligibility(session: Session, *, client_id: int) -> str:
         latest = session.exec(select(ClientFlowDeployment).where(
             ClientFlowDeployment.client_id == client_id,
         ).order_by(ClientFlowDeployment.requested_at.desc(), ClientFlowDeployment.id.desc()).limit(1)).first()
+        if catalog.get("catalog_sequence") == SUCCESSOR_SEQUENCE:
+            return _closed_standard_eligibility(session, client=client, catalog=catalog,
+                control=control, latest=latest, version=presence.agent_version)
         if control.stable_release_id != BASELINE_ID:
             # Closed historical policy is not a fleet grant. Only the exact
             # existing physical test host may cross the pre-acceptance boundary.

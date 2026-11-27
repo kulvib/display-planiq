@@ -56,7 +56,7 @@ def verified_mode(repo: Path) -> str:
     """Recognize only the full pinned baseline, 1246, 1247 or 1248 stage."""
     stage, stage_sha = _strict_json(repo, STAGE_PATH)
     lock, lock_sha = _strict_json(repo, APPROVAL_PATH, max_size=4096)
-    active, _ = _strict_json(repo, ACTIVE_PATH)
+    active, active_sha = _strict_json(repo, ACTIVE_PATH)
     if stage_sha != STAGED_SHA256 or lock_sha != APPROVAL_SHA256:
         raise ActiveCatalogDenied("Pinned stage or artifact approval changed")
     if (stage.get("catalog_sequence") != 1246 or
@@ -150,7 +150,7 @@ def verified_mode(repo: Path) -> str:
         ):
             raise ActiveCatalogDenied("Active 1248 differs from exact pinned update-only stage")
         return "update_only_1248_pilot_catalog"
-    if active.get("catalog_sequence") == 1250:
+    if active.get("catalog_sequence") in {1250, 1251}:
         closed, closed_sha = _strict_json(repo, "backend/service1/clientflow_release_catalog_1250_closed.stage.json")
         historical, historical_sha = _strict_json(repo, STAGE_1248_PATH)
         _, historical_approval_sha = _strict_json(repo, APPROVAL_1248_PATH, max_size=4096)
@@ -159,7 +159,7 @@ def verified_mode(repo: Path) -> str:
         _, baseline_approval_sha = _strict_json(repo, "backend/service1/clientflow_pilot_1250_approval.json", max_size=4096)
         _, successor_approval_sha = _strict_json(repo, "backend/service1/clientflow_pilot_1251_approval.json", max_size=4096)
         if (closed_sha != "27b14ddd7f692ec37d2e5e372cfb3470d5af84bacd9662d7a7e4aabbc21848f4"
-                or active != closed
+                or (active.get("catalog_sequence") == 1250 and active != closed)
                 or historical_sha != STAGED_1248_SHA256 or historical_approval_sha != APPROVAL_1248_SHA256
                 or prior_sha != STAGED_1247_SHA256 or prior_approval_sha != APPROVAL_1247_SHA256
                 or baseline_approval_sha != "fc851982c39de0b7f92b9274f822b70bf61ca014bcbd88e62d7570a08d58f334"
@@ -167,6 +167,12 @@ def verified_mode(repo: Path) -> str:
             raise ActiveCatalogDenied("Closed 1250 catalog or immutable approval history changed")
         if historical["releases"][0] != stage["releases"][0]:
             raise ActiveCatalogDenied("Historical 1245 stable record changed")
+        if active.get("catalog_sequence") == 1251:
+            successor, successor_sha = _strict_json(repo, "backend/service1/clientflow_release_catalog_1251_closed.stage.json")
+            if (successor_sha != "c3c98d8e30791483d1f5e5ade7a70dc96a732b8b69f7dc7440740c025c2d10a5"
+                    or active_sha != successor_sha or active != successor):
+                raise ActiveCatalogDenied("Closed 1251 differs from exact stage")
+            return "closed_1251_standard"
         return "closed_1250_baseline"
     raise ActiveCatalogDenied("Active catalog differs from pinned baseline/pilot")
 
@@ -174,5 +180,5 @@ def verified_mode(repo: Path) -> str:
 def projected_stable_1245(repo: Path) -> dict[str, Any]:
     """A historical baseline projection, never an active deployment catalog."""
     mode = verified_mode(repo)
-    active, _ = _strict_json(repo, STAGE_1248_PATH if mode == "closed_1250_baseline" else ACTIVE_PATH)
+    active, _ = _strict_json(repo, STAGE_1248_PATH if mode in {"closed_1250_baseline", "closed_1251_standard"} else ACTIVE_PATH)
     return {**active, "catalog_sequence": 1245, "releases": [active["releases"][0]]}
