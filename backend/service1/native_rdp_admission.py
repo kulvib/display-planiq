@@ -27,7 +27,7 @@ from .clientflow_standard_release import (
 from .clientflow_update_models import ClientFlowDeployment, ClientFlowDeploymentEvent
 from .clientflow_pilot_1251 import (
     SUCCESSOR_ID, SUCCESSOR_VERSION, SUCCESSOR_SEQUENCE, require_closed_baseline,
-    successor_release, match_successor_artifact, match_successor_order,
+    successor_release, match_successor_artifact, match_successor_order, closed_baseline_catalog,
 )
 from .enrollment_models import ClientEnrollmentReceipt
 from .models import Client, EnrollmentToken
@@ -187,7 +187,16 @@ def release_eligibility(session: Session, *, client_id: int) -> str:
         if control.stable_release_id != BASELINE_ID:
             # Closed historical policy is not a fleet grant. Only the exact
             # existing physical test host may cross the pre-acceptance boundary.
-            require_pilot_holds(catalog, control.model_dump(), control.revision)
+            # During the closed catalog/control rebind, preserve only the
+            # already proven 1250 physical host. Do not revive 1248 admission
+            # or create any deployment from the historical catalog.
+            if catalog.get("catalog_sequence") == BASELINE_SEQUENCE:
+                from .clientflow_release_pilot_stage_1248 import load_staged_catalog_1248
+                if catalog != closed_baseline_catalog() or presence.agent_version != BASELINE_VERSION:
+                    return "cutover_closed"
+                require_pilot_holds(load_staged_catalog_1248(), control.model_dump(), control.revision)
+            else:
+                require_pilot_holds(catalog, control.model_dump(), control.revision)
             if client_id != 3 or client.name != "Viborg1" or client.ubuntu_version != "26.04":
                 return "cutover_closed"
             if presence.agent_version == "1.3.47":
