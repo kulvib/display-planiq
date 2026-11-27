@@ -32,7 +32,9 @@ def test_stable_policy_and_inert_ui_are_never_implicitly_reopened():
     assert '"authorization_active": False' in admin
     assert '"deployment_authorized": False' in admin
     catalog = (ROOT / 'backend/service1/clientflow_release_catalog.json').read_text(encoding='utf-8')
-    assert '"latest_stable": "1.4.0"' in catalog
-    assert '"default_install_version": "1.4.0"' in catalog
+    assert '"latest_stable": "1.4.1"' in catalog
+    assert '"default_install_version": "1.4.1"' in catalog
+    stage = (ROOT / 'backend/service1/clientflow_release_catalog_1251_closed.stage.json').read_text(encoding='utf-8')
+    assert catalog == stage
     assert '"max_selectable_versions": 1' in catalog
     assert '"max_installable_versions": 1' in catalog

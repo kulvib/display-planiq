@@ -1,9 +1,9 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1250,
-  "latest_stable": "1.4.0",
-  "default_install_version": "1.4.0",
+  "catalog_sequence": 1251,
+  "latest_stable": "1.4.1",
+  "default_install_version": "1.4.1",
   "retention_policy": {
     "max_selectable_versions": 1,
     "max_installable_versions": 1,
@@ -11,11 +11,11 @@
   },
   "releases": [
     {
-      "version": "1.4.0",
-      "client_version": "1.4.0",
-      "release_sequence": 1250,
-      "revision": "clientflow-1.4.0-seq-1250",
-      "release_id": "clientflow-1.4.0-seq-1250",
+      "version": "1.4.1",
+      "client_version": "1.4.1",
+      "release_sequence": 1251,
+      "revision": "clientflow-1.4.1-seq-1251",
+      "release_id": "clientflow-1.4.1-seq-1251",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -39,10 +39,10 @@
         "fresh_install",
         "in_place_update"
       ],
-      "min_current_version": "1.3.47",
-      "max_current_version": "1.3.47",
+      "min_current_version": "1.4.0",
+      "max_current_version": "1.4.0",
       "notes": [
-        "CLOSED BASELINE STAGE: verified 1250 is the physical predecessor, not fleet or fresh-install authority. Control flags remain closed; 1251 requires a distinct exact single-client deployment. This stage is not the active catalog until separately reviewed promotion."
+        "CLOSED STANDARD STAGE: operator-reported physical acceptance on Viborg1 and verified update provenance. Catalog identity is not installation, fleet, rollback or independent recovery authority. 1250 remains the retained recovery predecessor."
       ]
     }
   ]

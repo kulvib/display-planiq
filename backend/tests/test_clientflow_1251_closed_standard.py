@@ -50,14 +50,18 @@ def successor(**changes):
     return completed(pilot.successor_snapshot(), previous=pilot.BASELINE_ID, **changes)
 
 
-def test_stage_is_exact_and_old_catalog_remains_closed():
+def test_active_standard_is_exact_and_historical_catalog_remains_closed():
     catalog = standard.closed_standard_catalog()
     assert catalog["catalog_sequence"] == 1251
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.4.1"
     assert len(catalog["releases"]) == 1
     assert catalog["releases"][0]["min_current_version"] == catalog["releases"][0]["max_current_version"] == "1.4.0"
     assert catalog["releases"][0]["rollback_allowed"] is False
-    assert releases.load_catalog() == pilot.closed_baseline_catalog()
+    assert releases.load_catalog() == catalog
+    assert (ROOT / source.ACTIVE_PATH).read_bytes() == standard.STAGE_PATH.read_bytes()
+    assert source.verified_mode(ROOT) == "closed_1251_standard"
+    with pytest.raises(pilot.Pilot1251Denied):
+        standard.validate_closed_standard_catalog(pilot.closed_baseline_catalog())
     standard.validate_closed_standard_catalog(catalog)
     for field, value in (("notes", []), ("rollback_allowed", True), ("min_current_version", "1.3.47"),
                          ("install_modes", ["in_place_update"]), ("installable", 1)):

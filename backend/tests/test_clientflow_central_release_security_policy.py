@@ -193,31 +193,63 @@ def test_later_policy_update_rejects_previously_selectable_target(monkeypatch, t
         resolve_release("1.3.40")
 
 
-def test_live_1250_fresh_install_revocation_blocks_before_download(monkeypatch, tmp_path):
+@pytest.fixture(params=[1250, 1251], ids=["historical-1250", "live-1251"])
+def exact_standard_catalog(monkeypatch, request):
+    """Preserve historical security regressions and exercise the real 1251 selector.
+
+    This tests central release resolution, not fresh-install authorization.
+    The live admission gate remains closed independently.
+    """
+    from service1 import clientflow_releases as releases
+    from service1.clientflow_pilot_1251 import closed_baseline_catalog
+    from service1.clientflow_closed_standard_1251 import closed_standard_catalog
+
+    original = releases.CATALOG_PATH
+    seq = request.param
+    if seq == 1250:
+        path = original.with_name("clientflow_release_catalog_1250_closed.stage.json")
+        expected = closed_baseline_catalog()
+    else:
+        path = original
+        expected = closed_standard_catalog()
+    releases.load_catalog.cache_clear()
+    monkeypatch.setattr(releases, "CATALOG_PATH", path)
+    try:
+        assert releases.load_catalog() == expected
+        yield expected["releases"][0]["release_id"], seq
+    finally:
+        monkeypatch.setattr(releases, "CATALOG_PATH", original)
+        releases.load_catalog.cache_clear()
+
+
+def test_standard_fresh_install_revocation_blocks_before_download(monkeypatch, tmp_path, exact_standard_catalog):
     from service1.clientflow_releases import resolve_fresh_install_release
 
-    _set_policy(monkeypatch, tmp_path, revoked=["clientflow-1.4.0-seq-1250"])
+    release_id, _ = exact_standard_catalog
+    _set_policy(monkeypatch, tmp_path, revoked=[release_id])
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="tilbagekaldt"):
         resolve_fresh_install_release()
 
 
-def test_live_1250_fresh_install_minimum_sequence_blocks(monkeypatch, tmp_path):
+def test_standard_fresh_install_minimum_sequence_blocks(monkeypatch, tmp_path, exact_standard_catalog):
     from service1.clientflow_releases import resolve_fresh_install_release
 
-    _set_policy(monkeypatch, tmp_path, floor=1251)
+    _, seq = exact_standard_catalog
+    _set_policy(monkeypatch, tmp_path, floor=seq + 1)
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="minimumssikkerhedssekvens"):
         resolve_fresh_install_release()
 
 
-def test_live_1250_rechecks_security_policy_on_each_fresh_install(monkeypatch, tmp_path):
+def test_standard_rechecks_security_policy_on_each_fresh_install(monkeypatch, tmp_path, exact_standard_catalog):
     from service1.clientflow_releases import resolve_fresh_install_release
 
+    release_id, _ = exact_standard_catalog
     path = _set_policy(monkeypatch, tmp_path)
-    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.4.0-seq-1250"
+    assert resolve_fresh_install_release()["release_id"] == release_id
     path.write_text(json.dumps({
         "schema_version": 1, "revision": 2,
         "minimum_safe_release_sequence": 1239,
-        "revoked_release_ids": ["clientflow-1.4.0-seq-1250"],
+        "revoked_release_ids": [release_id],
     }))
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="tilbagekaldt"):
         resolve_fresh_install_release()

@@ -85,7 +85,8 @@ def test_unpromoted_source_never_changes_existing_default(tmp_path, monkeypatch)
     finally:
         releases.load_catalog.cache_clear()
     # Read-only synthetic test never changed the live catalog.
-    assert json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())["latest_stable"] == "1.4.0"
+    from service1.clientflow_closed_standard_1251 import closed_standard_catalog
+    assert json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text()) == closed_standard_catalog()
 
 
 def test_stable_requires_explicit_operator_flag(monkeypatch):
