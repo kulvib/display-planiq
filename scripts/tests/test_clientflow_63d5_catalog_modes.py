@@ -18,7 +18,7 @@ from service1.clientflow_release_readiness import planning_readiness  # noqa: E4
 
 
 def _stable():
-    return json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    return json.loads((ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json").read_text())
 
 
 def test_live_catalog_is_update_only_without_deployment_authority():
