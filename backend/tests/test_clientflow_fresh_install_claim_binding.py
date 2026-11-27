@@ -284,11 +284,19 @@ def test_consuming_claim_rejects_mismatched_binding_without_client_or_token_muta
         encoding="utf-8",
     )
     monkeypatch.setattr(rollout, "FLEET_ACCEPTANCE_PATH", accepted)
+    from service1 import clientflow_releases as releases
+    from pathlib import Path
+    historical = Path(__file__).resolve().parents[1] / "service1/clientflow_release_catalog_1248_pilot.stage.json"
+    monkeypatch.setattr(releases, "CATALOG_PATH", historical)
+    releases.load_catalog.cache_clear()
     rollout.require_1245_physical_acceptance()
 
-    with pytest.raises(HTTPException) as exc:
-        enrollment_router.claim_enrollment_token(SimpleNamespace(), request_data, session)
-    assert exc.value.status_code == 409
+    try:
+        with pytest.raises(HTTPException) as exc:
+            enrollment_router.claim_enrollment_token(SimpleNamespace(), request_data, session)
+        assert exc.value.status_code == 409
+    finally:
+        releases.load_catalog.cache_clear()
     assert session.added == []
     assert session.flush_count == 0
     assert session.commit_count == 0
