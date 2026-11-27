@@ -149,3 +149,25 @@ def test_async_release_wait_keeps_commit_scope_and_never_uses_ui_client_waiters(
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     asyncio.run(scenario())
+
+
+def test_ui_capability_from_previous_process_requires_fresh_authorization(monkeypatch):
+    principal = SimpleNamespace(id=1, role="superadmin", is_superadmin=True, organization_id=None)
+    issued = ui_realtime.issue_ui_realtime_capability(principal, release_admin=True)
+    claims = ui_realtime.verify_ui_realtime_capability(issued["capability"])
+    assert claims["process_epoch"] == ui_realtime._PROCESS_EPOCH
+    monkeypatch.setattr(ui_realtime, "_PROCESS_EPOCH", "replacement-process")
+    with pytest.raises(HTTPException) as exc:
+        ui_realtime.verify_ui_realtime_capability(issued["capability"])
+    assert exc.value.status_code == 401
+    fresh = ui_realtime.issue_ui_realtime_capability(principal, release_admin=True)
+    assert ui_realtime.verify_ui_realtime_capability(fresh["capability"])["process_epoch"] == "replacement-process"
+
+
+def test_ui_capability_wait_never_exceeds_signed_expiry(monkeypatch):
+    monkeypatch.setattr(ui_realtime.time, "time", lambda: 100.25)
+    assert ui_realtime.capability_wait_timeout({"exp": 102}, 25) == 1.75
+    assert ui_realtime.capability_wait_timeout({"exp": 200}, 25) == 25
+    with pytest.raises(HTTPException) as exc:
+        ui_realtime.capability_wait_timeout({"exp": 100}, 25)
+    assert exc.value.status_code == 401
