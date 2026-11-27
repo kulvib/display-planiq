@@ -34,3 +34,16 @@ Date: 2026-11-27. Reviewed baseline: main `6b2e2091064986f4141cb7033d99bbcdd4d6c
 4. Only then freeze the exact successor source for the canonical 1251 build and implement/verify the scoped pilot authorization. One physical client, Viborg1, remains the test authority.
 
 Historical evidence, backups and external logs are not covered by the completed old-client database purge.
+
+## 68J-8B – pinned recipe proof and acceptance update
+
+PR 442 head `b9bbf3eb696a704e8859f0f37204962e7f487f20`: canonical CI [46016976737](https://github.com/kulvib/display-planiq/actions/runs/46016976737), single-node smoke [46016976666](https://github.com/kulvib/display-planiq/actions/runs/46016976666) and full WASM workflow [46016976607](https://github.com/kulvib/display-planiq/actions/runs/46016976607) all completed successfully. Compile log reports 146/146 native tests. Chromium log reports PINNED_WASM_BROWSER_WEBSOCKET_PROOF=PASS, 1280×800 monitor, outgoing upgrade and no browser errors. The isolated probe intentionally has no live RDP server; physical media control is not proven by this test.
+
+| File | Rebuilt SHA-256 from compile log | Bytes |
+| --- | --- | ---: |
+| sdl-freerdp.js | `c7d0a7e20a7b6473c5743892086b00dfb096807b8386adf992ab294867ad8112` | 269234 |
+| sdl-freerdp.wasm | `f5cfa907421b47c3ed6acdee329f5ebda7e9279c4a5972e02139dc8e2fe6f315` | 11086426 |
+
+Both hashes and byte counts exactly match checked-in provenance. The ZIP digest reported by upload and Chromium download also matches the artifact metadata: `7763f883774598e891d76ca11960f5fe10a0cada40b10fc50ac9702512c8ce40`. Verified from GitHub logs and repository provenance, not a local independent download/extraction. No asset, source or provenance JSON replacement is made. The approved recipe hash is now `ee2d166fc21f366119374da9698d003ddc3c7f4fb3ac694184646c57b6fc547d`; the previous recipe and any drift require a rebuild. The next PR CI must pass and the browser proof must run with the pinned repository bytes before merge.
+
+68J-7 operator acceptance: seven of eight points passed, no failures. Desktop panel hierarchy, selector, text removal, Remote Desktop, Livestream, Terminal/files accepted. Mobile not tested; keyboard accessibility remains open. Production backup/restore, authorization matrix, transport-deprecation work and full fleet workload proof remain open. No release 1251 approval.
