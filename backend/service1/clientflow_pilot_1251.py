@@ -15,7 +15,7 @@ from .clientflow_pilot_1250 import (
     approval_lock_1250, match_approved_artifact, pilot_release, CONFLICTING_FLAGS,
 )
 from .clientflow_standard_release import (
-    BASELINE_ID, BASELINE_VERSION, BASELINE_SEQUENCE, validate_baseline_catalog,
+    BASELINE_ID, BASELINE_VERSION, validate_baseline_catalog,
 )
 
 SUCCESSOR_ID = "clientflow-1.4.1-seq-1251"
