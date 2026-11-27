@@ -49,7 +49,7 @@ import ClientFlowHistoryOnDemand from "./ClientFlowHistoryOnDemand";
 const UKEDAGE = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
 const FIELD_BG = "rgba(15, 23, 42, 0.48)";
-const BORDER = "rgba(148, 163, 184, 0.16)";
+const BORDER = "rgba(148, 163, 184, 0.24)";
 const TEXT = "#f8fafc";
 const MUTED = "rgba(203, 213, 225, 0.68)";
 
@@ -3261,7 +3261,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
           height: "100%",
           p: 1.25,
           borderRadius: 2,
-          background: "rgba(15,23,42,0.34)",
+          background: "rgba(15,23,42,0.72)",
           border: `1px solid ${BORDER}`,
         }}
       >
@@ -3454,8 +3454,8 @@ export default function ClientDetailsInfoSection({
         sx={{
           mb: 2,
           borderRadius: 2,
-          background: "rgba(15,23,42,0.32)",
-          border: `1px solid ${BORDER}`,
+          background: "rgba(15,23,42,0.48)",
+          border: "1px solid rgba(148,163,184,0.30)",
           overflow: "hidden",
         }}
       >
