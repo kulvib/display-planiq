@@ -25,7 +25,7 @@ from ..clientflow_pilot_1250 import (
     Pilot1250Denied, approval_lock_1250, require_pilot_holds, pilot_release, match_approved_artifact,
 )
 from ..clientflow_pilot_1251 import (
-    Pilot1251Denied, SUCCESSOR_ID, SUCCESSOR_VERSION, SUCCESSOR_SEQUENCE,
+    Pilot1251Denied, SUCCESSOR_ID, SUCCESSOR_SEQUENCE,
     require_closed_baseline, require_retained_store, successor_release,
     approval_lock_1251, successor_snapshot,
 )
