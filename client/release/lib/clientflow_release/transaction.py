@@ -1365,10 +1365,11 @@ def _activate_release(
     # until the exact target definitions + active symlink are ready.  Stopping
     # the currently running units is not sufficient: an enabled target could
     # otherwise auto-start after a crash/power-loss in the middle of the swap.
-    activation_step = "disable_target"
+    # The initial boot-disable is an absolute prerequisite. If it fails,
+    # preserve the committed intent but do not stop services or swap files.
+    _disable_target(layout)
+    activation_step = "quiesce_runtime"
     try:
-        _disable_target(layout)
-        activation_step = "quiesce_runtime"
         _quiesce_runtime(layout)
         activation_step = "disable_power_reporters"
         _disable_power_lifecycle_reporters(layout)
@@ -1444,6 +1445,8 @@ def _activate_release(
             release_approval_reference=release_approval_reference,
         )
         save_state(layout, committed)
+        state.clear()
+        state.update(committed)
     except Exception as activation_error:
         activation_failure = _safe_failure_details(activation_error, activation_step)
         rollback_step = "disable_target"
@@ -1547,6 +1550,9 @@ def _activate_release(
                             rollback_failure=_safe_failure_details(commit_error, "commit_rollback_outcome"))
             save_state(layout, state)
             raise TransactionError("Rollback journal kunne ikke committed; recovery intent er bevaret") from commit_error
+        # Publish the terminal state in memory only after the durable write.
+        state.clear()
+        state.update(restored)
         raise TransactionError("Aktivering fejlede; tidligere release blev automatisk gendannet") from activation_error
     return {"status": "active", "release_id": release_id, "previous_release_id": previous}
 
