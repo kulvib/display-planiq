@@ -1647,7 +1647,7 @@ const MonthCalendar = React.memo(function MonthCalendar({
         background: isCurrentMonth
           ? "linear-gradient(135deg, rgba(56,189,248,0.16), rgba(15,23,42,0.78))"
           : "rgba(15,23,42,0.72)",
-        border: "1px solid rgba(148,163,184,0.16)",
+        border: "1px solid rgba(148,163,184,0.24)",
         p: { xs: 0.75, sm: 1 },
         userSelect: "none",
       }}
