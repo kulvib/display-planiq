@@ -9,7 +9,7 @@ const STATES = {
   newer: {label:"Nyere end standard", color:"info"},
   unknown: {label:"Version ukendt", color:"default"},
 };
-const panel = {p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.16)"};
+const panel = {p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.30)"};
 function dateLabel(value) {
   if (!value) return "–";
   const raw = String(value);

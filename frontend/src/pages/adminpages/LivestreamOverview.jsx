@@ -509,7 +509,7 @@ function LivestreamTile({ client, pageMediaActive, inventoryValid }) {
         overflow: "hidden",
         borderRadius: 2,
         background: "rgba(15,23,42,0.78)",
-        border: "1px solid rgba(148,163,184,0.16)",
+        border: "1px solid rgba(148,163,184,0.30)",
       }}
     >
       {isTouchHandset && (
@@ -783,7 +783,7 @@ export default function LivestreamOverview() {
           p: 2,
           borderRadius: 2,
           background: "rgba(15,23,42,0.72)",
-          border: "1px solid rgba(148,163,184,0.16)",
+          border: "1px solid rgba(148,163,184,0.30)",
         }}
       >
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ justifyContent: "space-between", alignItems: { md: "center" } }}>
@@ -800,7 +800,7 @@ export default function LivestreamOverview() {
         </Stack>
       </Paper>
 
-      <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, background: "rgba(15,23,42,0.72)", border: "1px solid rgba(148,163,184,0.16)" }}>
+      <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, background: "rgba(15,23,42,0.72)", border: "1px solid rgba(148,163,184,0.30)" }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
           <TextField
             type="search"

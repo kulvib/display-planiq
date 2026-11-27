@@ -464,9 +464,9 @@ function getDisplayResolutionStatusMeta(status, presetValue = "auto", error = ""
     return {
       busy: false,
       severity: "success",
-      title: "Skærmopløsning anvendt",
+      title: "Opløsning opdateret",
       detail: "Klienten har anvendt opløsningen og rapporteret den tilbage.",
-      short: "Skærmopløsning anvendt",
+      short: "Opløsning opdateret",
     };
   }
 
@@ -681,7 +681,6 @@ export default function ClientDetailsLivestreamSection({
   const [pilotGeneration, setPilotGeneration] = useState(null);
   const lastHlsProgressAtRef = useRef(0);
   const hlsBrowserTiming = useMemo(() => createLivestreamBrowserTiming(), []);
-  const [hlsLatencyStats, setHlsLatencyStats] = useState(null);
   const hlsReserveRef = useRef(null);
   const [bufferStats, setBufferStats] = useState(null);
   const [mediaTransport, setMediaTransport] = useState(null);
@@ -1285,7 +1284,6 @@ export default function ClientDetailsLivestreamSection({
     setBufferStats(null);
     setMediaTransport(null);
     hlsBrowserTiming.reset();
-    setHlsLatencyStats(null);
 
     const video = videoRef.current;
     if (!video) return undefined;
@@ -1484,9 +1482,7 @@ export default function ClientDetailsLivestreamSection({
               setLastFetched(new Date());
               const measuredLatency = typeof hls.latency === "number" ? hls.latency : Number.NaN;
               setLastSegmentLag(Number.isFinite(measuredLatency) && measuredLatency >= 0 ? measuredLatency : null);
-              if (hlsBrowserTiming.observe(measuredLatency)) {
-                setHlsLatencyStats(hlsBrowserTiming.snapshot());
-              }
+              hlsBrowserTiming.observe(measuredLatency);
               setError("");
             }
           });
@@ -2705,8 +2701,8 @@ export default function ClientDetailsLivestreamSection({
             alignSelf: "stretch",
             p: { xs: 1.55, sm: 1.95 },
             borderRadius: 2,
-            background: "rgba(15,23,42,0.46)",
-            border: "1px solid rgba(148,163,184,0.16)",
+            background: "rgba(30,41,59,0.82)",
+            border: "1px solid rgba(148,163,184,0.36)",
             display: isSuperadmin || isViewer ? "grid" : "none",
             gap: 1.05,
             minWidth: 0,
@@ -2716,23 +2712,19 @@ export default function ClientDetailsLivestreamSection({
           }}
         >
           {[
-            { label: "Afspilles / manifest", value: `${currentSegNum ?? "-"} / ${lastSegNum ?? "-"}`, detail: "Aktuelt / senest observeret i manifest" },
+            { label: "Afspilles / manifest", value: `${currentSegNum ?? "-"} / ${lastSegNum ?? "-"}` },
             {
               label: "Videobuffer",
               value: bufferStats ? formatLagValue(bufferStats.aheadSeconds) : "—",
               color: bufferStats ? (bufferStats.aheadSeconds >= bufferStats.reserveTargetSeconds ? "#86efac" : "#fbbf24") : "#cbd5e1",
-              detail: bufferStats ? `Mål ≥ ${bufferStats.reserveTargetSeconds.toFixed(1)}s · ${bufferStats.playbackRate.toFixed(2)}×` : "HLS.js-måling ikke tilgængelig",
             },
-            { label: "Bufferpauser", value: bufferStats ? String(bufferStats.stalls) : "—", detail: bufferStats ? `${bufferStats.stalledSeconds.toFixed(1)}s samlet · ${bufferStats.refills} genopfyldninger` : null },
+            { label: "Bufferpauser", value: bufferStats ? String(bufferStats.stalls) : "—" },
             {
               label: "HLS livekant",
               value: formatLagValue(lastSegmentLag),
               color: manifestReady ? lagStatus.color : "#cbd5e1",
-              detail: hlsLatencyStats?.samples >= 3
-                ? `Browser p50 ${hlsLatencyStats.p50Seconds}s · p95 ${hlsLatencyStats.p95Seconds}s`
-                : "Afspillerestimat, ikke kamera-til-skærm",
             },
-            { label: "Skærm", value: currentDisplayDescription, detail: canManageDisplaySettings ? displayResolutionUiMeta.short : null, detailColor: displayResolutionUiMeta.severity === "error" ? "#f87171" : displayResolutionUiMeta.busy ? "#7dd3fc" : "rgba(203,213,225,0.62)" },
+            { label: "Skærm", value: currentDisplayDescription, detail: canManageDisplaySettings && (displayResolutionUiMeta.busy || displayResolutionUiMeta.severity === "error") ? displayResolutionUiMeta.short : null, detailColor: displayResolutionUiMeta.severity === "error" ? "#f87171" : displayResolutionUiMeta.busy ? "#7dd3fc" : "rgba(203,213,225,0.62)" },
           ].map((item) => (
             <Box
               key={item.label}
@@ -2747,8 +2739,8 @@ export default function ClientDetailsLivestreamSection({
                 flexDirection: "column",
                 justifyContent: "center",
                 textAlign: "left",
-                background: "rgba(2,6,23,0.34)",
-                border: "1px solid rgba(148,163,184,0.12)",
+                background: "rgba(15,23,42,0.72)",
+                border: "1px solid rgba(148,163,184,0.24)",
                 minWidth: 0,
               }}
             >

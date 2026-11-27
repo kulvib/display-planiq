@@ -745,8 +745,8 @@ function glassPanelSx(theme, isMobile = false) {
       color: "rgba(203,213,225,0.68)",
     },
     "& .MuiCard-root": {
-      background: "rgba(15,23,42,0.58)",
-      border: "1px solid rgba(148,163,184,0.14)",
+      background: "rgba(15,23,42,0.72)",
+      border: "1px solid rgba(148,163,184,0.24)",
       boxShadow: "none",
       color: "#f8fafc",
     },
@@ -1902,7 +1902,7 @@ export default function ClientDetailsPage({
               sx={{
                 borderRadius: isMobile ? 2.5 : 3.5,
                 overflow: "visible",
-                border: "1px solid rgba(148,163,184,0.16)",
+                border: "1px solid rgba(148,163,184,0.24)",
                 bgcolor: "rgba(2,6,23,0.42)",
                 "& > .MuiBox-root > .MuiCard-root, & > .MuiCard-root": {
                   mb: 0,

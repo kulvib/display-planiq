@@ -1169,7 +1169,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
             color: "#f8fafc",
             borderRadius: isFullscreen ? 0 : 2,
             overflow: "hidden",
-            border: isFullscreen ? "none" : "1px solid rgba(148,163,184,0.16)",
+            border: isFullscreen ? "none" : "1px solid rgba(148,163,184,0.30)",
             boxShadow: "0 28px 110px rgba(0,0,0,0.45)",
           },
         }
@@ -1275,7 +1275,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
               p: { xs: 1.25, md: 1.5 },
               borderRadius: 2,
               bgcolor: "rgba(15,23,42,0.58)",
-              border: "1px solid rgba(148,163,184,0.14)",
+              border: "1px solid rgba(148,163,184,0.24)",
             }}
           >
             <Stack direction={{ xs: "column", md: "row" }} spacing={1.2} sx={{
@@ -1363,7 +1363,7 @@ export default function ClientTerminalDialog({ open, onClose, client, defaultFul
               p: { xs: 1, md: 1.2 },
               borderRadius: 2,
               bgcolor: "rgba(15,23,42,0.58)",
-              border: "1px solid rgba(148,163,184,0.14)",
+              border: "1px solid rgba(148,163,184,0.24)",
             }}
           >
             <Stack direction={{ xs: "column", md: "row" }} spacing={1} sx={{

@@ -80,7 +80,7 @@ export default function ClientFlowBaselinePilotPanel({ status, onAuthorized }) {
       }
     }
   };
-  return <Paper elevation={0} sx={{p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.16)"}}>
+  return <Paper elevation={0} sx={{p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.30)"}}>
     <Stack spacing={1.5}>
       <Typography variant="h6" fontWeight={850}>ClientFlow 1.4.0 · fysisk accept</Typography>
       <Typography color="text.secondary">Engangstest på Viborg1 før overgang til ny standardrelease. Godkendt releasepakke, fysisk adgang og lokal forberedelse kræves. Øvrige klienter berøres ikke.</Typography>

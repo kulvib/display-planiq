@@ -385,7 +385,7 @@ export default function NativeRdpViewer({ clientId, sessionId, requestAutologin,
   }, [working, fullscreen]);
 
   return (
-    <Paper ref={panelRef} elevation={0} sx={{ p: { xs: 1, md: 1.25 }, bgcolor: "#0b0f14", color: "#f8fafc", border: "1px solid rgba(148,163,184,0.16)", borderRadius: 2,
+    <Paper ref={panelRef} elevation={0} sx={{ p: { xs: 1, md: 1.25 }, bgcolor: "#0b0f14", color: "#f8fafc", border: "1px solid rgba(148,163,184,0.30)", borderRadius: 2,
       "&:fullscreen": { p: 1, width: "100%", height: "100%", boxSizing: "border-box" } }}>
       <Stack spacing={1} sx={fullscreen ? { height: "100%", minHeight: 0 } : undefined}>
         {!working && (

@@ -7,6 +7,8 @@ const colors = {
   surfaceSoft: "rgba(15, 23, 42, 0.64)",
   border: "rgba(148, 163, 184, 0.18)",
   borderStrong: "rgba(148, 163, 184, 0.28)",
+  panelBorder: "rgba(148,163,184,0.30)",
+  fieldBorder: "rgba(148,163,184,0.38)",
   text: "#f8fafc",
   muted: "rgba(203, 213, 225, 0.72)",
   cyan: "#38bdf8",
@@ -138,7 +140,7 @@ const theme = createTheme({
           backgroundImage: "none",
           backgroundColor: colors.surface,
           color: colors.text,
-          border: `1px solid ${colors.border}`,
+          border: `1px solid ${colors.panelBorder}`,
         },
         rounded: {
           borderRadius: 10,
@@ -153,7 +155,7 @@ const theme = createTheme({
         root: {
           background: "linear-gradient(180deg, rgba(15,23,42,0.88), rgba(15,23,42,0.68))",
           color: colors.text,
-          border: `1px solid ${colors.border}`,
+          border: `1px solid ${colors.panelBorder}`,
           borderRadius: 10,
           boxShadow: glassShadow,
           backgroundImage: "none",
@@ -338,10 +340,10 @@ const theme = createTheme({
       styleOverrides: {
         root: {
           borderRadius: 10,
-          backgroundColor: "rgba(15,23,42,0.54)",
+          backgroundColor: "rgba(2,6,23,0.48)",
           color: colors.text,
           "& fieldset": {
-            borderColor: colors.borderStrong,
+            borderColor: colors.fieldBorder,
           },
           "&:hover fieldset": {
             borderColor: "rgba(56,189,248,0.46)",
@@ -475,10 +477,21 @@ const theme = createTheme({
     MuiMenu: {
       styleOverrides: {
         paper: {
-          background: "rgba(15,23,42,0.98)",
-          border: `1px solid ${colors.borderStrong}`,
+          background: "#172235",
+          color: colors.text,
+          border: `1px solid ${colors.fieldBorder}`,
           borderRadius: 10,
           boxShadow: "0 24px 80px rgba(0,0,0,0.42)",
+        },
+      },
+    },
+    MuiMenuItem: {
+      styleOverrides: {
+        root: {
+          color: colors.text,
+          "&:hover, &.Mui-focusVisible": { backgroundColor: "rgba(56,189,248,0.12)" },
+          "&.Mui-selected": { backgroundColor: "rgba(56,189,248,0.18)" },
+          "&.Mui-selected:hover, &.Mui-selected.Mui-focusVisible": { backgroundColor: "rgba(56,189,248,0.24)" },
         },
       },
     },

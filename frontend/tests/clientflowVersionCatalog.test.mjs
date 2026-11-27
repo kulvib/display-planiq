@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "../src/pages/clientdetailspage/clientflowCatalogOptions.mjs";
+import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases, compatibleClientflowUpdateReleases } from "../src/pages/clientdetailspage/clientflowCatalogOptions.mjs";
 
 const infoSource = fs.readFileSync(
   new URL("../src/pages/clientdetailspage/ClientDetailsInfoSection.jsx", import.meta.url),
@@ -112,4 +112,18 @@ test("1.4 Control Room uses the same standard order authority as administration"
   assert.match(infoSource, /key=\{client\?\.id\}/);
   assert.match(infoSource, /clientOnline === true/);
   assert.match(auditSource, /clientflow_standard_deployment_authorized/);
+});
+
+
+test("Viborg1 on 1250 does not offer older non-rollback pilot releases", () => {
+  const release = (version, source, extras = {}) => ({ version, status: "supported", update_allowed: true, install_modes: ["in_place_update"], rollback_allowed: false, min_current_version: source, max_current_version: source, ...extras });
+  const catalog = { latest_stable: "1.3.44", releases: [release("1.3.44", "1.3.43", { status: "stable" }), release("1.3.46", "1.3.45"), release("1.3.47", "1.3.46")] };
+  assert.deepEqual(compatibleClientflowUpdateReleases(catalog, "1.4.0"), []);
+  assert.deepEqual(compatibleClientflowUpdateReleases(catalog, null), []);
+  assert.deepEqual(compatibleClientflowUpdateReleases(catalog, "v1.3.46").map(r => r.version), ["1.3.47"]);
+  assert.deepEqual(compatibleClientflowUpdateReleases({ releases: [release("1.4.1", "1.4.0")] }, "1.4.0").map(r => r.version), ["1.4.1"]);
+  assert.deepEqual(compatibleClientflowUpdateReleases({ releases: [release("1.3.47", "1.4.0", { rollback_allowed: true })] }, "1.4.0").map(r => r.version), ["1.3.47"]);
+  assert.deepEqual(compatibleClientflowUpdateReleases({ releases: [release("1.4.1", "invalid")] }, "1.4.0"), []);
+  assert.match(infoSource, /compatibleClientflowUpdateReleases\(releaseCatalog, installedVersion\)/);
+  assert.match(infoSource, /Ingen kompatible versioner/);
 });

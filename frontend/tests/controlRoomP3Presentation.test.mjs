@@ -167,3 +167,21 @@ test("diagnostics names unverified rows without converting them to errors or OK"
   assert.match(diagnostics, /!\["ok", "warn", "error"\]\.includes\(serviceLevels\[index\]\)/);
   assert.match(diagnostics, /unverifiedServiceRows\.map\(\(row\) => row\.label\)\.join/);
 });
+
+
+test("shared display theme distinguishes outer papers, fields and opaque dropdowns", () => {
+  const theme = readFileSync(new URL("../src/theme.js", import.meta.url), "utf8");
+  const layout = readFileSync(new URL("../src/utils/layoutStyles.js", import.meta.url), "utf8");
+  assert.match(theme, /panelBorder: "rgba\(148,163,184,0\.30\)"/);
+  assert.match(theme, /fieldBorder: "rgba\(148,163,184,0\.38\)"/);
+  assert.match(theme, /MuiPaper:[\s\S]*?border: `1px solid \$\{colors\.panelBorder\}`/);
+  assert.match(theme, /MuiMenu:[\s\S]*?background: "#172235"/);
+  assert.match(theme, /MuiMenuItem:[\s\S]*?&\.Mui-selected/);
+  assert.match(layout, /darkPagePanelSx = \{[\s\S]*?rgba\(148,163,184,0\.30\)/);
+  for (const name of ["OrganizationAdministration", "AuditLog", "OperationalIncidents", "ClientFlowReleaseAdministration", "LivestreamOverview", "MaintenanceAdministration"]) {
+    const page = readFileSync(new URL(`../src/pages/adminpages/${name}.jsx`, import.meta.url), "utf8");
+    assert.match(page, /border: "1px solid rgba\(148,163,184,0\.30\)"/, name);
+  }
+  assert.match(diagnostics, /const BORDER = "rgba\(148, 163, 184, 0\.24\)"/);
+  assert.match(detail, /"\.MuiCard-root\.control-room-data-panel"|& \.MuiCard-root\.control-room-data-panel/);
+});

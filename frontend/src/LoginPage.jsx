@@ -221,7 +221,7 @@ export default function LoginPage() {
           maxWidth: 420,
           color: "#f8fafc",
           background: "rgba(15,23,42,0.78)",
-          border: "1px solid rgba(148,163,184,0.18)",
+          border: "1px solid rgba(148,163,184,0.30)",
           boxShadow: "0 28px 110px rgba(0,0,0,0.42)",
           backdropFilter: "blur(18px)",
         }}

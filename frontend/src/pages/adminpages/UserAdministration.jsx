@@ -135,16 +135,16 @@ const userListButtonSx = (selected, inactive) => ({
 });
 
 const userListPanelSx = {
-  border: `1px solid ${COLORS.border}`,
+  border: "1px solid rgba(148,163,184,0.24)",
   borderRadius: 2,
-  bgcolor: COLORS.panel,
+  bgcolor: "rgba(2,6,23,0.42)",
   overflow: "hidden",
 };
 
 const userDetailPanelSx = {
-  border: `1px solid ${COLORS.border}`,
+  border: "1px solid rgba(148,163,184,0.24)",
   borderRadius: 2,
-  bgcolor: COLORS.panel,
+  bgcolor: "rgba(2,6,23,0.42)",
   position: { lg: "sticky" },
   top: { lg: 80 },
   overflow: "hidden",

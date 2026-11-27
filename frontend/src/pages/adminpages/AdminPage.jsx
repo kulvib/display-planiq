@@ -119,7 +119,7 @@ function SectionButton({ section, active, onClick }) {
         fontWeight: active ? 950 : 800,
         border: active
           ? "1px solid rgba(56,189,248,0.32)"
-          : "1px solid rgba(148,163,184,0.12)",
+          : "1px solid rgba(148,163,184,0.24)",
         background: active
           ? "linear-gradient(90deg, rgba(56,189,248,0.20), rgba(20,184,166,0.10))"
           : "rgba(15,23,42,0.42)",

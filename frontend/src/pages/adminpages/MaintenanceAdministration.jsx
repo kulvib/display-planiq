@@ -140,7 +140,7 @@ export default function MaintenanceAdministration() {
   const statusKnown = state !== null;
   return (
     <Stack spacing={2.2}>
-      <Paper elevation={0} sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
+      <Paper elevation={0} sx={{ p: { xs: 1.5, md: 2 }, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.30)" }}>
         <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
           <Box sx={{ minWidth: 0, flex: "1 1 280px" }}>
             <Typography variant="h5" sx={{ fontWeight: 900 }}>Vedligeholdelse</Typography>
@@ -162,7 +162,7 @@ export default function MaintenanceAdministration() {
           {state.enabled ? "Vedligeholdelse er AKTIV for menneskelige brugere." : "PlanIQ Display er åbent for normal brugeradgang."}
         </Alert>
       )}
-      <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
+      <Paper elevation={0} sx={{ p: { xs: 2, md: 3 }, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.30)" }}>
         <Stack spacing={2}>
           <TextField label="Besked til brugerne" value={message} onChange={(e) => setMessage(e.target.value)} disabled={!statusKnown || saving || loading} slotProps={{ htmlInput: { maxLength: 500 } }} />
           <TextField type="datetime-local" label="Forventet åbning" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} disabled={!statusKnown || saving || loading} slotProps={{ inputLabel: { shrink: true } }} />
