@@ -36,7 +36,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import { buildClientflowUpdateRequest } from "./clientflowUpdateRequest.mjs";
 import apiClient from "../../api/client";
 import { BASELINE_ID, BASELINE_VERSION, validateOrderAvailability, verifyOrderResult } from "../adminpages/clientflowStandardOrders.mjs";
-import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases } from "./clientflowCatalogOptions.mjs";
+import { normalizeClientflowReleaseCatalog, selectableClientflowUpdateReleases, compatibleClientflowUpdateReleases } from "./clientflowCatalogOptions.mjs";
 import { getOrganizations as apiGetOrganizations, updateClient as apiUpdateClient, changeClientOrganization as apiChangeClientOrganization, getClientflowReleases, getActiveClientflowDeployment, getClientflowRecoveryGate, acknowledgeClientflowRecovery, requestClientflowDeployment, cancelClientflowDeployment, requestOsUpdate, requestFirmwareUpdate, requestCfadminPasswordChange as apiRequestCfadminPasswordChange, requestLocalHostnameChange as apiRequestLocalHostnameChange, getClientLocalManagement as apiGetClientLocalManagement } from "../../api";
 import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
@@ -220,11 +220,16 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
   const otherUpdateInProgress = !inProgress && (pendingOsUpdate === true || pendingFirmwareUpdate === true);
   const installedVersion = clientVersion;
   const latestVersion = releaseCatalog?.latest_stable || null;
-  const selectableReleases = React.useMemo(
+  const catalogUpdateReleases = React.useMemo(
     () => selectableClientflowUpdateReleases(releaseCatalog),
     [releaseCatalog],
   );
-  const resolvedSelectedVersion = selectedVersion === "auto" ? defaultClientflowTarget(installedVersion, latestVersion, selectableReleases) : selectedVersion;
+  const selectableReleases = React.useMemo(
+    () => compatibleClientflowUpdateReleases(releaseCatalog, installedVersion),
+    [releaseCatalog, installedVersion],
+  );
+  const requestedVersion = selectedVersion === "auto" ? defaultClientflowTarget(installedVersion, latestVersion, selectableReleases) : selectedVersion;
+  const resolvedSelectedVersion = selectableReleases.some((release) => release.version === requestedVersion) ? requestedVersion : "";
   React.useEffect(() => { setSelectedVersion("auto"); }, [installedVersion]);
   const selectedRelease = selectableReleases.find((release) => release.version === resolvedSelectedVersion) || null;
   const standardBaseline = releaseCatalog?.catalog_sequence >= 1250;
@@ -234,7 +239,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
     String(installedVersion || "").replace(/^v/i, "") === "1.3.47" &&
     Number.isSafeInteger(Number(clientId)) && Number(clientId) > 0 && isSuperadmin && clientOnline === true;
   const selectedReleaseRequiresReboot = selectedRelease?.requires_reboot === true;
-  const deploymentRelease = selectableReleases.find((release) => release.version === deployment?.target_version) || null;
+  const deploymentRelease = catalogUpdateReleases.find((release) => release.version === deployment?.target_version) || null;
   const deploymentRequiresReboot = deploymentRelease?.requires_reboot === true;
   const isDowngrade = Boolean(
     installedVersion && resolvedSelectedVersion && compareClientflowVersions(resolvedSelectedVersion, installedVersion) < 0
@@ -463,7 +468,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
   const stateIsWarning = state === "cancelled" || state === "rolled_back" || state === "rolling_back";
   const stateIsSuccess = state === "succeeded";
   const statusColor = stateIsError ? "#f87171" : stateIsSuccess ? "#22c55e" : stateIsWarning ? "#fbbf24" : inProgress ? "#38bdf8" : MUTED;
-  const statusText = starting ? "Autoriserer deployment" : deployment ? meta.label : otherUpdateInProgress ? "Afventer anden opdatering" : "Klar";
+  const statusText = starting ? "Autoriserer deployment" : deployment ? meta.label : otherUpdateInProgress ? "Afventer anden opdatering" : releaseCatalog && selectableReleases.length === 0 ? "Ingen kompatibel opdatering" : "Klar";
 
   return (
     <Box sx={{ p: 1.15, borderRadius: 2, background: FIELD_BG, border: `1px solid ${BORDER}` }}>
@@ -481,8 +486,8 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
           </Stack>
         </Box>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={0.8} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
-          <TextField select size="small" label="Målversion" value={resolvedSelectedVersion || ""} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || catalogLoading || !releaseCatalog} sx={{ minWidth: { xs: "100%", sm: 220 } }}>
-            <MenuItem value="">Vælg målversion</MenuItem>
+          <TextField select size="small" label="Målversion" value={resolvedSelectedVersion || ""} onChange={(event) => setSelectedVersion(event.target.value)} disabled={starting || inProgress || otherUpdateInProgress || catalogLoading || !releaseCatalog || selectableReleases.length === 0} slotProps={{ inputLabel: { shrink: true }, select: { displayEmpty: true } }} sx={{ minWidth: { xs: "100%", sm: 245 } }}>
+            <MenuItem value="">{catalogLoading ? "Henter versioner…" : !releaseCatalog ? "Versioner ikke tilgængelige" : selectableReleases.length === 0 ? "Ingen kompatible versioner" : "Vælg målversion"}</MenuItem>
             {latestVersion && selectableReleases.some((release) => release.version === latestVersion) && <MenuItem value={latestVersion}>Seneste stabile (v{latestVersion})</MenuItem>}
             {selectableReleases.filter((release) => release.version !== latestVersion).map((release) => (
               <MenuItem key={release.version} value={release.version}>v{release.version} · {release.status === "supported" ? "understøttet" : release.status}</MenuItem>
@@ -553,7 +558,7 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
         </Alert>
       )}
       {!catalogLoading && !catalogError && releaseCatalog && selectableReleases.length === 0 && (
-        <Alert severity="info" sx={{ mt: 1 }}>Ingen ClientFlow-versioner er godkendt til opdatering.</Alert>
+        <Alert severity="info" sx={{ mt: 1 }}>{installedVersion ? "Ingen kompatibel ClientFlow-opdatering i det aktuelle katalog." : "Installeret version er endnu ikke verificeret."}</Alert>
       )}
       {selectedReleaseRequiresReboot && !disabled && !sameVersionSelected && !showPanel && (
         <Alert severity="info" sx={{ mt: 1 }}>
