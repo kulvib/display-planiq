@@ -137,7 +137,9 @@ def test_initial_disable_failure_preserves_running_predecessor_and_intent(host, 
     assert observed["activation_intent"]["release_id"] == TARGET
     assert observed["active_release_id"] == txn._read_active_release_id(layout) == PREVIOUS
     assert observed["staged_release_id"] == TARGET
-    assert calls == []
+    # The read-only media guard must run; no runtime mutation may follow.
+    assert calls == ["_assert_no_temporary_media_override"]
+    assert state == observed
     assert_identity(identity)
 
 
