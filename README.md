@@ -19,7 +19,8 @@ The repository is under active construction and review. The goal of the v2 basel
 │   ├── libexec/              Fixed-function privileged helpers
 │   └── release/              Release transaction, builder inputs and docs
 ├── scripts/                  Repository/release validation and build tools
-└── render.yaml               Current Render deployment configuration
+├── render-single-node.yaml   Docker backend topology reference (not a live-state export)
+└── render.yaml               Historical external-DB blueprint; not the active backend
 ```
 
 ## Runtime domains
@@ -37,6 +38,14 @@ Status, Display and System share the reviewed shared-domain control plane. Lives
 
 The physically validated Livestream, Terminal and Remote Desktop runtime behavior is treated as frozen baseline. Structural changes around packaging, provisioning or shared infrastructure must not change their functional runtime behavior without a documented root cause and physical regression test.
 
+## Active deployment architecture
+
+The active Display backend uses Render Docker (`backend/Dockerfile.single-node`) with local PostgreSQL 18.4 on a persistent disk. `backend/scripts/start_single_node.sh` fixes the database URL to a local Unix socket, starts PostgreSQL without TCP, uses a non-superuser application role and runs Alembic before the API starts. The React frontend is a separate Render static service. Display does not use Neon in the active topology.
+
+Neither checked-in Blueprint is a live export of the existing Render services. `render.yaml` is retained as historical external-database infrastructure evidence, not instructions to provision a new service. `render-single-node.yaml` is a backend topology reference; do not apply either file to the active workspace without a reviewed reconciliation. No additional paid service is implied.
+
+The operational baseline is ClientFlow 1.4.0 / 1250 on Viborg1 (client 3). The 1.4.1 / 1251 source is staged only: it is not published, authorized or physically accepted. See `CLIENTFLOW_1.4.1_1251_CANDIDATE_STAGE.md`. The old catalog and fleet/fresh-install holds remain in place. Backend restart can interrupt long-lived connections; recovery and physical acceptance remain explicit gates.
+
 ## Database
 
 Alembic is authoritative for schema changes. Application startup must not create or mutate database schema implicitly.
@@ -47,7 +56,7 @@ Run migrations from `backend/` through:
 python scripts/run_migrations.py
 ```
 
-The canonical shared-foundations base is `20260819_50a_canonical`; the current reviewed head is `20260819_51a_update_control`, which adds first-class ClientFlow deployment authority and the stable update-credential schema.
+The canonical shared-foundations base is `20260819_50a_canonical`. Determine the current repository head from Alembic rather than copying an old revision into operational instructions. The reviewed 61A migration defines `20261115_61a_cf_release_admin`. `/health/db` checks readiness against the running source. The Docker startup owns migrations; do not run an additional live migration or point Display at an external database as part of routine deployment.
 
 ## ClientFlow release model
 
@@ -85,6 +94,9 @@ Frontend:
 ```bash
 cd frontend
 npm ci
+npm run lint
+npm run audit:dependencies
+node --test tests/*.test.mjs
 npm run build
 ```
 
@@ -99,3 +111,7 @@ python -m compileall -q client/runtime client/release/lib scripts backend/servic
 Actual source code is the implementation source of truth. Physical Ubuntu tests are the source of truth for observed runtime behavior. Documentation supports the review but does not override working, physically verified behavior.
 
 Changes to runtime behavior require a documented category A/B finding, root cause and relevant regression plan. Production-readiness hardening is handled separately from the current correctness/isolation review.
+
+## Quality and operations
+
+See `docs/PLANIQ_DISPLAY_68J8_QUALITY_REVIEW.md` for the scoped findings, evidence and open acceptance gates. A green CI run does not replace physical media or recovery tests. An isolated CI backup restore is not a verified off-host restore of the actual database. Retain immutable historical release evidence; do not remove files merely because they are old.
