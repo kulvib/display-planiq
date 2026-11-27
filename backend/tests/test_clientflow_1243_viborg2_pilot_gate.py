@@ -150,7 +150,7 @@ def test_source_and_catalog_do_not_enable_pilot_by_merging():
     assert source["releases"][-1]["release_id"] == "clientflow-1.3.42-seq-1243"
     assert source["releases"][-1]["install_modes"] == ["in_place_update"]
     assert source["releases"][-1]["rollback_allowed"] is False
-    live = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    live = json.loads((ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json").read_text())
     assert live["catalog_sequence"] == 1248
     assert live["latest_stable"] == live["default_install_version"] == "1.3.44"
     assert [row["release_id"] for row in live["releases"]] == ["clientflow-1.3.44-seq-1245", "clientflow-1.3.46-seq-1247", "clientflow-1.3.47-seq-1248"]
