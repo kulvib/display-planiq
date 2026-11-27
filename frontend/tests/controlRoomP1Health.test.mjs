@@ -62,6 +62,6 @@ test("Historical livestream failure is not an active alarm after verified recove
   assert.equal(hasActiveLivestreamError({ ...error, livestream_status: "running", livestream_process_status: "stopped" }), true);
   assert.equal(hasActiveLivestreamError({ ...error, livestream_status: "running", livestream_process_status: "running" }), false);
   assert.equal(hasActiveLivestreamError({ livestream_last_error: null, livestream_status: "failed" }), false);
-  assert.match(diagnosticsSource, /hasActiveLivestreamError\(client\)/);
-  assert.match(diagnosticsSource, /Seneste livestream-fejl \(historik\)/);
+  assert.match(diagnosticsSource, /livestreamDiagnosticsView\(media\)/);
+  assert.match(diagnosticsSource, /Generationsfejl/);
 });

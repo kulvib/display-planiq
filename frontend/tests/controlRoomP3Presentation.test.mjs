@@ -8,6 +8,7 @@ import {
   currentClientStateTone,
   ubuntuInventoryView,
   firmwareInventoryView,
+  livestreamDiagnosticsView,
   diagnosticServiceLevel,
   defaultClientflowTarget,
 } from "../src/utils/controlRoomPresentation.mjs";
@@ -136,4 +137,18 @@ test("firmware inventory distinguishes zero, available, stale, offline and incon
   assert.equal(firmwareInventoryView({ ...base, firmware: { ...base.firmware, update_count: 3 } }).count, null);
   assert.equal(firmwareInventoryView({ ...base, presence: { is_online: true, system: { is_online: false } } }).count, null);
   assert.equal(firmwareInventoryView({ ...base, firmware: null }).count, null);
+});
+
+
+test("Livestream diagnostics do not confuse process, generation and recent media", () => {
+  const live = { generation_state: "running", generation_current: true, agent_fresh: true, producer_state: "running", media_recent: true };
+  assert.equal(livestreamDiagnosticsView(live).level, "ok");
+  assert.equal(livestreamDiagnosticsView(live).processLevel, "ok");
+  assert.equal(livestreamDiagnosticsView({ ...live, media_recent: false }).level, "warn");
+  assert.equal(livestreamDiagnosticsView({ ...live, agent_fresh: false }).processLevel, "neutral");
+  assert.equal(livestreamDiagnosticsView({ ...live, generation_current: false, generation_state: "stopped" }).processLevel, "neutral");
+  assert.equal(livestreamDiagnosticsView(null).level, "neutral");
+  assert.match(diagnostics, /livestream-diagnostics/);
+  assert.match(diagnostics, /window.setTimeout\(load, 30_000\)/);
+  assert.doesNotMatch(diagnostics, /formatDiagnosticDate\(client\?\.livestream_last_segment\)/);
 });

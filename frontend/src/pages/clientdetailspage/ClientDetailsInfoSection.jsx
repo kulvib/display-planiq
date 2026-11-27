@@ -42,8 +42,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 import { summarizeServiceLevels } from "../../utils/serviceHealthSummary.mjs";
-import { ubuntuInventoryView, firmwareInventoryView, diagnosticServiceLevel, defaultClientflowTarget } from "../../utils/controlRoomPresentation.mjs";
-import { hasActiveLivestreamError } from "../../utils/livestreamHealth.mjs";
+import { ubuntuInventoryView, firmwareInventoryView, diagnosticServiceLevel, defaultClientflowTarget, livestreamDiagnosticsView } from "../../utils/controlRoomPresentation.mjs";
 import { calendarRebootView } from "./calendarRebootStatus.mjs";
 import ClientFlowHistoryOnDemand from "./ClientFlowHistoryOnDemand";
 
@@ -2662,6 +2661,56 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
 }
 
 function DiagnosticsPanel({ client, onRefresh }) {
+  // Mounted only on the Diagnostics tab. No parallel full-client read, no
+  // viewer heartbeat/start, no requests while the browser is hidden.
+  const [mediaRead, setMediaRead] = React.useState(null);
+  const [mediaRefresh, setMediaRefresh] = React.useState(0);
+  React.useEffect(() => {
+    if (!client?.id) return undefined;
+    let disposed = false;
+    let controller = null;
+    let timer = null;
+    setMediaRead(null);
+    const load = async () => {
+      if (disposed || document.visibilityState === "hidden" || controller) return;
+      controller = new AbortController();
+      try {
+        const { data } = await apiClient.get(`/api/clients/${encodeURIComponent(client.id)}/livestream-diagnostics`, { signal: controller.signal });
+        if (!disposed && !controller.signal.aborted) {
+          if (data?.client_id !== client.id || typeof data?.generation_current !== "boolean" ||
+              typeof data?.media_recent !== "boolean") throw new Error("Ugyldig Livestream-diagnostik");
+          setMediaRead({ clientId: client.id, data });
+        }
+      } catch {
+        if (!disposed && !controller.signal.aborted) setMediaRead({ clientId: client.id, error: true });
+      } finally {
+        controller = null;
+        if (!disposed && document.visibilityState !== "hidden") timer = window.setTimeout(load, 30_000);
+      }
+    };
+    const visibility = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState === "hidden") {
+        controller?.abort();
+        setMediaRead(null);
+      } else if (!controller) load();
+    };
+    document.addEventListener("visibilitychange", visibility);
+    load();
+    return () => {
+      disposed = true;
+      controller?.abort();
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [client?.id, mediaRefresh]);
+  const media = mediaRead?.clientId === client?.id ? mediaRead.data : null;
+  const mediaView = livestreamDiagnosticsView(media);
+  const mediaError = mediaRead?.clientId === client?.id && mediaRead.error;
+  const refreshDiagnostics = () => {
+    setMediaRefresh((value) => value + 1);
+    onRefresh?.();
+  };
   const hasDiagnosticValue = (value) => value !== null && value !== undefined && String(value).trim() !== "";
 
   const formatDiagnosticValue = (value, fallback = "ukendt") => {
@@ -2797,7 +2846,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
 
   const supportServiceRows = [
     { label: "Livestream service", value: client?.service_livestream_status, livestreamService: true, unit: "clientflow-livestream-producer.service", helper: livestreamExpectedRunning ? "Skal køre når livestream er åbnet/ønsket" : "Må gerne være stoppet når livestream ikke bruges" },
-    { label: "Livestream process", value: client?.livestream_process_status, livestreamService: true, unit: "gst-launch / livestream_wayland.py / uploader", helper: livestreamExpectedRunning ? "Skal være Aktiv når livestream_status=running" : "Må gerne være Stoppet når livestream er idle" },
+    { label: "Livestream-proces", value: mediaView.process, level: mediaView.processLevel, helper: "Seneste generationsbundne producerstatus" },
     { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket", helper: "Canonical broker/socket for privilegerede Ubuntu update-kommandoer" },
   ];
 
@@ -2807,9 +2856,9 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const serviceIssues = serviceRows.filter((_, index) =>
     ["warn", "error"].includes(serviceLevels[index]),
   );
-  const systemdIssues = serviceIssues.filter((row) => row.label !== "Livestream process");
+  const systemdIssues = serviceIssues.filter((row) => row.label !== "Livestream-proces");
   const hasServiceErrors = serviceLevels.includes("error");
-  const livestreamProcessIssues = serviceIssues.filter((row) => row.label === "Livestream process");
+  const livestreamProcessIssues = serviceIssues.filter((row) => row.label === "Livestream-proces");
 
   const lifecycleLabelMap = {
     reboot_started: "Genstart startet",
@@ -2832,7 +2881,8 @@ function DiagnosticsPanel({ client, onRefresh }) {
     client?.pending_shutdown ? { label: "Pending shutdown", level: "warn", value: "Ja" } : null,
     client?.pending_os_update ? { label: "Ubuntu-opdatering venter", level: "info", value: "Ja" } : null,
     hasUbuntuUpdates ? { label: "Ubuntu-pakker klar", level: "warn", value: ubuntuView.label } : null,
-    hasActiveLivestreamError(client) ? { label: "Livestream-fejl", level: "error", value: client?.livestream_last_error } : null,
+    mediaError ? { label: "Livestream-diagnostik ikke verificeret", level: "neutral", value: "Kunne ikke hente generationen. Forsøger igen." } : null,
+    mediaView.level === "error" || mediaView.level === "warn" ? { label: "Livestream kræver tjek", level: mediaView.level, value: media?.error_code || mediaView.state } : null,
     hasDiagnosticValue(client?.display_resolution_error) ? { label: "Display-fejl", level: "error", value: client?.display_resolution_error } : null,
     timeSyncLevel === "error" ? { label: "Systemtid er kritisk", level: "error", value: timeSyncMessage } : null,
     timeSyncLevel === "warn" ? { label: "Systemtid kræver tjek", level: "warn", value: timeSyncMessage } : null,
@@ -2917,7 +2967,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
         { label: "Kalender", value: client?.service_calendar_status, service: true, unit: "clientflow-calendar.service" },
         { label: "Browser Guard", value: client?.service_browser_guard_status, service: true, unit: "clientflow-browser-guard.service" },
         { label: "Fjernskrivebord", value: client?.service_remote_desktop_status, service: true, unit: "clientflow-remote-desktop-agent.service" },
-        { label: "Livestream", value: client?.livestream_status || "idle", status: true, helper: `Service: ${statusText(client?.service_livestream_status, "ukendt")}` },
+        { label: "Livestream", value: mediaView.state, level: mediaView.level, helper: `Service: ${statusText(client?.service_livestream_status, "ukendt")}` },
       ],
     },
   ];
@@ -3016,14 +3066,17 @@ function DiagnosticsPanel({ client, onRefresh }) {
     },
     {
       title: "Livestream",
-      description: "Ønsket stream-status, systemd-service, lokal proces og sidste segment.",
+      description: "Ønsket tilstand, faktisk rapporteret proces og medieaktivitet fra Livestream v2.",
       columns: 2,
       rows: [
-        { label: "Livestream status", value: client?.livestream_status, status: true },
+        { label: "Ønsket Livestream", value: media?.desired_state },
+        { label: "Generation", value: mediaView.state, level: mediaView.level },
         { label: "Livestream service", value: client?.service_livestream_status, livestreamService: true, unit: "clientflow-livestream-producer.service" },
-        { label: "Livestream process", value: client?.livestream_process_status, livestreamService: true, unit: "gst-launch / uploader" },
-        { label: "Sidste segment", value: formatDiagnosticDate(client?.livestream_last_segment) },
-        { label: hasActiveLivestreamError(client) ? "Livestream-fejl (aktuel)" : "Seneste livestream-fejl (historik)", value: client?.livestream_last_error, fallback: "Ingen", error: hasActiveLivestreamError(client), wide: true },
+        { label: "Livestream-proces", value: mediaView.process, level: mediaView.processLevel },
+        { label: "Seneste medieupload", value: formatDiagnosticDate(media?.last_upload_at), helper: "Seneste generation; ikke nødvendigvis et videosegment" },
+        { label: "Seneste manifest", value: formatDiagnosticDate(media?.last_manifest_at) },
+        { label: "Seneste agentrapport", value: formatDiagnosticDate(media?.agent_reported_at) },
+        { label: "Generationsfejl", value: media ? (media.error_code || "Ingen registreret") : "Ikke verificeret", level: mediaView.level === "error" ? "error" : "neutral", wide: true },
       ],
     },
     {
@@ -3229,7 +3282,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
             Seneste rapport: {formatDiagnosticDate(client?.diagnostics_updated_at)}
           </Typography>
           {onRefresh ? (
-            <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={onRefresh} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}>
+            <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={refreshDiagnostics} sx={{ borderRadius: 999, color: TEXT, borderColor: BORDER }}>
               Opdater
             </Button>
           ) : null}
