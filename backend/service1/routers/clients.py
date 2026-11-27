@@ -22,6 +22,7 @@ from ..ui_realtime import (
     notify_ui_fleet_order_changed,
     issue_ui_realtime_capability,
     verify_ui_realtime_capability,
+    capability_wait_timeout,
     wait_for_ui_change_async,
 )
 from ..lifecycle import ClientPurgeBlocked, prepare_client_for_permanent_delete
@@ -1597,7 +1598,11 @@ async def wait_control_room_realtime(
     value = str(authorization or "")
     token = value[7:].strip() if value.lower().startswith("bearer ") else None
     claims = verify_ui_realtime_capability(token)
-    generation = await wait_for_ui_change_async(claims=claims, after=after, timeout=timeout_seconds)
+    generation = await wait_for_ui_change_async(
+        claims=claims, after=after, timeout=capability_wait_timeout(claims, timeout_seconds)
+    )
+    # A capability expiring while suspended cannot release a wake response.
+    capability_wait_timeout(claims, 0)
     return {"generation": generation, "changed": generation > after}
 
 
