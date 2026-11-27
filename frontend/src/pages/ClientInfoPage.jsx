@@ -1714,7 +1714,7 @@ export default function ClientInfoPage() {
           </Tooltip>
         </Stack>
       </Paper>
-      <Paper sx={{ p: 1.5, mb: 2, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)" }}>
+      <Paper sx={{ p: 1.5, mb: 2, borderRadius: 2, bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.30)" }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} useFlexGap sx={{ alignItems: { xs: "stretch", md: "center" }, justifyContent: "space-between" }}>
         <TextField
           fullWidth
@@ -1762,7 +1762,7 @@ export default function ClientInfoPage() {
           borderRadius: 2,
           overflow: "hidden",
           bgcolor: "rgba(15,23,42,0.74)",
-          border: "1px solid rgba(148,163,184,0.16)",
+          border: "1px solid rgba(148,163,184,0.30)",
           boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
         }}
       >
@@ -2037,7 +2037,7 @@ export default function ClientInfoPage() {
               borderRadius: 2,
               overflow: "hidden",
               bgcolor: "rgba(15,23,42,0.74)",
-              border: "1px solid rgba(148,163,184,0.16)",
+              border: "1px solid rgba(148,163,184,0.30)",
               boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
             }}
           >
@@ -2419,7 +2419,7 @@ export default function ClientInfoPage() {
                 borderRadius: 2,
                 overflow: "hidden",
                 bgcolor: "rgba(15,23,42,0.74)",
-                border: "1px solid rgba(148,163,184,0.16)",
+                border: "1px solid rgba(148,163,184,0.30)",
                 boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
               }}
             >
