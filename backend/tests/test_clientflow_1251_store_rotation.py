@@ -21,8 +21,10 @@ def snapshot(ids):
 
 def test_closed_active_catalog_and_historical_projection():
     root = Path(__file__).resolve().parents[2]
-    assert load_catalog() == closed_baseline_catalog()
-    assert verified_mode(root) == "closed_1250_baseline"
+    from service1.clientflow_closed_standard_1251 import closed_standard_catalog
+    assert closed_baseline_catalog()["catalog_sequence"] == 1250
+    assert load_catalog() == closed_standard_catalog()
+    assert verified_mode(root) == "closed_1251_standard"
     assert projected_stable_1245(root)["releases"][0]["release_id"] == REMOVE[0]
 
 
