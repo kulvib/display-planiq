@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .clientflow_pilot_1250 import approval_lock_1250
 from .clientflow_pilot_1251 import (
-    BASELINE_ID, BASELINE_VERSION, SUCCESSOR_ID, SUCCESSOR_VERSION, SUCCESSOR_SEQUENCE,
+    BASELINE_ID, BASELINE_VERSION, SUCCESSOR_ID,
     Pilot1251Denied, _pinned_json, approval_lock_1251, closed_baseline_catalog,
     require_closed_baseline, match_successor_order, successor_snapshot,
 )
