@@ -734,7 +734,7 @@ function glassPanelSx(theme, isMobile = false) {
     borderRadius: isMobile ? 3 : 4,
     overflow: "hidden",
     background: "linear-gradient(180deg, rgba(15,23,42,0.86), rgba(15,23,42,0.66))",
-    border: "1px solid rgba(148,163,184,0.18)",
+    border: "1px solid rgba(148,163,184,0.30)",
     boxShadow: "0 24px 70px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.04)",
     backdropFilter: "blur(18px)",
     color: "#f8fafc",
@@ -749,6 +749,10 @@ function glassPanelSx(theme, isMobile = false) {
       border: "1px solid rgba(148,163,184,0.14)",
       boxShadow: "none",
       color: "#f8fafc",
+    },
+    "& .MuiCard-root.control-room-data-panel": {
+      background: "rgba(30,41,59,0.82)",
+      border: "1px solid rgba(148,163,184,0.36)",
     },
     "& .MuiTableCell-root": {
       color: "rgba(248,250,252,0.92)",
