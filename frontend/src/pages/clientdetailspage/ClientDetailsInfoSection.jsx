@@ -1585,7 +1585,7 @@ function CopyButton({ value }) {
   return (
     <Tooltip title={copied ? "Kopieret" : "Kopiér"}>
       <span>
-        <IconButton size="small" onClick={handleCopy} disabled={disabled} sx={{ color: copied ? "#22c55e" : MUTED }}>
+        <IconButton size="small" aria-label="Kopiér" onClick={handleCopy} disabled={disabled} sx={{ color: copied ? "#22c55e" : MUTED }}>
           <ContentCopyIcon sx={{ fontSize: 16 }} />
         </IconButton>
       </span>
@@ -2015,7 +2015,7 @@ function SystemPanel({ client, uptime, lastSeen, clientOnline, showSnackbar, onU
           action={
             onDiagnosticsRefresh ? (
               <Tooltip title="Opdater data">
-                <IconButton size="small" onClick={onDiagnosticsRefresh} sx={{ color: MUTED }}>
+                <IconButton size="small" aria-label="Opdater diagnostik" onClick={onDiagnosticsRefresh} sx={{ color: MUTED }}>
                   <RefreshIcon sx={{ fontSize: 18 }} />
                 </IconButton>
               </Tooltip>
