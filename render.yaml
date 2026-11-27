@@ -1,3 +1,6 @@
+# Historical external-database Blueprint. NOT the active Display backend.
+# Retained for compatibility evidence; do not apply to the live workspace.
+# Active topology: README.md, backend/Dockerfile.single-node and backend/scripts/start_single_node.sh.
 services:
 
   # ─── Canonical v2 backend ──────────────────────────────────────────────────
