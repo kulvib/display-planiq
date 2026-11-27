@@ -39,13 +39,16 @@ def deployment(artifact, **changes):
     return SimpleNamespace(**values)
 
 
-def test_pinned_stage_is_not_current_operational_catalog(monkeypatch):
+def test_promoted_catalog_is_exact_but_does_not_authorize_historical_control(monkeypatch):
     set_closed_flags(monkeypatch)
     catalog = policy.closed_baseline_catalog()
     policy.require_closed_baseline(catalog, closed_control(), 2)
-    assert releases.load_catalog()["catalog_sequence"] == 1248
+    assert releases.load_catalog() == catalog
+    from service1.clientflow_release_pilot_stage_1248 import load_staged_catalog_1248
     with pytest.raises(policy.Pilot1251Denied):
-        policy.require_closed_baseline(releases.load_catalog(), closed_control(), 2)
+        policy.require_closed_baseline(load_staged_catalog_1248(), closed_control(), 2)
+    with pytest.raises(policy.Pilot1251Denied):
+        policy.require_closed_baseline(catalog, {**closed_control(), "stable_release_id": "clientflow-1.3.44-seq-1245"}, 2)
     for field, value in [("fleet_open", True), ("fresh_install_open", True), ("cutover_enabled", True),
                          ("stable_release_id", "clientflow-1.3.44-seq-1245"),
                          ("stable_bundle_sha256", "0"*64), ("revision", 3)]:
