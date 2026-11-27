@@ -506,6 +506,7 @@ const CopyIconButton = memo(function CopyIconButton({
       <span>
         <IconButton
           size="small"
+          aria-label="Kopiér"
           onClick={handleCopy}
           sx={{ ml: 0.5, p: 0.2 }}
           disabled={disabled}
@@ -1390,6 +1391,7 @@ export default function ClientInfoPage() {
             <Tooltip title="Fjern klient">
               <span>
                 <IconButton
+                  aria-label={`Fjern klient ${client.name}`}
                   color="error"
                   onClick={() => openRemoveDialog(client.id)}
                   size="small"
@@ -1958,6 +1960,7 @@ export default function ClientInfoPage() {
                                     <Tooltip title="Fjern klient">
                                       <span>
                                         <IconButton
+                                          aria-label={`Fjern klient ${client.name}`}
                                           color="error"
                                           onClick={() =>
                                             openRemoveDialog(client.id)
@@ -2332,6 +2335,7 @@ export default function ClientInfoPage() {
                             <Tooltip title="Fjern klient">
                               <span>
                                 <IconButton
+                                  aria-label={`Fjern klient ${client.name}`}
                                   color="error"
                                   onClick={() => openRemoveDialog(client.id)}
                                   size="small"
@@ -2580,6 +2584,7 @@ export default function ClientInfoPage() {
                                   <span>
                                     <IconButton
                                       color="error"
+                                      aria-label={`Slet ${client.name} permanent`}
                                       onClick={() => openPurgeDialog(client.id)}
                                       disabled={isRestoring || isPurging}
                                     >
