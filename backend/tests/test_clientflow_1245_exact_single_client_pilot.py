@@ -217,7 +217,7 @@ def staged_catalog(monkeypatch, tmp_path):
 
 
 def test_current_catalog_is_one_stable_1245_with_two_install_modes():
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json").read_text())
     assert catalog["catalog_sequence"] == 1248
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.44"
     assert [r["release_sequence"] for r in catalog["releases"]] == [1245, 1247, 1248]
