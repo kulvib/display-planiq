@@ -1591,12 +1591,13 @@ function CopyButton({ value }) {
 function DataPanel({ title, description, action, children, compactHeader = false }) {
   return (
     <Card
+      className="control-room-data-panel"
       elevation={0}
       sx={{
         height: "100%",
         borderRadius: 2,
-        background: "rgba(15,23,42,0.46)",
-        border: `1px solid ${BORDER}`,
+        background: "rgba(30,41,59,0.82)",
+        border: "1px solid rgba(148,163,184,0.36)",
         color: TEXT,
         boxShadow: "none",
       }}
@@ -2429,13 +2430,14 @@ function ConfigurationPanel({ client, showSnackbar, onSaved, onRefresh, handleCl
   const lockdownConfirmed = lockdownApplied || lockdownDisabled;
 
   const textFieldSx = {
-    "& .MuiInputBase-root": { color: TEXT, background: FIELD_BG, borderRadius: 2 },
+    "& .MuiInputBase-root": { color: TEXT, background: "rgba(2,6,23,0.48)", borderRadius: 1.5 },
     "& .MuiInputLabel-root": { color: MUTED },
-    "& .MuiOutlinedInput-notchedOutline": { borderColor: BORDER },
-    "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "rgba(125,211,252,0.42)" },
+    "& .MuiOutlinedInput-notchedOutline": { borderColor: "rgba(148,163,184,0.38)" },
+    "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "rgba(125,211,252,0.56)" },
+    "& .Mui-focused .MuiOutlinedInput-notchedOutline": { borderColor: "#7dd3fc" },
     "& .MuiSelect-icon": { color: MUTED },
   };
-  const sectionSx = { minWidth: 0, p: 1.5, borderRadius: 2, background: "rgba(15,23,42,0.28)", border: `1px solid ${BORDER}` };
+  const sectionSx = { minWidth: 0, p: 1.5, borderRadius: 1.5, background: "rgba(15,23,42,0.72)", border: "1px solid rgba(148,163,184,0.24)" };
   const actionRowSx = { mt: 1.15, display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" };
 
   return (
@@ -2853,6 +2855,9 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const serviceRows = [...criticalServiceRows, ...supportServiceRows];
   const serviceLevels = serviceRows.map(getRowLevel);
   const serviceSummary = summarizeServiceLevels(serviceLevels);
+  const unverifiedServiceRows = serviceRows.filter((_, index) =>
+    !["ok", "warn", "error"].includes(serviceLevels[index]),
+  );
   const serviceIssues = serviceRows.filter((_, index) =>
     ["warn", "error"].includes(serviceLevels[index]),
   );
@@ -2886,7 +2891,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
     hasDiagnosticValue(client?.display_resolution_error) ? { label: "Display-fejl", level: "error", value: client?.display_resolution_error } : null,
     timeSyncLevel === "error" ? { label: "Systemtid er kritisk", level: "error", value: timeSyncMessage } : null,
     timeSyncLevel === "warn" ? { label: "Systemtid kræver tjek", level: "warn", value: timeSyncMessage } : null,
-    serviceSummary.unverified > 0 ? { label: "Services ikke verificeret", level: "neutral", value: `${serviceSummary.unverified} mangler bekræftet OK-status` } : null,
+    serviceSummary.unverified > 0 ? { label: "Services ikke verificeret", level: "neutral", value: `${serviceSummary.unverified} mangler bekræftet OK-status: ${unverifiedServiceRows.map((row) => row.label).join(", ")}` } : null,
     !networkUnavailable && networkLevel === "neutral" ? { label: "Netværk ikke verificeret", level: "neutral", value: networkMessage } : null,
     timeSyncLevel === "neutral" ? { label: "Systemtid ikke verificeret", level: "neutral", value: timeSyncMessage } : null,
   ].filter(Boolean);
