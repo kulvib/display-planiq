@@ -37,6 +37,8 @@ from ..clientflow_release_admin_models import (
     ClientFlowPhysicalAcceptance,
 )
 from ..clientflow_releases import ClientFlowCatalogError, load_catalog, compare_versions
+from ..clientflow_pilot_1251 import Pilot1251Denied, require_closed_baseline
+from ..clientflow_pilot_1250 import Pilot1250Denied
 from ..clientflow_standard_release import BASELINE_ID, BASELINE_VERSION, BASELINE_SEQUENCE, StandardReleaseDenied, validate_baseline_catalog
 from ..db import get_session
 from ..client_domain_models import ClientDomainCredential, ClientDomainStatus
@@ -381,9 +383,20 @@ def _standard_baseline_status(session: Session, catalog: dict) -> dict:
     control = session.get(ClientFlowReleaseControl, 1)
     bound = bool(control is not None and control.stable_release_id == BASELINE_ID
                  and _SHA256.fullmatch(control.stable_bundle_sha256 or ""))
+    successor_review = False
+    if bound:
+        try:
+            require_closed_baseline(catalog, control.model_dump(), control.revision)
+            successor_review = True
+        except (Pilot1251Denied, Pilot1250Denied, StandardReleaseDenied):
+            pass
     return {
         **_release_inventory(session),
         "phase": "standard_baseline",
+        "successor_pilot_review_available": successor_review,
+        "revision": control.revision if bound else None,
+        "cutover_enabled": control.cutover_enabled if bound else False,
+        "fleet_open": control.fleet_open if bound else False,
         "stable_release_id": BASELINE_ID, "stable_version": BASELINE_VERSION,
         "available_releases": [{"release_id": BASELINE_ID, "version": BASELINE_VERSION,
                                 "status": "stable", "deployment_authorized": False}],
