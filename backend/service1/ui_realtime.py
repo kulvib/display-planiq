@@ -30,6 +30,9 @@ ISSUER = "clientflow-ui-realtime"
 AUDIENCE = "clientflow-ui-realtime"
 TTL_SECONDS = min(max(120, int(os.getenv("CLIENTFLOW_UI_REALTIME_CAPABILITY_TTL_SECONDS", "300"))), 900)
 _CONDITION = threading.Condition()
+# Generations are process-local. A signed capability from an earlier process
+# must not wait against a reset counter after a deploy/restart.
+_PROCESS_EPOCH = uuid.uuid4().hex
 _GLOBAL_GENERATION = 0
 _ORG_GENERATIONS: dict[int, int] = defaultdict(int)
 _CLIENT_GENERATIONS: dict[int, int] = defaultdict(int)
@@ -143,6 +146,7 @@ def issue_ui_realtime_capability(
         "aud": AUDIENCE,
         "sub": f"ui-realtime:{principal_id}",
         "purpose": "ui_realtime_wait",
+        "process_epoch": _PROCESS_EPOCH,
         "principal_id": str(principal_id),
         "global_scope": global_scope,
         "organization_id": organization_id,
@@ -185,6 +189,8 @@ def verify_ui_realtime_capability(token: str | None) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Ugyldig realtime-capability") from exc
     if claims.get("purpose") != "ui_realtime_wait":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forkert realtime-capability")
+    if claims.get("process_epoch") != _PROCESS_EPOCH:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Realtime-capability skal fornyes")
     if not bool(claims.get("global_scope")) and claims.get("organization_id") is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Realtime-capability mangler scope")
     scoped_client = claims.get("client_id")
@@ -193,6 +199,14 @@ def verify_ui_realtime_capability(token: str | None) -> dict[str, Any]:
     if claims.get("release_admin") is True and (not claims.get("global_scope") or scoped_client is not None):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ugyldigt releaseadministrationsscope")
     return claims
+
+
+def capability_wait_timeout(claims: dict[str, Any], requested: float) -> float:
+    """Never start a wait beyond the remaining signed capability lifetime."""
+    remaining = int(claims["exp"]) - time.time()
+    if remaining <= 0:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Realtime-capability er udløbet")
+    return min(max(float(requested), 0.0), remaining)
 
 
 def wait_for_ui_change(*, claims: dict[str, Any], after: int, timeout: float) -> int:
