@@ -244,29 +244,36 @@ async def livestream_command_wait(
 async def livestream_command_wake_ws(websocket: WebSocket, client_id: int):
     authorization = websocket.headers.get("authorization")
     try:
-        _require_livestream_wake_token(authorization, client_id=client_id)
-    except HTTPException:
-        await websocket.close(code=4401, reason="Ugyldigt Livestream wake-token")
-        return
-    await websocket.accept()
-    generation = wake_generation("livestream", client_id)
-    await websocket.send_json({"type": "wake_ready", "generation": generation})
-    next_auth_recheck = asyncio.get_running_loop().time() + 15.0
-    try:
+        try:
+            _require_livestream_wake_token(authorization, client_id=client_id)
+        except HTTPException:
+            await websocket.close(code=4401, reason="Ugyldigt Livestream wake-token")
+            return
+        await websocket.accept()
+        generation = wake_generation("livestream", client_id)
+        await websocket.send_json({"type": "wake_ready", "generation": generation})
+        next_auth_recheck = asyncio.get_running_loop().time() + 15.0
         while True:
             now = asyncio.get_running_loop().time()
-            timeout = min(15.0, max(0.5, next_auth_recheck - now))
+            timeout = min(15.0, max(0.0, next_auth_recheck - now))
             next_generation = await wait_for_wake_change_async(
                 "livestream", client_id, generation, timeout
             )
+            rechecked = asyncio.get_running_loop().time() >= next_auth_recheck
+            if rechecked:
+                # A continuous stream of command wakes must not postpone revocation checks.
+                try:
+                    _require_livestream_wake_token(authorization, client_id=client_id)
+                except HTTPException:
+                    await websocket.close(code=4401, reason="Livestream wake-token skal fornyes")
+                    return
+                next_auth_recheck = asyncio.get_running_loop().time() + 15.0
             if next_generation > generation:
                 generation = next_generation
                 await websocket.send_json({"type": "command_available", "generation": generation})
-            elif asyncio.get_running_loop().time() >= next_auth_recheck:
-                _require_livestream_wake_token(authorization, client_id=client_id)
-                next_auth_recheck = asyncio.get_running_loop().time() + 15.0
+            elif rechecked:
                 await websocket.send_json({"type": "keepalive", "generation": generation})
-    except (WebSocketDisconnect, RuntimeError, HTTPException):
+    except (WebSocketDisconnect, RuntimeError, OSError, HTTPException):
         return
 
 

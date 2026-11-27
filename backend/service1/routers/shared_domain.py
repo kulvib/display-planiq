@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from typing import Any
+import time
 
 
-from fastapi import APIRouter, Header, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session
@@ -309,8 +310,11 @@ def display_calendar(
 
 
 async def _wake_wait(domain: str, client_id: int, after: int, timeout_seconds: int, authorization: str | None):
+    claims = verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
+    generation = await wait_for_change_async(
+        domain, client_id, after, min(timeout_seconds, max(0.0, int(claims["exp"]) - time.time()))
+    )
     verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
-    generation = await wait_for_change_async(domain, client_id, after, timeout_seconds)
     return {
         "ok": True,
         "generation": generation,
@@ -321,18 +325,26 @@ async def _wake_wait(domain: str, client_id: int, after: int, timeout_seconds: i
 async def _wake_ws(websocket: WebSocket, *, domain: str, client_id: int) -> None:
     authorization = websocket.headers.get("authorization")
     try:
-        verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
-    except Exception:
-        await websocket.close(code=4401, reason="Ugyldigt command wake-token")
-        return
-    await websocket.accept()
-    generation = current_generation(domain, client_id)
-    await websocket.send_json({"type": "wake_ready", "generation": generation})
-    try:
+        try:
+            claims = verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
+        except HTTPException:
+            await websocket.close(code=4401, reason="Ugyldigt command wake-token")
+            return
+        await websocket.accept()
+        generation = current_generation(domain, client_id)
+        await websocket.send_json({"type": "wake_ready", "generation": generation})
         while True:
+            remaining = max(0.0, int(claims["exp"]) - time.time())
             next_generation = await wait_for_change_async(
-                domain, client_id, generation, 45.0
+                domain, client_id, generation, min(45.0, remaining)
             )
+            # Cryptographic check only; no extra database checkout.
+            # Durable queue operations retain their existing revocation gate.
+            try:
+                verify_shared_agent_wake_token(authorization, client_id=client_id, domain=domain)
+            except HTTPException:
+                await websocket.close(code=4401, reason="Command wake-token skal fornyes")
+                return
             if next_generation > generation:
                 generation = next_generation
                 await websocket.send_json({
@@ -341,7 +353,8 @@ async def _wake_ws(websocket: WebSocket, *, domain: str, client_id: int) -> None
                 })
             else:
                 await websocket.send_json({"type": "keepalive", "generation": generation})
-    except (WebSocketDisconnect, RuntimeError):
+    except (WebSocketDisconnect, RuntimeError, OSError):
+        # The peer may disconnect during accept, first send or later sends.
         return
 
 
