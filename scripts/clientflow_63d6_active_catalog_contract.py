@@ -150,11 +150,29 @@ def verified_mode(repo: Path) -> str:
         ):
             raise ActiveCatalogDenied("Active 1248 differs from exact pinned update-only stage")
         return "update_only_1248_pilot_catalog"
+    if active.get("catalog_sequence") == 1250:
+        closed, closed_sha = _strict_json(repo, "backend/service1/clientflow_release_catalog_1250_closed.stage.json")
+        historical, historical_sha = _strict_json(repo, STAGE_1248_PATH)
+        _, historical_approval_sha = _strict_json(repo, APPROVAL_1248_PATH, max_size=4096)
+        _, prior_sha = _strict_json(repo, STAGE_1247_PATH)
+        _, prior_approval_sha = _strict_json(repo, APPROVAL_1247_PATH, max_size=4096)
+        _, baseline_approval_sha = _strict_json(repo, "backend/service1/clientflow_pilot_1250_approval.json", max_size=4096)
+        _, successor_approval_sha = _strict_json(repo, "backend/service1/clientflow_pilot_1251_approval.json", max_size=4096)
+        if (closed_sha != "27b14ddd7f692ec37d2e5e372cfb3470d5af84bacd9662d7a7e4aabbc21848f4"
+                or active != closed
+                or historical_sha != STAGED_1248_SHA256 or historical_approval_sha != APPROVAL_1248_SHA256
+                or prior_sha != STAGED_1247_SHA256 or prior_approval_sha != APPROVAL_1247_SHA256
+                or baseline_approval_sha != "fc851982c39de0b7f92b9274f822b70bf61ca014bcbd88e62d7570a08d58f334"
+                or successor_approval_sha != "2926a9d1bdb1d364616f11c44ef1aba43664e6107379eaa97562b31002cb6038"):
+            raise ActiveCatalogDenied("Closed 1250 catalog or immutable approval history changed")
+        if historical["releases"][0] != stage["releases"][0]:
+            raise ActiveCatalogDenied("Historical 1245 stable record changed")
+        return "closed_1250_baseline"
     raise ActiveCatalogDenied("Active catalog differs from pinned baseline/pilot")
 
 
 def projected_stable_1245(repo: Path) -> dict[str, Any]:
     """A historical baseline projection, never an active deployment catalog."""
-    verified_mode(repo)
-    active, _ = _strict_json(repo, ACTIVE_PATH)
+    mode = verified_mode(repo)
+    active, _ = _strict_json(repo, STAGE_1248_PATH if mode == "closed_1250_baseline" else ACTIVE_PATH)
     return {**active, "catalog_sequence": 1245, "releases": [active["releases"][0]]}
