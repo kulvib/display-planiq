@@ -58,7 +58,7 @@ def test_source_approval_is_exactly_hashed_and_1247_promoted_update_only():
     assert stage['releases'][2]['install_modes'] == ['in_place_update']
     assert stage['releases'][2]['installable'] is False
     assert stage['releases'][2]['rollback_allowed'] is False
-    live = json.loads((SVC / 'clientflow_release_catalog.json').read_text())
+    live = json.loads((SVC / 'clientflow_release_catalog_1248_pilot.stage.json').read_text())
     assert live['catalog_sequence'] == 1248
     from service1.clientflow_release_pilot_stage_1248 import (
         load_staged_catalog_1248, validated_catalog_mode_1248,
