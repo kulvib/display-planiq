@@ -122,4 +122,48 @@ def test_success_does_not_change_identity(host):
     assert observed["active_release_id"] == txn._read_active_release_id(layout) == TARGET
     assert observed["previous_release_id"] == PREVIOUS
     assert observed["activation_intent"] is None
+    assert state == observed  # caller sees the exact durable commit
+    assert_identity(identity)
+
+
+def test_initial_disable_failure_preserves_running_predecessor_and_intent(host, monkeypatch):
+    layout, state, identity, calls = host
+    def fail_disable(l):
+        raise txn.TransactionError("disable failed")
+    monkeypatch.setattr(txn, "_disable_target", fail_disable)
+    with pytest.raises(txn.TransactionError, match="disable failed"):
+        txn._activate_release(layout, state, TARGET, APPROVAL)
+    observed = txn.load_state(layout)
+    assert observed["activation_intent"]["release_id"] == TARGET
+    assert observed["active_release_id"] == txn._read_active_release_id(layout) == PREVIOUS
+    assert observed["staged_release_id"] == TARGET
+    assert calls == []
+    assert_identity(identity)
+
+
+@pytest.mark.parametrize("after_replace", [False, True])
+def test_failed_rollback_final_write_preserves_intent(host, monkeypatch, after_replace):
+    layout, state, identity, calls = host
+    real_save = txn.save_state
+    def health(l, rid, **kw):
+        if rid == TARGET:
+            raise OSError("injected activation health failure")
+    monkeypatch.setattr(txn, "_health_check", health)
+    def fail_restore_commit(l, candidate):
+        if candidate["activation_intent"] is None and candidate["history"][-1]["event"] == "automatic_rollback_completed":
+            if after_replace:
+                real_save(l, candidate)
+            raise OSError("injected rollback outcome write failure")
+        real_save(l, candidate)
+    monkeypatch.setattr(txn, "save_state", fail_restore_commit)
+    with pytest.raises(txn.TransactionError, match="Rollback journal"):
+        txn._activate_release(layout, state, TARGET, APPROVAL)
+    observed = txn.load_state(layout)
+    assert observed["active_release_id"] == txn._read_active_release_id(layout) == PREVIOUS
+    assert observed["staged_release_id"] == TARGET
+    assert observed["activation_intent"]["release_id"] == TARGET
+    assert observed["history"][-1]["event"] == "automatic_rollback_failed"
+    assert observed["history"][-1]["rollback_failure"]["step"] == "commit_rollback_outcome"
+    assert state == observed
+    assert calls[-3:] == ["_disable_target", "_quiesce_runtime", "_disable_power_lifecycle_reporters"]
     assert_identity(identity)
