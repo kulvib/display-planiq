@@ -43,7 +43,11 @@ def test_promoted_catalog_is_exact_but_does_not_authorize_historical_control(mon
     set_closed_flags(monkeypatch)
     catalog = policy.closed_baseline_catalog()
     policy.require_closed_baseline(catalog, closed_control(), 2)
-    assert releases.load_catalog() == catalog
+    # The historical pilot must not regain authority after the standard promotion.
+    from service1.clientflow_closed_standard_1251 import closed_standard_catalog
+    assert releases.load_catalog() == closed_standard_catalog()
+    with pytest.raises(policy.Pilot1251Denied):
+        policy.require_closed_baseline(releases.load_catalog(), closed_control(), 2)
     from service1.clientflow_release_pilot_stage_1248 import load_staged_catalog_1248
     with pytest.raises(policy.Pilot1251Denied):
         policy.require_closed_baseline(load_staged_catalog_1248(), closed_control(), 2)
