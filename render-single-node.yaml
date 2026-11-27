@@ -1,6 +1,6 @@
-# Evaluation-only alternate Render Blueprint. The canonical render.yaml stays unchanged.
-# Deploy as a replacement for the old backend, not an extra permanent paid service.
-# Do not attach display public domain until replacing the original service.
+# Reference for the Docker/local-PostgreSQL topology used by the active Display backend.
+# This historical lab Blueprint is NOT an export of the actual Render service.
+# Do not apply it to the active workspace, attach a domain or create a paid service without review.
 services:
 - type: web
   name: display-single-node-lab

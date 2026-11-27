@@ -2,7 +2,9 @@
 
 No cache, network or mutable artifact trust. The only fast path is the
 specific compiled bytes and complete build recipe previously verified by
-the full native-WASM suite and Chromium (run 45468688912).
+the full native-WASM suite and Chromium (run 46016976607, PR 442).
+The pinned-action recipe produced the same JS/WASM hashes and sizes as the
+previous verified build (run 45468688912); no binary update was required.
 Manual dispatch and any input/recipe mismatch require a full rebuild.
 """
 from __future__ import annotations
@@ -13,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = Path(".github/workflows/freerdp-wasm-pilot.yml")
-RECIPE_SHA256 = "8abeb743dba723f5dba1e00fb2a498703ca904a72a4a667050950ef710b393e6"
+RECIPE_SHA256 = "ee2d166fc21f366119374da9698d003ddc3c7f4fb3ac694184646c57b6fc547d"
 PINS = {
     "scripts/apply_freerdp_em_screen_fix.py": "5c0a9f34c915a5599aab90b51e70e55aa2671e16adfe240de384d1df05d7db85",
     "frontend/public/native-rdp/provenance.json": "b41c67644c046edd9e746ee9dd3afa7d62bcccdceea0db684dacb3d60c076335",
