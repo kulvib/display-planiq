@@ -46,7 +46,7 @@ def _clone(tmp_path: Path) -> Path:
     for name in FILES:
         target = repo / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, target)
+        shutil.copy2(ROOT / (FILES[5] if name == FILES[0] else name), target)
     return repo
 
 
@@ -57,8 +57,17 @@ def _mutate_json(repo: Path, name: str, action) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def test_production_catalog_is_exact_pilot_source_without_any_pilot_authority():
-    assert verified_mode(ROOT) == "update_only_1248_pilot_catalog"
+@pytest.fixture
+def historical_1248_catalog(tmp_path, monkeypatch):
+    repo = _clone(tmp_path)
+    monkeypatch.setattr(releases, "CATALOG_PATH", repo / FILES[0])
+    releases.load_catalog.cache_clear()
+    yield repo
+    releases.load_catalog.cache_clear()
+
+
+def test_historical_catalog_is_exact_pilot_source_without_any_pilot_authority(historical_1248_catalog):
+    assert verified_mode(historical_1248_catalog) == "update_only_1248_pilot_catalog"
     active = releases.load_catalog()
     assert active["catalog_sequence"] == 1248
     assert active["latest_stable"] == active["default_install_version"] == "1.3.44"
