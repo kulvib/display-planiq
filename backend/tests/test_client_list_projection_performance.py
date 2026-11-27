@@ -451,3 +451,53 @@ def test_hot_inventory_clears_stale_and_missing_authoritative_measurements():
         assert hot["ubuntu_update_inventory"] is None
         assert hot["ubuntu_updates_available"] is None
         assert hot["firmware"] is None
+
+
+def test_livestream_diagnostics_is_read_only_scoped_and_generation_bound():
+    from fastapi import HTTPException, Response
+    from service1.livestream_v2_models import LivestreamV2Generation, LivestreamV2AgentStatus
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    _seed(engine, 2)
+    now = utcnow()
+    generation_id = str(uuid.uuid4())
+    with Session(engine) as session:
+        generation = LivestreamV2Generation(
+            id=generation_id, client_id=1, state="running", requested_action="start",
+            created_at=now, last_upload_at=now, last_manifest_at=now, last_sequence=25,
+        )
+        agent = LivestreamV2AgentStatus(
+            client_id=1, observed_state="online", agent_version="1.4.0", updated_at=now,
+            status_payload={"producer": {"generation_id": generation_id, "state": "running", "pid": 42, "secret": "not-public"}},
+        )
+        session.add(generation)
+        session.add(agent)
+        session.commit()
+        user = SimpleNamespace(is_superadmin=True)
+        response = Response()
+        result = clients_router.get_livestream_diagnostics(1, response, session=session, user=user)
+        assert result["producer_state"] == "running"
+        assert result["media_recent"] is True
+        assert result["last_sequence"] == 25
+        assert "not-public" not in str(result)
+        assert response.headers["Cache-Control"] == "no-store, max-age=0"
+        assert clients_router.get_livestream_diagnostics(2, Response(), session=session, user=user)["producer_state"] is None
+        with pytest.raises(HTTPException) as exc:
+            clients_router.get_livestream_diagnostics(1, Response(), session=session, user=SimpleNamespace(role="bruger"))
+        assert exc.value.status_code == 403
+        agent.status_payload = {"producer": {"generation_id": "wrong", "state": "running", "pid": 42}}
+        session.add(agent)
+        session.commit()
+        assert clients_router.get_livestream_diagnostics(1, Response(), session=session, user=user)["producer_state"] is None
+        generation.last_manifest_at = now - timedelta(minutes=5)
+        session.add(generation)
+        session.commit()
+        assert clients_router.get_livestream_diagnostics(1, Response(), session=session, user=user)["media_recent"] is False
+        generation.state = "stopped"
+        session.add(generation)
+        session.commit()
+        result = clients_router.get_livestream_diagnostics(1, Response(), session=session, user=user)
+        assert result["generation_current"] is False
+        assert result["media_recent"] is False
+        assert result["producer_state"] is None

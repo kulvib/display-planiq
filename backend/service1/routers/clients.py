@@ -61,6 +61,7 @@ from ..system_control import (
 from ..terminal_v2_models import TerminalClient, TerminalCredential
 from ..remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
 from ..client_domain_models import ClientDomainStatus
+from ..livestream_v2_models import LivestreamV2Generation, LivestreamV2AgentStatus
 from ..season_service import (
     SeasonValidationError,
     apply_standard_times_to_existing_markings,
@@ -1753,6 +1754,59 @@ def get_client_presence(
     _require_client_read_access(user, client)
     response.headers["Cache-Control"] = "no-store, max-age=0"
     return presence.public_dict()
+
+
+@router.get("/clients/{id}/livestream-diagnostics")
+def get_livestream_diagnostics(
+    id: int, response: Response, session=Depends(get_session), user=Depends(get_current_user),
+):
+    """On-demand read for Diagnostics only; no viewer lease or lifecycle mutation."""
+    client = session.get(Client, id)
+    if client is None:
+        raise HTTPException(404, "Client not found")
+    _require_client_read_access(user, client)
+    if not (getattr(user, "is_superadmin", False) or getattr(user, "role", None) == VIEWER_ROLE):
+        raise HTTPException(403, "Du har ikke adgang til diagnostik")
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    generation = session.exec(
+        select(LivestreamV2Generation).where(LivestreamV2Generation.client_id == id)
+        .order_by(LivestreamV2Generation.created_at.desc(), LivestreamV2Generation.id.desc()).limit(1)
+    ).first()
+    agent = session.exec(
+        select(LivestreamV2AgentStatus).where(LivestreamV2AgentStatus.client_id == id)
+    ).first()
+    now = utcnow()
+    agent_fresh = bool(agent is not None and agent.observed_state == "online"
+                       and _update_check_fresh(agent.updated_at, 120))
+    payload = agent.status_payload if agent_fresh and isinstance(agent.status_payload, dict) else {}
+    producer = payload.get("producer")
+    producer = producer if isinstance(producer, dict) else {}
+    current = generation is not None and generation.state in {"starting", "running", "stopping"}
+    matches = bool(current and producer.get("generation_id") == generation.id)
+    producer_state = producer.get("state") if matches else None
+    if producer_state not in {"starting", "running", "retrying", "failed", "stopped"}:
+        producer_state = None
+    if producer_state == "running" and (type(producer.get("pid")) is not int or producer["pid"] <= 0):
+        producer_state = None
+    # A generation upload is not necessarily a video segment (it may be a manifest).
+    # Report the two timestamps separately; no raw agent payload or command output.
+    return {
+        "client_id": id,
+        "observed_at": now.isoformat() + "Z",
+        "generation_state": generation.state if generation else None,
+        "generation_current": current,
+        "desired_state": getattr(client, "livestream_desired_state", None),
+        "producer_state": producer_state,
+        "agent_reported_at": agent.updated_at if agent else None,
+        "agent_fresh": agent_fresh,
+        "last_upload_at": generation.last_upload_at if generation else None,
+        "last_manifest_at": generation.last_manifest_at if generation else None,
+        "last_sequence": generation.last_sequence if generation else None,
+        "error_code": generation.error_code if generation else None,
+        "media_recent": bool(current and generation.state == "running"
+                             and _update_check_fresh(generation.last_upload_at, 45)
+                             and _update_check_fresh(generation.last_manifest_at, 45)),
+    }
 
 
 @router.get("/clients/{id}/chrome-status")

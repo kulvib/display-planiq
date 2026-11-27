@@ -89,3 +89,22 @@ export function firmwareInventoryView(client) {
   if (valid) return { count: null, label: `Senest målt: ${count} firmwareopdateringer`, level: "neutral" };
   return { count: null, label: "Firmwarestatus ikke verificeret", level: "neutral" };
 }
+
+
+// Read-only diagnostics use generation-scoped evidence, never legacy green flags.
+export function livestreamDiagnosticsView(snapshot) {
+  const unknown = { state: "Ukendt", process: "Ikke verificeret", level: "neutral", processLevel: "neutral" };
+  if (!snapshot) return unknown;
+  const state = snapshot.generation_state;
+  const process = snapshot.producer_state;
+  const verified = snapshot.generation_current === true && snapshot.agent_fresh === true;
+  const processLevel = verified && process === "running" ? "ok"
+    : verified && process === "failed" ? "error"
+    : verified && ["starting", "retrying"].includes(process) ? "info" : "neutral";
+  const processLabel = verified ? ({ running: "Kører (rapporteret)", failed: "Fejlet", starting: "Starter", retrying: "Genforsøger", stopped: "Stoppet" }[process] || unknown.process) : unknown.process;
+  const level = state === "failed" ? "error"
+    : state === "running" && snapshot.media_recent === true ? "ok"
+    : state === "running" ? "warn"
+    : ["starting", "stopping"].includes(state) ? "info" : "neutral";
+  return { state: ({ running: snapshot.media_recent === true ? "Medieaktivitet verificeret" : "Afventer friske mediedata", starting: "Starter", stopping: "Stopper", stopped: "Stoppet", failed: "Fejlet", superseded: "Erstattet" }[state] || "Ingen generation"), process: processLabel, level, processLevel };
+}

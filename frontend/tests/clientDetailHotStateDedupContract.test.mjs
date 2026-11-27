@@ -35,6 +35,7 @@ test("configuration and diagnostics reuse the shared detail hot-state poll", () 
 
 test("manual refresh remains available while background full-client polling is removed", () => {
   assert.match(info, /onClick=\{refreshConfigNow\}/);
-  assert.match(info, /onClick=\{onRefresh\}/);
+  assert.match(info, /onClick=\{refreshDiagnostics\}/);
+  assert.match(info, /const refreshDiagnostics = \(\) => \{\s*setMediaRefresh\(\(value\) => value \+ 1\);\s*onRefresh\?\.\(\);/);
   assert.match(info, /Manual refresh remains/);
 });
