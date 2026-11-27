@@ -24,7 +24,11 @@ from .clientflow_pilot_1250 import (
 from .clientflow_standard_release import (
     BASELINE_ID, BASELINE_SEQUENCE, BASELINE_VERSION, require_cutover_authority,
 )
-from .clientflow_update_models import ClientFlowDeployment
+from .clientflow_update_models import ClientFlowDeployment, ClientFlowDeploymentEvent
+from .clientflow_pilot_1251 import (
+    SUCCESSOR_ID, SUCCESSOR_VERSION, SUCCESSOR_SEQUENCE, require_closed_baseline,
+    successor_release, match_successor_artifact, match_successor_order,
+)
 from .enrollment_models import ClientEnrollmentReceipt
 from .models import Client, EnrollmentToken
 from .remote_desktop_v2_models import RemoteDesktopClient, RemoteDesktopCredential
@@ -87,6 +91,67 @@ def matches_completed_enrollment(token: Any, receipt: Any, *, client: Client, ar
         and token.fresh_install_source_commit == artifact["source_commit"])
 
 
+@lru_cache(maxsize=2)
+def _verified_successor_artifact(path: Path, fingerprint: tuple) -> dict:
+    artifact = {**deployment_release_snapshot(successor_release()),
+                "target_version": SUCCESSOR_VERSION, "target_release_sequence": SUCCESSOR_SEQUENCE}
+    match_successor_artifact(artifact)
+    if _artifact_path(SUCCESSOR_ID) != path or _artifact_fingerprint(path) != fingerprint:
+        raise ValueError("successor artifact changed during verification")
+    return artifact
+
+
+def canonical_successor_artifact() -> dict:
+    path = _artifact_path(SUCCESSOR_ID)
+    fingerprint = _artifact_fingerprint(path)
+    artifact = _verified_successor_artifact(path, fingerprint)
+    if _artifact_fingerprint(path) != fingerprint:
+        raise ValueError("successor artifact changed after verification")
+    return dict(artifact)
+
+
+def _closed_baseline_eligibility(session, *, client, catalog, control, latest, version):
+    require_closed_baseline(catalog, control.model_dump(), control.revision)
+    if client.id != 3 or client.name != "Viborg1" or client.ubuntu_version != "26.04":
+        return "cutover_closed"
+    baseline = canonical_baseline_artifact(physical_test=True)
+    match_approved_artifact(approval_lock_1250(), baseline)
+    require_centrally_eligible_release(release_id=BASELINE_ID, release_sequence=BASELINE_SEQUENCE)
+    if version == BASELINE_VERSION and matches_completed_update(latest, client_id=3, artifact=baseline):
+        return "physical_test_eligible"
+    if not match_successor_order(latest, client_id=3) or latest.completed_at is None:
+        return "update_evidence_mismatch"
+    predecessors = session.exec(select(ClientFlowDeployment).where(
+        ClientFlowDeployment.client_id == 3,
+        ClientFlowDeployment.target_release_id == BASELINE_ID,
+    ).limit(2)).all()
+    if len(predecessors) != 1 or not matches_completed_update(predecessors[0], client_id=3, artifact=baseline):
+        return "update_evidence_mismatch"
+    if version == SUCCESSOR_VERSION:
+        require_centrally_eligible_release(release_id=SUCCESSOR_ID, release_sequence=SUCCESSOR_SEQUENCE)
+        artifact = canonical_successor_artifact()
+        return ("physical_test_eligible" if latest.observed_previous_release_id == BASELINE_ID
+                and matches_completed_update(latest, client_id=3, artifact=artifact)
+                else "update_evidence_mismatch")
+    if version != BASELINE_VERSION:
+        return "canonical_runtime_unavailable"
+    if latest.state in {"failed", "cancelled"}:
+        # These terminal states precede activation; fresh 1250 presence and
+        # exact historical successful deployment still have to match.
+        return "physical_test_eligible"
+    if latest.state == "rolled_back":
+        rows = session.exec(select(ClientFlowDeploymentEvent).where(
+            ClientFlowDeploymentEvent.deployment_id == latest.id,
+            ClientFlowDeploymentEvent.event_type == "rolled_back",
+        ).limit(2)).all()
+        if (len(rows) == 1 and rows[0].credential_id is not None
+                and rows[0].payload.get("failed_release_id") == SUCCESSOR_ID
+                and rows[0].payload.get("restored_release_id") == BASELINE_ID):
+            return "physical_test_eligible"
+    # Never infer recovery from a reported version following recovery_failed.
+    return "update_evidence_mismatch"
+
+
 ADMITTED_RELEASE_MODES = frozenset({"eligible", "physical_test_eligible", "legacy_pilot_eligible"})
 
 
@@ -140,6 +205,9 @@ def release_eligibility(session: Session, *, client_id: int) -> str:
             require_centrally_eligible_release(release_id=BASELINE_ID, release_sequence=BASELINE_SEQUENCE)
             return ("physical_test_eligible" if matches_completed_update(latest, client_id=client_id, artifact=artifact)
                     else "update_evidence_mismatch")
+        if control.cutover_enabled is False and control.fleet_open is False:
+            return _closed_baseline_eligibility(session, client=client, catalog=catalog,
+                control=control, latest=latest, version=presence.agent_version)
         if control.cutover_enabled is not True or control.fleet_open is not True:
             return "cutover_closed"
         if presence.agent_version != BASELINE_VERSION:
