@@ -322,8 +322,12 @@ class Producer:
         return fps, bitrate_kbit, preset, segment_seconds, playlist_size
 
     def _wait_ready(self, output: Path, timeout: float = 25.0) -> None:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
+        # A first segment can land on the nominal deadline (Viborg1:
+        # 25.05s). Allow one bounded second for the playlist/segment pair
+        # and always inspect once before declaring timeout. No extension
+        # for a dead child or indefinite wait for a zero-frame source.
+        deadline = time.monotonic() + timeout + 1.0
+        while True:
             process = self.process
             if process is None:
                 raise RuntimeError("Wayland capture-processen forsvandt")
@@ -333,7 +337,10 @@ class Producer:
             playlist = output / "index.m3u8"
             if playlist.is_file() and any(output.glob("segment-*.ts")):
                 return
-            time.sleep(0.25)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.25, remaining))
         raise RuntimeError(f"Wayland capture blev ikke HLS-klar inden for {timeout:g} sekunder")
 
     def _start(self, generation_id: str) -> None:

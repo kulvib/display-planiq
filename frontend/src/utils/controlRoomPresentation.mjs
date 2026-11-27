@@ -69,3 +69,23 @@ export function defaultClientflowTarget(installed, stable, selectable) {
   }
   return stable;
 }
+
+
+// Firmware is an inventory, not a command result. Zero is a verified count
+// only when the agent reports a supported, fresh, error-free observation.
+export function firmwareInventoryView(client) {
+  const firmware = client?.firmware;
+  const count = firmware?.update_count;
+  const valid = firmware?.supported === true && !firmware.error &&
+    firmware.stale === false && Number.isSafeInteger(count) && count >= 0 &&
+    firmware.update_available === (count > 0);
+  const online = client?.presence?.is_online === true && client?.presence?.system?.is_online !== false;
+  if (valid && online) return {
+    count, label: count === 0 ? "0 firmwareopdateringer (lokal metadata)" : `${count} firmwareopdatering${count === 1 ? "" : "er"} klar`,
+    level: count > 0 ? "warn" : "ok",
+  };
+  if (firmware?.error) return { count: null, label: "Firmwarestatus kunne ikke verificeres", level: "warn" };
+  if (firmware?.stale === true) return { count: null, label: "Firmwarestatus forældet", level: "neutral" };
+  if (valid) return { count: null, label: `Senest målt: ${count} firmwareopdateringer`, level: "neutral" };
+  return { count: null, label: "Firmwarestatus ikke verificeret", level: "neutral" };
+}

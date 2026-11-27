@@ -132,6 +132,19 @@ def _seed(engine, count: int) -> None:
                         "display_power": {"state": "on", "updated_at": now.timestamp()},
                         "calendar": {"state": "running", "updated_at": now.timestamp()},
                     }
+                elif domain == "system":
+                    stamp = now.isoformat()
+                    payload = {
+                        "ubuntu_update_inventory": {
+                            "schema_version": 1, "state": "known",
+                            "checked_at": stamp, "index_checked_at": stamp,
+                            "update_count": 69, "error": None,
+                        },
+                        "firmware": {
+                            "supported": True, "checked_at": stamp,
+                            "update_count": 0, "update_available": False, "error": None,
+                        },
+                    }
                 session.add(
                     ClientDomainStatus(
                         id=str(uuid.uuid4()),
@@ -305,6 +318,11 @@ def test_chrome_status_projection_query_count_is_constant(seed_count: int) -> No
                 user=SimpleNamespace(is_superadmin=True),
             )
             assert payload["client_id"] == 1
+            assert payload["ubuntu_update_inventory"]["state"] == "known"
+            assert payload["ubuntu_update_inventory"]["update_count"] == 69
+            assert payload["ubuntu_updates_available"] == 69
+            assert payload["firmware"]["update_count"] == 0
+            assert payload["firmware"]["stale"] is False
             assert payload["presence"]["status"]["domain"] == "status"
             assert payload["browser_requested"] is True
             assert payload["pending_reboot"] is True
@@ -400,3 +418,36 @@ def test_control_room_summary_query_count_is_constant_and_payload_is_narrow(clie
 
     # Same canonical five-query list projection; only response width changes.
     assert select_count == 5
+
+
+def test_hot_inventory_clears_stale_and_missing_authoritative_measurements():
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    _seed(engine, 1)
+    with Session(engine) as session:
+        system = session.exec(select(ClientDomainStatus).where(
+            ClientDomainStatus.client_id == 1,
+            ClientDomainStatus.domain == "system",
+        )).one()
+        payload = dict(system.status_payload)
+        ubuntu = dict(payload["ubuntu_update_inventory"])
+        ubuntu["checked_at"] = (utcnow() - timedelta(hours=2)).isoformat()
+        payload["ubuntu_update_inventory"] = ubuntu
+        firmware = dict(payload["firmware"])
+        firmware["checked_at"] = (utcnow() - timedelta(hours=8)).isoformat()
+        payload["firmware"] = firmware
+        system.status_payload = payload
+        session.add(system)
+        session.commit()
+        user = SimpleNamespace(is_superadmin=True)
+        hot = clients_router.get_chrome_status(1, session=session, user=user)
+        assert hot["ubuntu_update_inventory"]["state"] == "stale"
+        assert hot["ubuntu_updates_available"] is None
+        assert hot["firmware"]["stale"] is True
+        system.status_payload = {}
+        session.add(system)
+        session.commit()
+        hot = clients_router.get_chrome_status(1, session=session, user=user)
+        assert hot["ubuntu_update_inventory"] is None
+        assert hot["ubuntu_updates_available"] is None
+        assert hot["firmware"] is None

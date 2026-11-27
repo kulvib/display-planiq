@@ -21,6 +21,7 @@ class LivestreamHandler:
     def _wait_producer(self, generation_id: str, wanted: set[str], timeout: float = 45.0) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
         last: dict[str, Any] = {}
+        observed = ""
         while time.monotonic() < deadline:
             try:
                 value = json.loads(PRODUCER_STATUS_PATH.read_text(encoding="utf-8"))
@@ -28,9 +29,17 @@ class LivestreamHandler:
                     last = value
             except (OSError, json.JSONDecodeError):
                 pass
-            if str(last.get("generation_id") or "") in {"", generation_id} and last.get("state") in wanted:
+            observed = str(last.get("generation_id") or "")
+            state = last.get("state")
+            # A blank generation is only meaningful for an acknowledged
+            # stop, never for a running/start acknowledgement.
+            if state in wanted and (observed == generation_id or (state == "stopped" and not observed)):
                 return last
-            time.sleep(0.5)
+            time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+        if observed == generation_id and last.get("state") == "retrying":
+            raise CommandRejected(
+                "producer_retrying", "Livestream afventer kontrolleret nyt capture-forsøg", retryable=True,
+            )
         raise CommandRejected("producer_timeout", f"Livestreamproducer nåede ikke {sorted(wanted)}", retryable=True)
 
     def __call__(self, context: CommandContext) -> dict[str, Any]:
@@ -41,16 +50,16 @@ class LivestreamHandler:
                 if not generation_id:
                     raise CommandRejected("missing_generation", "Livestreamkommandoen mangler generation_id")
                 call(BROKER_SOCKET, {"action": context.command_type, "generation_id": generation_id})
-                status = self._wait_producer(generation_id, {"running", "failed", "retrying"})
-                if status.get("state") != "running":
-                    # Report the bounded retry as a retryable failure, rather
-                    # than waiting for an impossible 30s startup confirmation.
-                    if status.get("state") == "retrying":
-                        raise CommandRejected(
-                            "producer_retrying", "Livestream afventer kontrolleret nyt capture-forsøg",
-                            retryable=True,
-                        )
-                    raise CommandRejected("producer_failed", str(status.get("error") or "Producer fejlede"), retryable=True)
+                # The producer owns local retry/backoff. A transient failed
+                # or retrying snapshot is not the final command outcome.
+                # Wait within the existing 45s lease-backed command budget;
+                # a fast local retry can finish without a new backend claim.
+                status = self._wait_producer(generation_id, {"running"})
+                # Keep the acknowledgement boundary independently fail-closed.
+                if status.get("state") == "retrying":
+                    raise CommandRejected("producer_retrying", "Livestream afventer kontrolleret nyt capture-forsøg", retryable=True)
+                if status.get("state") != "running" or status.get("generation_id") != generation_id:
+                    raise CommandRejected("producer_not_ready", "Livestream-generation er ikke verificeret klar", retryable=True)
                 generation = self.transport.json_request(
                     "POST",
                     f"/api/livestream-agent/clients/{client_id}/generations/{generation_id}/started",

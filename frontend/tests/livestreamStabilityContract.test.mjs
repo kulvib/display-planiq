@@ -187,3 +187,17 @@ test("wall caps mounted tiles and suspends media on unverified inventory", () =>
   assert.match(wall, /pageMediaActive=\{pageMediaActive && inventoryValid\}/);
   assert.match(wall, /if \(!inventoryActive\.current \|\| inventoryRequest\.current\) return/);
 });
+
+
+test("HLS startup has bounded browser-only recovery after verified backend readiness", () => {
+  const block = source.slice(source.indexOf("// Before the manifest is ready"), source.indexOf("// Stale watchdog"));
+  assert.match(source, /HLS_STARTUP_RECOVERY_MS = 30_000/);
+  assert.match(block, /!serverReady \|\| manifestReady/);
+  assert.match(block, /!pageVisible \|\| !hasMediaCapability/);
+  assert.match(block, /needsTapToPlay \|\| \(pilotGeneration && !isTouchHandset\)/);
+  assert.match(block, /setLocalRefreshKey/);
+  assert.match(block, /clearTimeout\(timer\)/);
+  assert.doesNotMatch(block, /ensureStreamStarted|sendLivestreamCommand|livestream_restart/);
+  const health = source.slice(source.indexOf("// Poll /health"), source.indexOf("// HLS.js lifecycle"));
+  assert.match(health, /else if \(!stop\) \{\s*\/\/ HTTP errors[\s\S]*?observedReady = false;\s*setServerReady\(false\)/);
+});

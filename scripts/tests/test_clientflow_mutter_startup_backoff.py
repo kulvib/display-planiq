@@ -223,5 +223,5 @@ def test_agent_never_acknowledges_a_retrying_generation_as_started(monkeypatch):
         assert exc.retryable is True
     else:
         raise AssertionError("Retrying capture must never be acknowledged as started")
-    assert requested == [(GEN_A, {"running", "failed", "retrying"})]
+    assert requested == [(GEN_A, {"running"})]
     assert writes == []

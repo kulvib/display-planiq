@@ -314,3 +314,93 @@ def test_lease_wait_exceeds_bounded_attempt_budget_without_raising_default():
     import inspect
     from clientflow_runtime import livestream_agent
     assert inspect.signature(livestream_agent.LivestreamHandler._wait_producer).parameters["timeout"].default == 45.0
+
+
+def test_first_segment_at_deadline_is_not_discarded(monkeypatch, tmp_path):
+    producer = livestream_producer.Producer.__new__(livestream_producer.Producer)
+    producer.process = SimpleNamespace(poll=lambda: None)
+    clock = [0.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= 25.05:
+            (tmp_path / "index.m3u8").write_text("#EXTM3U\\n")
+            (tmp_path / "segment-000000001.ts").write_bytes(b"media")
+
+    monkeypatch.setattr(livestream_producer, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=sleep,
+    ))
+    producer._wait_ready(tmp_path, timeout=25.0)
+    assert 25.05 <= clock[0] <= 26.0
+
+
+def test_zero_frame_timeout_still_bounded_and_dead_child_rejected(monkeypatch, tmp_path):
+    producer = livestream_producer.Producer.__new__(livestream_producer.Producer)
+    producer.process = SimpleNamespace(poll=lambda: None)
+    clock = [0.0]
+    monkeypatch.setattr(livestream_producer, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    ))
+    with pytest.raises(RuntimeError, match="25 sekunder"):
+        producer._wait_ready(tmp_path, timeout=25.0)
+    assert clock[0] == 26.0
+    producer.process = SimpleNamespace(poll=lambda: 1)
+    with pytest.raises(RuntimeError, match="exit code 1"):
+        producer._wait_ready(tmp_path, timeout=25.0)
+    assert clock[0] == 26.0
+
+
+def test_agent_waits_for_exact_running_generation_through_local_retry(monkeypatch, tmp_path):
+    import json
+    from clientflow_runtime import livestream_agent as agent
+    path = tmp_path / "producer.json"
+    clock = [0.0]
+    generation = "f3056c30-d524-4a8d-9dd5-cc43fbcd41b6"
+
+    def sleep(seconds):
+        clock[0] += seconds
+        state, identity = (
+            ("retrying", generation) if clock[0] < 30
+            else ("running", "") if clock[0] < 34
+            else ("running", "different") if clock[0] < 36
+            else ("running", generation)
+        )
+        path.write_text(json.dumps({"state": state, "generation_id": identity}))
+
+    path.write_text(json.dumps({"state": "starting", "generation_id": generation}))
+    monkeypatch.setattr(agent, "PRODUCER_STATUS_PATH", path)
+    monkeypatch.setattr(agent, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+    calls = []
+    transport = SimpleNamespace(
+        credential=SimpleNamespace(client_id=3),
+        json_request=lambda *args, **kw: calls.append((args, kw)) or {"id": generation},
+    )
+    monkeypatch.setattr(agent, "call", lambda *args: None)
+    result = agent.LivestreamHandler(transport)(SimpleNamespace(
+        command_type="start", payload={"generation_id": generation},
+    ))
+    assert clock[0] == 36.0
+    assert result["producer"]["generation_id"] == generation
+    assert len(calls) == 1
+    assert calls[0][0][1].endswith(f"/{generation}/started")
+
+
+def test_agent_retry_is_bounded_and_never_acks_wrong_generation(monkeypatch, tmp_path):
+    import json
+    from clientflow_runtime import livestream_agent as agent
+    path = tmp_path / "producer.json"
+    path.write_text(json.dumps({"state": "retrying", "generation_id": "expected"}))
+    clock = [0.0]
+    monkeypatch.setattr(agent, "PRODUCER_STATUS_PATH", path)
+    monkeypatch.setattr(agent, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    ))
+    handler = agent.LivestreamHandler(None)
+    with pytest.raises(agent.CommandRejected, match="kontrolleret nyt capture-forsøg") as exc:
+        handler._wait_producer("expected", {"running"}, timeout=2.0)
+    assert exc.value.retryable is True
+    assert clock[0] == 2.0
+    path.write_text(json.dumps({"state": "running", "generation_id": "wrong"}))
+    with pytest.raises(agent.CommandRejected, match="nåede ikke"):
+        handler._wait_producer("expected", {"running"}, timeout=2.0)
+    assert clock[0] == 4.0

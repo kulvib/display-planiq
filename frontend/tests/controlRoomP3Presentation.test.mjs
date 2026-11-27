@@ -7,6 +7,7 @@ import {
   currentClientState,
   currentClientStateTone,
   ubuntuInventoryView,
+  firmwareInventoryView,
   diagnosticServiceLevel,
   defaultClientflowTarget,
 } from "../src/utils/controlRoomPresentation.mjs";
@@ -122,4 +123,17 @@ test("newer installed release never defaults to a downgrade", () => {
   assert.equal(defaultClientflowTarget("1.4.0", "1.3.44", releases), "");
   assert.equal(defaultClientflowTarget("1.3.43", "1.3.44", releases), "1.3.44");
   assert.equal(defaultClientflowTarget("1.3.44", "1.3.44", []), "");
+});
+
+
+test("firmware inventory distinguishes zero, available, stale, offline and inconsistent evidence", () => {
+  const base = { presence: { is_online: true, system: { is_online: true } },
+    firmware: { supported: true, stale: false, error: null, update_count: 0, update_available: false } };
+  assert.equal(firmwareInventoryView(base).count, 0);
+  assert.equal(firmwareInventoryView(base).level, "ok");
+  assert.equal(firmwareInventoryView({ ...base, firmware: { ...base.firmware, update_count: 3, update_available: true } }).count, 3);
+  assert.equal(firmwareInventoryView({ ...base, firmware: { ...base.firmware, stale: true } }).count, null);
+  assert.equal(firmwareInventoryView({ ...base, firmware: { ...base.firmware, update_count: 3 } }).count, null);
+  assert.equal(firmwareInventoryView({ ...base, presence: { is_online: true, system: { is_online: false } } }).count, null);
+  assert.equal(firmwareInventoryView({ ...base, firmware: null }).count, null);
 });
