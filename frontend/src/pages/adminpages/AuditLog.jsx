@@ -46,21 +46,21 @@ const pageShellSx = { ...embeddedPageShellSx, color: "#f8fafc" };
 const pagePaperSx = {
   p: { xs: 1.5, md: 2 },
   mb: 2,
-  border: "1px solid rgba(148,163,184,0.16)",
+  border: "1px solid rgba(148,163,184,0.30)",
   borderRadius: 2,
   background: "rgba(15,23,42,0.74)",
   color: "#f8fafc",
 };
 
 const darkPaperSx = {
-  border: "1px solid rgba(148,163,184,0.16)",
+  border: "1px solid rgba(148,163,184,0.24)",
   borderRadius: 2,
-  background: "rgba(15,23,42,0.74)",
+  background: "rgba(2,6,23,0.42)",
   color: "#f8fafc",
 };
 
 const darkSubtlePaperSx = {
-  border: "1px solid rgba(148,163,184,0.14)",
+  border: "1px solid rgba(148,163,184,0.24)",
   borderRadius: 2,
   background: "rgba(30,41,59,0.46)",
   color: "#f8fafc",
