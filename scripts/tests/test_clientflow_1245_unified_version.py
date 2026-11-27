@@ -40,7 +40,8 @@ def _copy(tmp_path):
     for name in SOURCE_FILES:
         path = repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, path)
+        source = "backend/service1/clientflow_release_catalog_1248_pilot.stage.json" if name.endswith("/clientflow_release_catalog.json") else name
+        shutil.copy2(ROOT / source, path)
     return repo
 
 
@@ -51,8 +52,8 @@ def _mutate(repo, name, change):
     p.write_text(json.dumps(d), encoding="utf-8")
 
 
-def test_pilot_stage_and_single_stable_are_distinct_read_only_phases():
-    result = inspect(ROOT)
+def test_pilot_stage_and_single_stable_are_distinct_read_only_phases(tmp_path):
+    result = inspect(_copy(tmp_path))
     assert result["ready"], result
     assert len(result["checks"]) == 13
     assert result["pilot_enabled_by_this_preflight"] is False
