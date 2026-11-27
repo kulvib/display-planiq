@@ -176,6 +176,10 @@ def environment(monkeypatch):
         # sequence and pinned catalog metadata, so it incorrectly raised 503
         # for healthy read-only administration requests.  Exercise the real,
         # validated catalog; keep the approval and DB control mocked/closed.
+        from service1 import clientflow_releases as releases
+        from pathlib import Path
+        monkeypatch.setattr(releases, "CATALOG_PATH", Path(__file__).resolve().parents[1] / "service1/clientflow_release_catalog_1248_pilot.stage.json")
+        releases.load_catalog.cache_clear()
         stable_catalog = load_canonical_catalog()
         assert stable_catalog["catalog_sequence"] == 1248
         assert stable_catalog["releases"][0]["release_id"] == RELEASE_ID
@@ -186,7 +190,10 @@ def environment(monkeypatch):
         app.include_router(standard_route.router, prefix="/api")
         app.dependency_overrides[get_current_superadmin_user] = lambda: admin
         app.dependency_overrides[get_session] = lambda: session
-        yield _ASGITestClient(app), session
+        try:
+            yield _ASGITestClient(app), session
+        finally:
+            releases.load_catalog.cache_clear()
 
 
 def _payload(**overrides):
