@@ -13,7 +13,7 @@ const paper = {
   p: { xs: 1.5, md: 2 },
   borderRadius: 2,
   color: "#f8fafc",
-  border: "1px solid rgba(148,163,184,0.20)",
+  border: "1px solid rgba(148,163,184,0.30)",
   background: "rgba(15,23,42,0.76)",
 };
 
