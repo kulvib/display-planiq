@@ -110,9 +110,12 @@ def match_successor_order(row, *, client_id: int) -> bool:
 
 def require_retained_store() -> dict:
     """Explicit admin order only: verify all three exact stored TARs, no hot-path hashing."""
-    from .clientflow_release_artifacts import _artifact_root
+    from .clientflow_release_artifacts import _artifact_root, ClientFlowReleaseArtifactError
     from .clientflow_releases import deployment_release_snapshot
-    root = _artifact_root()
+    try:
+        root = _artifact_root()
+    except ClientFlowReleaseArtifactError as exc:
+        raise Pilot1251Denied("Release-lageret er utilgængeligt") from exc
     names = {path.name for path in root.iterdir()
              if path.name.startswith("clientflow-") and path.name.endswith(".tar")}
     if names != {identifier + ".tar" for identifier in RETAINED_IDS}:
@@ -130,3 +133,34 @@ def require_retained_store() -> dict:
             match_successor_artifact({**artifact, "target_version": SUCCESSOR_VERSION,
                                       "target_release_sequence": SUCCESSOR_SEQUENCE})
     return successor_snapshot()
+
+
+
+def plan_archive_rotation(snapshot: Mapping) -> dict:
+    """Pure plan for the exact audited five-to-two-to-three transition.
+
+    Never deletes, downloads, changes catalog/control, or authorizes deployment.
+    All old archives must independently be fetched and hash-checked before
+    an operator may use the existing locked one-oldest prune mechanism.
+    """
+    inventory = archive_inventory()
+    rows = list(snapshot["protected_latest"]) + list(snapshot["older_review_only"])
+    seen = set()
+    for row in rows:
+        identifier = row["release_id"]
+        pin = inventory.get(identifier)
+        if (identifier in seen or pin is None
+                or (row["size_bytes"], row["sha256"]) != (pin["size"], pin["sha256"])):
+            raise Pilot1251Denied("Ukendt eller ændret releasebeholdning")
+        seen.add(identifier)
+    initial = set(inventory) - {SUCCESSOR_ID}
+    if snapshot.get("invalid_artifacts") or seen != initial or snapshot.get("approved_count") != 5:
+        raise Pilot1251Denied("Kun den eksakt auditerede beholdning på fem releases kan planlægges")
+    remove = sorted(initial - RETAINED_IDS, key=lambda identifier: inventory[identifier]["sequence"])
+    return {"remove_oldest_first": remove, "verify_archive_before_removal": {
+                identifier: inventory[identifier] for identifier in remove},
+            "retain_before_publication": sorted(RETAINED_IDS - {SUCCESSOR_ID}),
+            "retain_after_publication": sorted(RETAINED_IDS),
+            "projected_counts": [5, 4, 3, 2, 3], "maximum_after_transition": 3,
+            "catalog_promotion_required": True, "control_rebinding_required": True,
+            "destructive_action_authorized": False, "deployment_authorized": False}
