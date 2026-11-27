@@ -36,7 +36,8 @@ test("63D-33 HLS UI separates live-edge player estimate from actual uploader age
   assert.match(source, /label: "HLS livekant"/);
   assert.match(source, /hlsBrowserTiming\.observe\(measuredLatency\)/);
   assert.match(source, /hlsBrowserTiming\.reset\(\)/);
-  assert.match(source, /Browser p50/);
+  assert.doesNotMatch(source, /Browser p50|genopfyldninger|Aktuelt \/ senest observeret|Mål ≥/);
+  assert.match(source, /displayResolutionUiMeta\.busy \|\| displayResolutionUiMeta\.severity === "error"/);
   assert.doesNotMatch(source, /label: "Uploadalder", value: formatLagValue\(lastSegmentLag\)/);
   assert.match(source, /lowLatencyMode: false/); // no LL-HLS claim or transport switch
 });
