@@ -16,6 +16,7 @@ import { createHlsGenerationObserver, createPilotTransport, generationFromHeartb
 
 const HEALTH_STARTUP_POLL_MS = 1000;
 const HEALTH_STARTUP_WARNING_MS = 15_000;
+const HLS_STARTUP_RECOVERY_MS = 30_000;
 const HEALTH_STABLE_POLL_MS = 10_000;
 const AUTO_RECONNECT_DELAY_MS = 2000;
 const STALE_SEGMENT_RESTART_AFTER_SECONDS = 90;
@@ -1246,6 +1247,12 @@ export default function ClientDetailsLivestreamSection({
             // Viewer-heartbeat ejer nu auto-start via backendens Livestream-v2
             // lifecycle. Health-polling må kun observere HLS og må ikke sende
             // konkurrerende startkommandoer.
+          } else if (!stop) {
+            // HTTP errors do not prove readiness. Keep observing with the
+            // existing rotating capability and rebuild only when healthy.
+            observedReady = false;
+            setServerReady(false);
+            setHealthInfo(null);
           }
         } catch {
           if (!stop) {
@@ -1560,6 +1567,24 @@ export default function ClientDetailsLivestreamSection({
       transport.dispose();
     };
   }, [clientId, effectiveRefreshKey, serverReady, inactivityStopped, pageVisible, hasMediaCapability, mobileViewerActive, hlsBrowserTiming, pilotGeneration, isTouchHandset]);
+
+  // Before the manifest is ready, the existing stale/playback watchdogs
+  // are intentionally inactive. Cover this separate HLS startup phase once
+  // the backend actually has fresh segments. Do not retry a stopped producer,
+  // override user-required autoplay, or compete with the WSS controller.
+  useEffect(() => {
+    if (!clientId || !serverReady || manifestReady || inactivityStopped ||
+        !pageVisible || !hasMediaCapability || !mobileViewerActive ||
+        needsTapToPlay || (pilotGeneration && !isTouchHandset)) return undefined;
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState === "hidden") return;
+      const video = videoRef.current;
+      if (!hlsRef.current && !video?.canPlayType("application/vnd.apple.mpegurl")) return;
+      setLocalRefreshKey((key) => key + 1);
+    }, HLS_STARTUP_RECOVERY_MS);
+    return () => window.clearTimeout(timer);
+  }, [clientId, effectiveRefreshKey, serverReady, manifestReady, inactivityStopped,
+    pageVisible, hasMediaCapability, mobileViewerActive, needsTapToPlay, pilotGeneration, isTouchHandset]);
 
   // -------------------------------------------------------------------------
   // Stale watchdog — genstart HLS hvis segmenter stopper efter boot/reboot
