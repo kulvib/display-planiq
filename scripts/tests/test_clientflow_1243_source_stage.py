@@ -147,7 +147,9 @@ def test_pilot_catalog_only_selectable_under_explicit_runtime_guard() -> None:
         ClientFlowCatalogError, load_catalog, resolve_fresh_install_release, resolve_release,
     )
     load_catalog.cache_clear()
-    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.4.0-seq-1250"
+    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.4.1-seq-1251"
+    with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
+        resolve_release("1.4.0")
     # Historic 1243 update target no longer exists in the live catalog.
     with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
         resolve_release("1.3.42")
