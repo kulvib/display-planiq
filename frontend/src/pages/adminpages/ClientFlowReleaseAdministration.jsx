@@ -15,6 +15,7 @@ import ClientFlowDeploymentHistory from "./ClientFlowDeploymentHistory";
 import ClientFlowFleetOverview from "./ClientFlowFleetOverview";
 import ClientFlowStandardOrderPanel from "./ClientFlowStandardOrderPanel";
 import ClientFlowBaselinePilotPanel from "./ClientFlowBaselinePilotPanel";
+import ClientFlowSuccessorPilotPanel from "./ClientFlowSuccessorPilotPanel";
 import { validateStandardBaselineResponse } from "./clientflowStandardOrders.mjs";
 import { CANCELLABLE_STATES } from "./clientflowDeploymentHistory.mjs";
 import {
@@ -332,6 +333,7 @@ export default function ClientFlowReleaseAdministration() {
         <>
           <ClientFlowFleetOverview clients={available} release={release} stableVersion={status.stable_version} activeRows={activeRows} activeComplete={activeComplete} />
           {status.phase === "standard_baseline" && <ClientFlowStandardOrderPanel status={status} onAuthorized={refresh} /> }
+          {status.phase === "standard_baseline" && status.successor_pilot_review_available === true && <ClientFlowSuccessorPilotPanel status={status} onAuthorized={refresh} /> }
           {status.phase === "additive_draft_only" && !baselineInstalled && <ClientFlowBaselinePilotPanel status={status} onAuthorized={refresh} /> }
           {status.phase === "additive_draft_only" && baselineInstalled && <Alert severity="info">
             Viborg1 rapporterer ClientFlow 1.4.0. Standardrelease er fortsat {status.stable_version}, indtil den særskilte releasegodkendelse er gennemført.

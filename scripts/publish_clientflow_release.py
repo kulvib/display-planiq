@@ -159,6 +159,9 @@ def publish(
             raise RuntimeError("Approved bundle matcher ikke den forventede bundle-SHA-256")
 
         source_version, source_sequence, source_release_id = _source_release_identity()
+        if source_sequence >= 1251 and any((authorized_1243_transition, authorized_1244_reset,
+                                           authorized_1248_viborg1_fourth, authorized_1250_baseline_storage)):
+            raise RuntimeError("From release 1251 the three-release cap has no storage exceptions")
         if str(manifest["version"]) != source_version:
             raise RuntimeError("Approved bundle matcher ikke canonical source VERSION")
         if str(manifest["release_id"]) != source_release_id:
@@ -201,7 +204,11 @@ def publish(
             else:
                 if (existing_size, existing_digest) != (size, digest):
                     raise RuntimeError("Artifact-ID er allerede publiceret med andre bytes")
-                if authorized_1250_baseline_storage:
+                if source_sequence >= 1251:
+                    # An idempotent retry may not certify an over-cap store.
+                    plan_publication(artifact_dir, release_id=str(manifest["release_id"]),
+                                     size_bytes=size, sha256=digest)
+                elif authorized_1250_baseline_storage:
                     verify_publication(artifact_dir, release_id=str(manifest["release_id"]),
                                        size_bytes=size, sha256=digest, authorized_1250_baseline_storage=True)
                 return artifact_dir / destination_name, size, digest
