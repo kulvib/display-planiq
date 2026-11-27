@@ -115,3 +115,5 @@ Changes to runtime behavior require a documented category A/B finding, root caus
 ## Quality and operations
 
 See `docs/PLANIQ_DISPLAY_68J8_QUALITY_REVIEW.md` for the scoped findings, evidence and open acceptance gates. A green CI run does not replace physical media or recovery tests. An isolated CI backup restore is not a verified off-host restore of the actual database. Retain immutable historical release evidence; do not remove files merely because they are old.
+
+Current release readiness and the limits of historical recovery proofs: see [`68J-10 release readiness`](docs/PLANIQ_DISPLAY_68J10_RELEASE_READINESS.md). Do not use the historical 62B/62E release pins as a current backup inventory.

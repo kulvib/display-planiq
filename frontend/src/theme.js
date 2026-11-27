@@ -96,6 +96,10 @@ const theme = createTheme({
         "#root": {
           minHeight: "100vh",
         },
+        "a[href]:focus-visible, select:focus-visible": {
+          outline: "2px solid #7dd3fc",
+          outlineOffset: 2,
+        },
         "*::-webkit-scrollbar": {
           width: 10,
           height: 10,
@@ -159,6 +163,17 @@ const theme = createTheme({
           borderRadius: 10,
           boxShadow: glassShadow,
           backgroundImage: "none",
+        },
+      },
+    },
+    // Visible keyboard focus without changing pointer appearance or media capture.
+    MuiButtonBase: {
+      styleOverrides: {
+        root: {
+          "&.Mui-focusVisible": {
+            outline: "2px solid #7dd3fc",
+            outlineOffset: -2,
+          },
         },
       },
     },

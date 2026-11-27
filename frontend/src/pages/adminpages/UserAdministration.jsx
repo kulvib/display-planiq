@@ -554,7 +554,7 @@ function AuditLogDialog({ open, user, logs, loading, error, onClose }) {
               input: {
                 endAdornment: auditSearch ? (
                   <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => setAuditSearch("")}>
+                    <IconButton size="small" aria-label="Ryd søgning i audit-log" onClick={() => setAuditSearch("")}>
                       <ClearIcon fontSize="small" />
                     </IconButton>
                   </InputAdornment>
@@ -1394,7 +1394,7 @@ export default function UserAdministration() {
                   endAdornment: (
                     <InputAdornment position="end">
                       <Tooltip title="Kopiér">
-                        <IconButton size="small" onClick={copyTemporaryPassword}>
+                        <IconButton size="small" aria-label="Kopiér midlertidig adgangskode" onClick={copyTemporaryPassword}>
                           <ContentCopyIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
@@ -1571,7 +1571,7 @@ export default function UserAdministration() {
                 input: {
                   endAdornment: (
                     <InputAdornment position="end">
-                      <IconButton size="small" onClick={() => setFilterText("")} disabled={!filterText}>
+                      <IconButton size="small" aria-label="Ryd brugersøgning" onClick={() => setFilterText("")} disabled={!filterText}>
                         <ClearIcon fontSize="small" />
                       </IconButton>
                     </InputAdornment>

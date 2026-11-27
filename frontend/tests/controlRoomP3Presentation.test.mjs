@@ -185,3 +185,20 @@ test("shared display theme distinguishes outer papers, fields and opaque dropdow
   assert.match(diagnostics, /const BORDER = "rgba\(148, 163, 184, 0\.24\)"/);
   assert.match(detail, /"\.MuiCard-root\.control-room-data-panel"|& \.MuiCard-root\.control-room-data-panel/);
 });
+
+
+test("keyboard focus and explicit accessible names remain available", () => {
+  const theme = readFileSync(new URL("../src/theme.js", import.meta.url), "utf8");
+  const users = readFileSync(new URL("../src/pages/adminpages/UserAdministration.jsx", import.meta.url), "utf8");
+  assert.match(theme, /MuiButtonBase:[\s\S]*?&\.Mui-focusVisible[\s\S]*?outline: "2px solid #7dd3fc"/);
+  assert.match(theme, /a\[href\]:focus-visible, select:focus-visible/);
+  assert.match(detail, /aria-label="Tilbage til Control Room"/);
+  assert.match(listing, /aria-label="Kopiér"/);
+  assert.equal((listing.match(/aria-label=\{`Fjern klient \$\{client\.name\}`\}/g) || []).length, 3);
+  assert.match(listing, /aria-label=\{`Slet \$\{client\.name\} permanent`\}/);
+  assert.match(diagnostics, /aria-label="Opdater diagnostik"/);
+  assert.match(diagnostics, /aria-label="Kopiér"/);
+  assert.match(users, /aria-label="Ryd søgning i audit-log"/);
+  assert.match(users, /aria-label="Ryd brugersøgning"/);
+  assert.match(users, /aria-label="Kopiér midlertidig adgangskode"/);
+});

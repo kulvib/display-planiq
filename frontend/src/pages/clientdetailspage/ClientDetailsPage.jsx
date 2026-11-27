@@ -811,6 +811,7 @@ function ControlRoomTopbar({ client, clientOnline, networkUnavailable, networkMe
         }}>
         <IconButton
           size="small"
+          aria-label="Tilbage til Control Room"
           onClick={onBack}
           sx={{
             color: "rgba(248,250,252,0.92)",
