@@ -5,6 +5,7 @@ Control Room and clients share one canonical release contract.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from functools import lru_cache
@@ -89,7 +90,8 @@ def _release_supports_ubuntu(release: dict[str, Any], ubuntu_version: str | None
 @lru_cache(maxsize=1)
 def load_catalog() -> dict[str, Any]:
     try:
-        data = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+        raw = CATALOG_PATH.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
     except Exception as exc:  # pragma: no cover - deployment contract catches this
         raise ClientFlowCatalogError("ClientFlow-versionskataloget kunne ikke læses") from exc
 
@@ -157,7 +159,13 @@ def load_catalog() -> dict[str, Any]:
     # 1244+ selector policy is explicit and strictly bounded by this runtime
     # validator; immutable client/VERSION alone cannot authorize a release.
     # The current reset is a fresh-only exception, not a generic update permit.
-    if data["catalog_sequence"] >= 1250:
+    if data["catalog_sequence"] == 1251:
+        from .clientflow_closed_standard_1251 import validate_closed_standard_catalog
+        try:
+            validate_closed_standard_catalog(data, source_sha256=hashlib.sha256(raw).hexdigest())
+        except ValueError as exc:
+            raise ClientFlowCatalogError(str(exc)) from exc
+    elif data["catalog_sequence"] >= 1250:
         # A new baseline is a catalog shape, NOT physical acceptance or a
         # deployment grant. Future successors require a separately reviewed
         # retention/rollback contract rather than falling through legacy gates.
