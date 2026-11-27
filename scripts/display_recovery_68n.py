@@ -14,7 +14,6 @@ from pathlib import Path
 import re
 import secrets
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -143,13 +142,15 @@ def verify_stage(stage, p, rows):
         require(info.st_uid == os.geteuid() and not info.st_mode & 0o077, "PRIVATE_FILE_REQUIRED")
     require(verify(stage)["stage_bytes_hash_verified"] is True, "STAGE_VERIFY")
     return dict(profile=p["profile_id"], stage_bytes_verified=True,
-                retained_release_count=len(rows), isolated_database_restore_verified=False, **FALSE_GATES)
+                retained_release_count=len(rows), stage_manifest_sha256=_hash_regular(stage / "manifest.json")[0],
+                isolated_database_restore_verified=False, **FALSE_GATES)
 
 
 def run(argv, *, stdin=None, timeout=60):
     # Do not expose subprocess diagnostics: dumps and SQL may contain secrets.
     result = subprocess.run(argv, stdin=stdin if stdin is not None else subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False)
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, check=False,
+                            env={k: v for k, v in os.environ.items() if not k.startswith("DOCKER_")})
     require(result.returncode == 0, "SUBPROCESS_FAILED")
     return result.stdout.decode("utf-8").strip()
 
@@ -157,12 +158,13 @@ def run(argv, *, stdin=None, timeout=60):
 def local_policy(p, rows):
     env = {k: v for k, v in os.environ.items() if not k.startswith("PG") and k != "DATABASE_URL"}
     env["PGCONNECT_TIMEOUT"] = "5"
+    env["PGOPTIONS"] = "-c default_transaction_read_only=on -c statement_timeout=15000"
     argv = ["gosu", "display_app", "psql", "-XAt", "--no-password", "-v", "ON_ERROR_STOP=1",
             "-h", str(SOCKET), "-U", "display_app", "-d", "display", "-c",
-            "BEGIN READ ONLY; SET LOCAL statement_timeout='15s'; " + policy_sql(p, rows) + " COMMIT;"]
+            policy_sql(p, rows)]
     result = subprocess.run(argv, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, timeout=30, check=False)
-    require(result.returncode == 0 and result.stdout.decode().splitlines() == ["BEGIN", "SET", "PASS", "COMMIT"],
+    require(result.returncode == 0 and result.stdout.decode().strip() == "PASS",
             "LIVE_POLICY")
 
 
@@ -200,7 +202,7 @@ def capture_current(parent, p, rows):
     result = capture(MOUNT, parent, release_id=stable, expected_sha256=sha, expected_size=size)
     stage = Path(result["stage"])
     try:
-        verify_stage(stage, p, rows)
+        evidence = verify_stage(stage, p, rows)
         local_policy(p, rows)
         verify_store(rows)
     except BaseException:
@@ -208,6 +210,7 @@ def capture_current(parent, p, rows):
         shutil.rmtree(stage)
         raise
     return dict(stage=str(stage), capture_verified=True,
+                stage_manifest_sha256=evidence["stage_manifest_sha256"],
                 cross_store_atomic_snapshot_verified=False, **FALSE_GATES)
 
 
@@ -243,7 +246,7 @@ def offline_restore(stage, p, rows):
         require(run([*docker, "exec", "-u", "postgres", container, "psql", "-XAt",
                      "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "display_restore",
                      "-c", policy_sql(p, rows)]) == "PASS", "RESTORED_POLICY")
-        verify_stage(stage, p, rows)
+        require(verify_stage(stage, p, rows) == evidence, "STAGE_CHANGED_DURING_RESTORE")
         evidence.update(isolated_database_restore_verified=True,
                         restore_elapsed_seconds=round(time.monotonic() - started, 2))
     finally:
