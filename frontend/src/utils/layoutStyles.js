@@ -26,7 +26,7 @@ export const embeddedPageShellSx = {
 export const darkPagePanelSx = {
   borderRadius: 2,
   background: "rgba(15,23,42,0.74)",
-  border: "1px solid rgba(148,163,184,0.16)",
+  border: "1px solid rgba(148,163,184,0.30)",
   boxShadow: "0 24px 80px rgba(0,0,0,0.22)",
   color: "#f8fafc",
 };
