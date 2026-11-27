@@ -262,7 +262,13 @@ def claimed_operational_http(monkeypatch, tmp_path):
     # Test-only physical acceptance permits the REAL enrollment routes to
     # exercise signed-binding, identity-isolation, and resume/approval flows.
     # Never edit the checked-in acceptance file or bypass its validator.
-    from service1 import clientflow_stable_rollout as rollout
+    from service1 import clientflow_stable_rollout as rollout, clientflow_releases as releases
+
+    # Exercise historical fresh-install authority only inside this fixture.
+    # The active 1250 catalogue deliberately denies fresh installation.
+    historical_catalog = ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json"
+    monkeypatch.setattr(releases, "CATALOG_PATH", historical_catalog)
+    releases.load_catalog.cache_clear()
 
     original_acceptance = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
     assert original_acceptance["physical_pilot_accepted"] is False
@@ -352,7 +358,10 @@ def claimed_operational_http(monkeypatch, tmp_path):
     update_private_key = tmp_path / "update-private-key.pem"
     update_public_pem, update_key_id, _jwk, _jkt = generate_update_key(update_private_key)
 
-    yield _ASGITestClient(app), engine, update_private_key, update_public_pem, update_key_id
+    try:
+        yield _ASGITestClient(app), engine, update_private_key, update_public_pem, update_key_id
+    finally:
+        releases.load_catalog.cache_clear()
 
 
 def test_fresh_authorization_claim_resume_approval_and_runtime_roundtrip(claimed_operational_http):
