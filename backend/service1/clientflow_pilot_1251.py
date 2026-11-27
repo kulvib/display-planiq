@@ -72,6 +72,7 @@ def require_closed_baseline(catalog: Mapping, control: Mapping, revision: int) -
             or type(revision) is not int or revision < 1 or control.get("revision") != revision
             or any(control.get(flag) is not False for flag in ("cutover_enabled", "fleet_open", "fresh_install_open"))
             or os.environ.get("CLIENTFLOW_FRESH_INSTALL_SUSPENDED") != "1"
+            or os.environ.get("CLIENTFLOW_SIGNED_ROLLBACK_ENABLED", "false").strip().lower() != "false"
             or any(os.environ.get(flag) for flag in CONFLICTING_FLAGS)):
         raise Pilot1251Denied("Lukket 1250-reference og releasepolitik er ikke verificeret")
 
