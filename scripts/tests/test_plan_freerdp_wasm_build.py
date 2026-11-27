@@ -48,3 +48,17 @@ def test_every_input_and_compile_recipe_drift_requires_rebuild(tmp_path):
     workflow.write_text(original)
     (tmp_path / next(iter(plan.PINS))).unlink()
     assert plan.needs_rebuild(tmp_path)
+
+
+def test_workflow_action_references_are_immutable():
+    import re
+
+    for workflow in sorted((plan.ROOT / ".github" / "workflows").glob("*.yml")):
+        for line in workflow.read_text().splitlines():
+            match = re.match(r"\s*(?:-\s+)?uses:\s+([^\s#]+)", line)
+            if not match:
+                continue
+            reference = match.group(1)
+            if reference.startswith("./"):
+                continue
+            assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", reference), (workflow.name, reference)
