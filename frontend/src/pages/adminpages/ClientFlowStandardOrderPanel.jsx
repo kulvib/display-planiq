@@ -91,7 +91,7 @@ export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
       }
     }
   };
-  return <Paper elevation={0} sx={{p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.16)"}}>
+  return <Paper elevation={0} sx={{p:{xs:2,md:2.5},borderRadius:2,bgcolor:"rgba(15,23,42,0.74)",border:"1px solid rgba(148,163,184,0.30)"}}>
     <Stack spacing={2}>
       <Typography variant="h6" fontWeight={850}>Installer standardrelease</Typography>
       <Typography color="text.secondary">Vælg klienter enkeltvis eller efter organisation. Backend kontrollerer den præcise releasepakke, online-version og samtidige opdateringer inden bestilling.</Typography>
