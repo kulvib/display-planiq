@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "releases": {
+    "clientflow-1.3.44-seq-1245": {
+      "version": "1.3.44",
+      "sequence": 1245,
+      "size": 223610880,
+      "sha256": "28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5",
+      "archive_url": "https://github.com/kulvib/display-planiq/releases/download/clientflow-1.3.44-1245-approved-transport/clientflow-approved-1.3.44-1245.tar"
+    },
+    "clientflow-1.3.45-seq-1246": {
+      "version": "1.3.45",
+      "sequence": 1246,
+      "size": 223682560,
+      "sha256": "e37de3250d58d313d57ad7bcbf59682cee342f2727c6ad5b188c8782342d4c78",
+      "archive_url": "https://github.com/kulvib/display-planiq/releases/download/clientflow-1.3.45-1246-approved-transport/clientflow-approved-1.3.45-1246.tar"
+    },
+    "clientflow-1.3.46-seq-1247": {
+      "version": "1.3.46",
+      "sequence": 1247,
+      "size": 223692800,
+      "sha256": "3d6df5ec096a5713866943a67d9f88bba3fc6287458d0ea2f616bd41e42db150",
+      "archive_url": "https://github.com/kulvib/display-planiq/releases/download/clientflow-1.3.46-1247-approved-transport/clientflow-approved-1.3.46-1247.tar"
+    },
+    "clientflow-1.3.47-seq-1248": {
+      "version": "1.3.47",
+      "sequence": 1248,
+      "size": 223692800,
+      "sha256": "9ca8852ba29153f2ec40b58d18007c738a03f9569f14762486fc1953c59eb6ff",
+      "archive_url": "https://github.com/kulvib/display-planiq/releases/download/clientflow-1.3.47-1248-approved-transport/clientflow-approved-1.3.47-1248.tar"
+    },
+    "clientflow-1.4.0-seq-1250": {
+      "version": "1.4.0",
+      "sequence": 1250,
+      "size": 223897600,
+      "sha256": "cf4a3077975b9740ef7d1e34a58731a83f2f4b1e43f4ab0f2fad54772e35b446",
+      "archive_url": "https://github.com/kulvib/display-planiq/releases/download/clientflow-1.4.0-1250-approved-transport/clientflow-approved-1.4.0-1250.tar"
+    },
+    "clientflow-1.4.1-seq-1251": {
+      "version": "1.4.1",
+      "sequence": 1251,
+      "size": 223897600,
+      "sha256": "835610b0a59510b2119601468ad47c0aa1fb418b96c4cfaaa8cdd81042dc1ab6",
+      "archive_url": "https://github.com/kulvib/display-planiq/releases/download/clientflow-1.4.1-1251-approved-transport/clientflow-approved-1.4.1-1251.tar"
+    }
+  }
+}
