@@ -81,11 +81,11 @@ def test_brace_expansion_is_patched_and_its_old_audit_waiver_is_removed() -> Non
 
 def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
     # Approved 1.3.38/1239 replaces the selector, not historical evidence.
-    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.4.0"
+    assert (ROOT / "client" / "VERSION").read_text(encoding="utf-8").strip() == "1.4.1"
     release_input = json.loads(
         (ROOT / "client" / "release" / "release-input.json").read_text(encoding="utf-8")
     )
-    assert release_input["release_sequence"] == 1250
+    assert release_input["release_sequence"] == 1251
     assert release_input["runtime_python"] == "3.13.14"
 
     catalog = json.loads(
@@ -98,7 +98,7 @@ def test_1338_1239_promotion_preserves_1337_and_older_release_history() -> None:
     assert catalog["default_install_version"] == "1.3.38"
     selected = catalog["releases"][0]
     assert catalog["catalog_sequence"] == 1243  # historical fixture
-    assert release_input["release_sequence"] == 1250
+    assert release_input["release_sequence"] == 1251
     assert selected["release_id"] == "clientflow-1.3.38-seq-1239"
     assert selected["installable"] is True
     assert selected["update_allowed"] is False

@@ -78,11 +78,11 @@ def test_cli_is_readonly_and_requires_explicit_candidate_gate():
 
 def test_new_unsigned_source_identity_can_pass_only_build_eligibility(tmp_path):
     root = _copy_repository(tmp_path)
-    (root / 'client/VERSION').write_text('1.4.0\n')
+    (root / 'client/VERSION').write_text('1.4.1\n')
     _rehash(root, 'client/VERSION')
     release_input = root / 'client/release/release-input.json'
     record = json.loads(release_input.read_text())
-    record['release_sequence'] = 1250
+    record['release_sequence'] = 1251
     release_input.write_text(json.dumps(record) + '\n')
     _rehash(root, 'client/release/release-input.json')
     result = gate.inspect(root)
@@ -95,7 +95,7 @@ def test_new_unsigned_source_identity_can_pass_only_build_eligibility(tmp_path):
     assert result['pilot_accepted'] is False
 
 
-@pytest.mark.parametrize('version,sequence', [('1.3.44', 1246), ('1.3.45', 1245), ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.43', 1246), ('1.3.47', 1248), ('1.3.48', 1248), ('1.3.48', 1249), ('1.4.0', 1249), ('1.3.48', 1250)])
+@pytest.mark.parametrize('version,sequence', [('1.3.44', 1246), ('1.3.45', 1245), ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.43', 1246), ('1.3.47', 1248), ('1.3.48', 1248), ('1.3.48', 1249), ('1.4.0', 1249), ('1.3.48', 1250), ('1.4.0', 1250), ('1.4.0', 1251), ('1.4.1', 1250), ('1.4.2', 1252)])
 def test_version_and_sequence_both_must_advance(tmp_path, version, sequence):
     root = _copy_repository(tmp_path)
     (root / 'client/VERSION').write_text(version + '\n')
@@ -173,3 +173,17 @@ def test_preclaim_host_apt_lock_is_mandatory_even_with_updated_source_hashes(tmp
     assert report['checks']['installation_and_maintenance_source_contracts']['pass'] is False
     assert report['source_verified'] is False
     assert report['result'] == 'SOURCE_INVALID'
+
+
+def test_approved_1250_lock_cannot_change_even_with_rehash(tmp_path):
+    root = _copy_repository(tmp_path)
+    name = 'backend/service1/clientflow_pilot_1250_approval.json'
+    lock = root / name
+    data = json.loads(lock.read_text())
+    data['source_commit'] = 'f' * 40
+    lock.write_text(json.dumps(data))
+    _rehash(root, name)
+    report = gate.inspect(root)
+    assert report['checks']['complete_sha256_manifest']['pass'] is True
+    assert report['checks']['unchanged_approved_1250_lock']['pass'] is False
+    assert report['source_verified'] is False

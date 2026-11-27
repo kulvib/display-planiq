@@ -60,7 +60,7 @@ def inspect_source(repo: Path) -> dict:
     source_version = read("client/VERSION").strip()
     approved_or_candidate_source = (
         (source_version, source_input.get("release_sequence"))
-        in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247), ("1.3.47", 1248), ("1.3.48", 1249), ("1.4.0", 1250))
+        in (("1.3.44", 1245), ("1.3.45", 1246), ("1.3.46", 1247), ("1.3.47", 1248), ("1.3.48", 1249), ("1.4.0", 1250), ("1.4.1", 1251))
         and {k: v for k, v in source_input.items() if k != "release_sequence"}
         == {k: v for k, v in EXPECTED_INPUT.items() if k != "release_sequence"}
     )
