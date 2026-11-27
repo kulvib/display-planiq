@@ -26,7 +26,7 @@ const RELEASE_PATH = "/api/clientflow/release-administration";
 const EMPTY_CLIENTS = Object.freeze([]);
 const panelSx = {
   p: { xs: 2, md: 2.5 }, borderRadius: 2,
-  bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.16)",
+  bgcolor: "rgba(15,23,42,0.74)", border: "1px solid rgba(148,163,184,0.30)",
 };
 const ACTIONS = {
   review: { label: "Gennemgå plan", message: "Planen er gennemgået. Ingen installation er autoriseret." },
@@ -457,7 +457,7 @@ export default function ClientFlowReleaseAdministration() {
                       <Button size="small" onClick={() => setSelectedIds([])} disabled={!selectedIds.length}>Ryd valg</Button>
                     </Stack>
                   </Stack>
-                  <Box sx={{ maxHeight: 440, overflowY: "auto", border: "1px solid rgba(148,163,184,0.20)", borderRadius: 2 }}>
+                  <Box sx={{ maxHeight: 440, overflowY: "auto", background: "rgba(2,6,23,0.42)", border: "1px solid rgba(148,163,184,0.24)", borderRadius: 2 }}>
                     {filtered.slice(0, visibleCount).map((device) => {
                       const checked = selectedSet.has(device.id);
                       const disabled = !checked && selectedIds.length >= MAX_PLAN_CLIENTS;
