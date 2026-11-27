@@ -32,12 +32,13 @@ def _fixture(tmp_path):
     for name in FILES:
         path = dst / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, path)
+        source = "backend/service1/clientflow_release_catalog_1248_pilot.stage.json" if name == "backend/service1/clientflow_release_catalog.json" else name
+        shutil.copy2(ROOT / source, path)
     return dst
 
 
-def test_read_only_pilot_policy_with_two_environment_gates():
-    result = inspect(ROOT)
+def test_read_only_pilot_policy_with_two_environment_gates(tmp_path):
+    result = inspect(_fixture(tmp_path))
     assert result["ready"], result
     assert len(result["checks"]) == 9
     assert result["approved"] is True

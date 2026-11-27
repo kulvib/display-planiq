@@ -13,8 +13,17 @@ from service1.clientflow_fresh_install_maintenance import (
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.fixture
+def historical_1245_catalog(monkeypatch):
+    from service1 import clientflow_releases as releases
+    monkeypatch.setattr(releases, "CATALOG_PATH", ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json")
+    releases.load_catalog.cache_clear()
+    yield
+    releases.load_catalog.cache_clear()
+
+
 @pytest.mark.parametrize("flag", [None, "0"])
-def test_normal_operation_unaffected_after_physical_acceptance(monkeypatch, tmp_path, flag):
+def test_normal_operation_unaffected_after_physical_acceptance(monkeypatch, tmp_path, flag, historical_1245_catalog):
     import json
     from service1 import clientflow_stable_rollout as rollout
     approved = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text())
@@ -58,8 +67,15 @@ def test_hold_cannot_be_activated_from_catalog_or_client_parameters():
     assert "CLIENTFLOW_FRESH_INSTALL_SUSPENDED" in source
 
 
-def test_fresh_install_blocked_by_physical_gate_even_if_maintenance_flag_absent(monkeypatch):
+def test_fresh_install_blocked_by_physical_gate_even_if_maintenance_flag_absent(monkeypatch, historical_1245_catalog):
     monkeypatch.delenv(FRESH_INSTALL_SUSPENDED_FLAG, raising=False)
     with pytest.raises(HTTPException, match="fysisk pilotaccept") as exc:
+        require_fresh_install_not_suspended()
+    assert exc.value.status_code == 503
+
+
+def test_active_1250_fresh_install_stays_closed_even_without_flag(monkeypatch):
+    monkeypatch.delenv(FRESH_INSTALL_SUSPENDED_FLAG, raising=False)
+    with pytest.raises(HTTPException, match="1.4 nyinstallation") as exc:
         require_fresh_install_not_suspended()
     assert exc.value.status_code == 503

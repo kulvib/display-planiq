@@ -193,31 +193,31 @@ def test_later_policy_update_rejects_previously_selectable_target(monkeypatch, t
         resolve_release("1.3.40")
 
 
-def test_live_1245_fresh_install_revocation_blocks_before_download(monkeypatch, tmp_path):
+def test_live_1250_fresh_install_revocation_blocks_before_download(monkeypatch, tmp_path):
     from service1.clientflow_releases import resolve_fresh_install_release
 
-    _set_policy(monkeypatch, tmp_path, revoked=["clientflow-1.3.44-seq-1245"])
+    _set_policy(monkeypatch, tmp_path, revoked=["clientflow-1.4.0-seq-1250"])
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="tilbagekaldt"):
         resolve_fresh_install_release()
 
 
-def test_live_1245_fresh_install_minimum_sequence_blocks(monkeypatch, tmp_path):
+def test_live_1250_fresh_install_minimum_sequence_blocks(monkeypatch, tmp_path):
     from service1.clientflow_releases import resolve_fresh_install_release
 
-    _set_policy(monkeypatch, tmp_path, floor=1246)
+    _set_policy(monkeypatch, tmp_path, floor=1251)
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="minimumssikkerhedssekvens"):
         resolve_fresh_install_release()
 
 
-def test_live_1245_rechecks_security_policy_on_each_fresh_install(monkeypatch, tmp_path):
+def test_live_1250_rechecks_security_policy_on_each_fresh_install(monkeypatch, tmp_path):
     from service1.clientflow_releases import resolve_fresh_install_release
 
     path = _set_policy(monkeypatch, tmp_path)
-    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.44-seq-1245"
+    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.4.0-seq-1250"
     path.write_text(json.dumps({
         "schema_version": 1, "revision": 2,
         "minimum_safe_release_sequence": 1239,
-        "revoked_release_ids": ["clientflow-1.3.44-seq-1245"],
+        "revoked_release_ids": ["clientflow-1.4.0-seq-1250"],
     }))
     with pytest.raises(policy.ClientFlowReleaseSecurityDenied, match="tilbagekaldt"):
         resolve_fresh_install_release()

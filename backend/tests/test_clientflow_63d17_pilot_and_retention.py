@@ -65,7 +65,7 @@ def test_exact_1248_release_approved_but_only_source_staged():
     assert [r["installable"] for r in stage["releases"]] == [True, False, False]
     assert all(r["rollback_allowed"] is False for r in stage["releases"])
     assert stage["releases"][2]["min_current_version"] == "1.3.46"
-    live = json.loads((SVC / "clientflow_release_catalog.json").read_text())
+    live = json.loads((SVC / "clientflow_release_catalog_1248_pilot.stage.json").read_text())
     assert live["catalog_sequence"] == 1248
     assert live == stage
     assert validated_catalog_mode_1248(active_catalog=live) == "update_only_1248_pilot_catalog"

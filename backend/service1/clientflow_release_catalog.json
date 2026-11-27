@@ -1,21 +1,21 @@
 {
   "manifest_schema": 4,
   "channel": "canonical-release-catalog",
-  "catalog_sequence": 1248,
-  "latest_stable": "1.3.44",
-  "default_install_version": "1.3.44",
+  "catalog_sequence": 1250,
+  "latest_stable": "1.4.0",
+  "default_install_version": "1.4.0",
   "retention_policy": {
-    "max_selectable_versions": 3,
+    "max_selectable_versions": 1,
     "max_installable_versions": 1,
     "keep_blocked_metadata": false
   },
   "releases": [
     {
-      "version": "1.3.44",
-      "client_version": "1.3.44",
-      "release_sequence": 1245,
-      "revision": "clientflow-1.3.44-seq-1245",
-      "release_id": "clientflow-1.3.44-seq-1245",
+      "version": "1.4.0",
+      "client_version": "1.4.0",
+      "release_sequence": 1250,
+      "revision": "clientflow-1.4.0-seq-1250",
+      "release_id": "clientflow-1.4.0-seq-1250",
       "status": "stable",
       "installable": true,
       "update_allowed": true,
@@ -34,91 +34,16 @@
         "display_stack": "wayland",
         "requires_platform_preflight": true
       },
-      "notes": [
-        "ACTIVE CATALOG POLICY: 1.3.44/1245 is the one common stable target for fresh_install and in_place_update. This catalog identity is not proof of physical acceptance or deployment permission. Physical Viborg1 pilot remains pending; both pathways remain separately blocked by operator/maintenance gates.",
-        "Immutable R2 approved bundle SHA256 28c4836536279d04381ad299937c59fce5315df1e817984b0377abdd7c86d6a5; size 223610880 bytes; source 06857104952ebb40bf1394c423c01332d28f8d5e; candidate ffe58332c8e3b263e00f299e363dc95ecb9ac7e0176fd51888be98fecad9bd97; fresh installer fc843b6b37772996ecbfa67ff08a0e6f372443bf7d6104ca28d616855bc5737a; approval CF-1.3.44-1245-20261114-0685710-ffe58332-R2.",
-        "Fresh-install remains suspended by CLIENTFLOW_FRESH_INSTALL_SUSPENDED=1 until separate approval. Only Viborg1 backend client ID 3 may receive a supervised 1244->1245 pilot when BOTH 1245 pilot env gates are explicitly armed. Broader stable rollout is hard blocked by a reviewed fleet-acceptance record (initially physical_pilot_accepted=false) in addition to existing allowlisted operator flags. No automatic update, manual rollback or downgrade.",
-        "Prior approved 1.3.43/1244 TAR is retained in the 3-release archive for recovery but is NOT a second selectable stable version."
-      ],
       "artifact_type": "runtime_release",
       "install_modes": [
         "fresh_install",
         "in_place_update"
       ],
-      "min_current_version": "1.3.43",
-      "max_current_version": "1.3.43"
-    },
-    {
-      "version": "1.3.46",
-      "client_version": "1.3.46",
-      "release_sequence": 1247,
-      "revision": "clientflow-1.3.46-seq-1247",
-      "release_id": "clientflow-1.3.46-seq-1247",
-      "status": "supported",
-      "installable": false,
-      "update_allowed": true,
-      "rollback_allowed": false,
-      "requires_explicit_downgrade": false,
-      "requires_reboot": true,
-      "ubuntu_compatibility": {
-        "policy": "ubuntu-desktop-lts-minimum",
-        "minimum_lts_version": "26.04",
-        "maximum_certified_version": "26.04",
-        "certified_versions": [
-          "26.04"
-        ],
-        "architecture": "amd64",
-        "desktop": "gnome",
-        "display_stack": "wayland",
-        "requires_platform_preflight": true
-      },
+      "min_current_version": "1.3.47",
+      "max_current_version": "1.3.47",
       "notes": [
-        "EXPLICIT SINGLE-CLIENT PILOT STAGE ONLY: 1247 is update-only from 1246 on Viborg1 (client ID 3). No fresh install, fleet rollout, rollback or downgrade.",
-        "Approved GitHub TAR SHA256 3d6df5ec096a5713866943a67d9f88bba3fc6287458d0ea2f616bd41e42db150, size 223692800; source 22a8a873899fe736018e8238f4b2ec4bb896f6a2; candidate d60d63ba8daf182efd97c8a28183ddbde8f258ce3429e3c3bfe31bcb00f9d258; installer e1f153643d34db81200bbb106069a89353fb918b9dce9435d10c2ce6aea4e864; approval CF-1.3.46-1247-20261119-22a8a873-d60d63ba.",
-        "A signed, verified TAR must be present in the Render immutable store, and a separate superadmin/DB one-shot authorization must pass. Catalog alone NEVER permits deployment."
-      ],
-      "artifact_type": "runtime_release",
-      "install_modes": [
-        "in_place_update"
-      ],
-      "min_current_version": "1.3.45",
-      "max_current_version": "1.3.45"
-    },
-    {
-      "version": "1.3.47",
-      "client_version": "1.3.47",
-      "release_sequence": 1248,
-      "revision": "clientflow-1.3.47-seq-1248",
-      "release_id": "clientflow-1.3.47-seq-1248",
-      "status": "supported",
-      "installable": false,
-      "update_allowed": true,
-      "rollback_allowed": false,
-      "requires_explicit_downgrade": false,
-      "requires_reboot": true,
-      "ubuntu_compatibility": {
-        "policy": "ubuntu-desktop-lts-minimum",
-        "minimum_lts_version": "26.04",
-        "maximum_certified_version": "26.04",
-        "certified_versions": [
-          "26.04"
-        ],
-        "architecture": "amd64",
-        "desktop": "gnome",
-        "display_stack": "wayland",
-        "requires_platform_preflight": true
-      },
-      "notes": [
-        "PHASE 63D-17 STAGE ONLY: exactly Viborg1 backend client ID 3 may later request a single controlled in_place_update from approved 1.3.46/1247 to approved 1.3.47/1248. No automatic updater, no fleet, no rollback, no fresh install.",
-        "Approved GitHub TAR SHA256 9ca8852ba29153f2ec40b58d18007c738a03f9569f14762486fc1953c59eb6ff, size 223692800 bytes; source c0d5a092efe0c4e8638866ad98621481d6f5d0e8; candidate f82400140eb49efecf697b099cb86c94cecfb3f29dfe069b4d96ecb3b611173b; installer 750bb2e09501fb1a1750b8f3eff65975bf383a43a8a0fcc0eb3469389112f7b0; approval CF-1.3.47-1248-20261121-c0d5a092-f8240014.",
-        "1245 remains sole stable and default, 1246 remains physically archived but not selectable, 1247 is preserved as the existing client source. Catalog staging is neither physical acceptance nor deployment authorization."
-      ],
-      "artifact_type": "runtime_release",
-      "install_modes": [
-        "in_place_update"
-      ],
-      "min_current_version": "1.3.46",
-      "max_current_version": "1.3.46"
+        "CLOSED BASELINE STAGE: verified 1250 is the physical predecessor, not fleet or fresh-install authority. Control flags remain closed; 1251 requires a distinct exact single-client deployment. This stage is not the active catalog until separately reviewed promotion."
+      ]
     }
   ]
 }

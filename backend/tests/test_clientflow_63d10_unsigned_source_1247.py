@@ -66,7 +66,7 @@ def test_next_source_is_build_eligible_but_never_authorized():
 
 
 def test_current_release_catalog_promotes_only_approved_update_only_1248():
-    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())
+    catalog = json.loads((ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json").read_text())
     assert catalog["catalog_sequence"] == 1248
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.44"
     assert [x["release_sequence"] for x in catalog["releases"]] == [1245, 1247, 1248]

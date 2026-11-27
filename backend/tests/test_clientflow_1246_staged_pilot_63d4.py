@@ -50,8 +50,8 @@ def test_approved_source_record_is_exact_not_deployment():
     assert locked['approved_bundle_size'] == 223682560
     assert locked['source_commit'] == pilot.SOURCE_COMMIT
     assert locked['approval_reference'] == pilot.APPROVAL_REFERENCE
-    assert '1245' in json.dumps(json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text()))
-    assert [x['release_sequence'] for x in json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())['releases']] == [1245, 1247, 1248]
+    assert '1245' in json.dumps(json.loads((ROOT/'backend/service1/clientflow_release_catalog_1248_pilot.stage.json').read_text()))
+    assert [x['release_sequence'] for x in json.loads((ROOT/'backend/service1/clientflow_release_catalog_1248_pilot.stage.json').read_text())['releases']] == [1245, 1247, 1248]
 
 
 @pytest.mark.parametrize('name', [pilot.PILOT_FLAG, pilot.PILOT_ARM_FLAG])
@@ -198,7 +198,7 @@ def test_router_exclusively_checks_1246_before_fleet_fallback_and_after_lock():
 
 
 def test_all_main_authority_files_are_unchanged_from_baseline_manifest():
-    source=(ROOT/'backend/service1/clientflow_release_catalog.json').read_text()
+    source=(ROOT/'backend/service1/clientflow_release_catalog_1248_pilot.stage.json').read_text()
     assert 'clientflow-1.3.46-seq-1247' in source
     assert 'clientflow-1.3.45-seq-1246' in (ROOT / 'backend/service1/clientflow_release_catalog_1247_pilot.stage.json').read_text()
     assert 'clientflow-1.3.44-seq-1245' in source
@@ -253,6 +253,6 @@ def test_staged_catalog_never_changes_existing_1245_stable_record(monkeypatch,tm
     content['releases'][0]['notes']=['Unreviewed change']
     path=tmp_path/'catalog.json';path.write_text(json.dumps(content))
     monkeypatch.setattr(stage,'STAGED_CATALOG_PATH',path)
-    active=json.loads((ROOT/'backend/service1/clientflow_release_catalog.json').read_text())
+    active=json.loads((ROOT/'backend/service1/clientflow_release_catalog_1248_pilot.stage.json').read_text())
     with pytest.raises(stage.PilotStageDenied):
         stage.staged_pilot_summary(active_catalog=active)

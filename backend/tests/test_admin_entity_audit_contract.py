@@ -175,7 +175,7 @@ def _accepted_1245_only_for_audit_contract():
     The checked-in acceptance remains false. The real fail-closed validator runs
     against an isolated temporary copy carrying the exact R2 release identity.
     """
-    from service1 import clientflow_stable_rollout as rollout
+    from service1 import clientflow_stable_rollout as rollout, clientflow_releases as releases
 
     original = json.loads(rollout.FLEET_ACCEPTANCE_PATH.read_text(encoding="utf-8"))
     assert original["physical_pilot_accepted"] is False
@@ -185,9 +185,14 @@ def _accepted_1245_only_for_audit_contract():
             json.dumps({**original, "physical_pilot_accepted": True}),
             encoding="utf-8",
         )
-        with patch.object(rollout, "FLEET_ACCEPTANCE_PATH", accepted):
-            rollout.require_1245_physical_acceptance()
-            yield
+        historical = Path(__file__).resolve().parents[1] / "service1/clientflow_release_catalog_1248_pilot.stage.json"
+        with patch.object(rollout, "FLEET_ACCEPTANCE_PATH", accepted), patch.object(releases, "CATALOG_PATH", historical):
+            releases.load_catalog.cache_clear()
+            try:
+                rollout.require_1245_physical_acceptance()
+                yield
+            finally:
+                releases.load_catalog.cache_clear()
 
 
 class AdminEntityAuditContractTests(unittest.IsolatedAsyncioTestCase):

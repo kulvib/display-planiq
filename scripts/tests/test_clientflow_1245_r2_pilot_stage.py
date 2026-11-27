@@ -37,7 +37,8 @@ def _copy(tmp_path):
     for name in FILES:
         target = dest / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, target)
+        source = "backend/service1/clientflow_release_catalog_1248_pilot.stage.json" if name == "backend/service1/clientflow_release_catalog.json" else name
+        shutil.copy2(ROOT / source, target)
     return dest
 
 
@@ -48,8 +49,8 @@ def _edit(dest, filename, change):
     target.write_text(json.dumps(obj), encoding="utf-8")
 
 
-def test_r2_staged_source_passes_but_does_not_authorize_pilot():
-    result = inspect(ROOT)
+def test_r2_staged_source_passes_but_does_not_authorize_pilot(tmp_path):
+    result = inspect(_copy(tmp_path))
     assert result["ready"], result
     assert len(result["checks"]) == 9
     assert result["pilot_authorized"] is False

@@ -59,7 +59,7 @@ def test_unsigned_candidate_has_new_source_identity_and_no_approval():
 
 
 def test_active_catalog_and_approval_remain_original_1245():
-    cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog.json').read_text())
+    cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog_1248_pilot.stage.json').read_text())
     fleet = json.loads((ROOT / 'backend/service1/clientflow_1245_fleet_acceptance.json').read_text())
     approval = json.loads((ROOT / 'backend/service1/clientflow_pilot_1245_approval.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'

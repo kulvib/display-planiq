@@ -63,5 +63,6 @@ def test_retirement_blocked_by_any_unverified_dependency():
     values["clients"] = []
     assert "client_inventory_incomplete" in audit.assess(**values)["blockers"]
     values = evidence()
-    values["catalog"] = load_catalog()
+    values["catalog"] = deepcopy(load_catalog())
+    values["catalog"]["catalog_sequence"] = 1248
     assert "active_catalog_not_1250_only" in audit.assess(**values)["blockers"]

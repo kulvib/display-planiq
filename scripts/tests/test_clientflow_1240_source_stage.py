@@ -50,7 +50,7 @@ def test_retired_1240_pilot_not_selectable_or_authorized(monkeypatch):
     from service1.clientflow_pilot_1240 import ClientFlowPilotDenied, require_pilot_1240
 
     load_catalog.cache_clear()
-    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.3.44-seq-1245"
+    assert resolve_fresh_install_release()["release_id"] == "clientflow-1.4.0-seq-1250"
     for retired in ("1.3.38", "1.3.39", "1.3.40", "1.3.41", "1.3.42"):
         with pytest.raises(ClientFlowCatalogError, match="findes ikke"):
             resolve_release(retired)

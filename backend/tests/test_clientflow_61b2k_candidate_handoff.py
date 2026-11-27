@@ -228,7 +228,7 @@ def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1248()
     assert (ROOT / 'client/VERSION').read_text().strip() == '1.4.1'
     inputs = json.loads((ROOT / 'client/release/release-input.json').read_text())
     assert inputs['release_sequence'] == 1251
-    cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog.json').read_text())
+    cat = json.loads((ROOT / 'backend/service1/clientflow_release_catalog_1248_pilot.stage.json').read_text())
     assert cat['latest_stable'] == cat['default_install_version'] == '1.3.44'
     assert cat['catalog_sequence'] == 1248
     assert len(cat['releases']) == 3
@@ -248,10 +248,6 @@ def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1248()
 
 def test_current_approved_1248_handoff_accepts_only_exact_pinned_1248_catalog(tmp_path):
     """Regression: exact current 1248 stage may verify 1248 source provenance."""
-    assert handoff_gate._verify_original_catalog(
-        ROOT, "clientflow-1.3.47-seq-1248", 1248,
-    ) is None
-
     repo = tmp_path / "repo"
     paths = [
         'backend/service1/clientflow_release_catalog.json',
@@ -265,8 +261,9 @@ def test_current_approved_1248_handoff_accepts_only_exact_pinned_1248_catalog(tm
     for name in paths:
         destination = repo / name
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, destination)
+        shutil.copy2(ROOT / (paths[5] if name == paths[0] else name), destination)
 
+    assert handoff_gate._verify_original_catalog(repo, "clientflow-1.3.47-seq-1248", 1248) is None
     active_path = repo / paths[0]
     catalog = json.loads(active_path.read_text())
     catalog['releases'][2]['installable'] = True  # unauthorized promotion
@@ -290,7 +287,8 @@ def test_full_unsigned_1248_handoff_with_exact_active_1248_catalog(scenario):
         'backend/service1/clientflow_release_catalog_1248_pilot.stage.json',
         'backend/service1/clientflow_pilot_1248_approval.json',
     ):
-        shutil.copy2(ROOT / name, repo / name)
+        source = 'backend/service1/clientflow_release_catalog_1248_pilot.stage.json' if name.endswith('/clientflow_release_catalog.json') else name
+        shutil.copy2(ROOT / source, repo / name)
     (repo / 'client/VERSION').write_text('1.3.47\n')
     source_inputs = json.loads((repo / 'client/release/release-input.json').read_text())
     source_inputs['release_sequence'] = 1248

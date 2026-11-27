@@ -34,7 +34,7 @@ def _fixture(tmp_path: Path) -> Path:
     for name in FILES:
         dest = repo / name
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / name, dest)
+        shutil.copy2(ROOT / (FILES[2] if name == FILES[0] else name), dest)
     return repo
 
 
@@ -42,11 +42,12 @@ def _put(repo: Path, name: str, data: dict) -> None:
     (repo / name).write_text(json.dumps(data), encoding="utf-8")
 
 
-def test_promoted_catalog_is_exact_pinned_stage_and_does_not_open_rollout():
-    live = (ROOT / FILES[0]).read_bytes()
+def test_promoted_catalog_is_exact_pinned_stage_and_does_not_open_rollout(tmp_path):
+    repo = _fixture(tmp_path)
+    live = (repo / FILES[0]).read_bytes()
     stage = (ROOT / FILES[2]).read_bytes()
     assert live == stage
-    assert verified_mode(ROOT) == "update_only_1248_pilot_catalog"
+    assert verified_mode(repo) == "update_only_1248_pilot_catalog"
     record = json.loads(live)
     assert record["catalog_sequence"] == 1248
     assert record["latest_stable"] == record["default_install_version"] == "1.3.44"
