@@ -145,6 +145,36 @@ jobs:
             -c 'SELECT count(*) FROM alembic_version')"
           test "$migrations" = 1
           echo 'DISPLAY_62B_CI_FIXTURE_RESTORE_PASS: isolated Postgres 18, schema, data, migrations'
+      - name: 68N versioned recovery policy proof on isolated restored fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Only the disposable isolated restore from the preceding CI step.
+          # The live service and its source fixture are never updated here.
+          sql="$(python3 scripts/display_recovery_68n.py --policy-sql)"
+          check() {
+            docker exec -u postgres display-62b-isolated-restore \
+              psql -XAt -v ON_ERROR_STOP=1 -U postgres -d display_restore_62b -c "$sql"
+          }
+          mutate_fixture() {
+            docker exec -u postgres display-62b-isolated-restore \
+              psql -X -v ON_ERROR_STOP=1 -U postgres -d display_restore_62b -c "$1" >/dev/null
+          }
+          test "$(check)" = STOP
+          mutate_fixture "UPDATE public.clientflow_release_control SET stable_release_id='clientflow-1.4.1-seq-1251', stable_bundle_sha256='835610b0a59510b2119601468ad47c0aa1fb418b96c4cfaaa8cdd81042dc1ab6', revision=3 WHERE id=1"
+          test "$(check)" = PASS
+          for flag in fresh_install_open fleet_open cutover_enabled; do
+            mutate_fixture "UPDATE public.clientflow_release_control SET $flag=true WHERE id=1"
+            test "$(check)" = STOP
+            mutate_fixture "UPDATE public.clientflow_release_control SET $flag=false WHERE id=1"
+          done
+          mutate_fixture "UPDATE public.clientflow_release_control SET revision=2 WHERE id=1"
+          test "$(check)" = STOP
+          mutate_fixture "UPDATE public.clientflow_release_control SET revision=3 WHERE id=1"
+          test "$(check)" = PASS
+          mutate_fixture "UPDATE public.alembic_version SET version_num='wrong_head'"
+          test "$(check)" = STOP
+          echo 'DISPLAY_68N_CI_RESTORED_POLICY_PROOF_PASS (synthetic only)'
       - name: Delete 62B throwaway restore data (always)
         if: always()
         run: |
