@@ -174,7 +174,7 @@ test("shared display theme distinguishes outer papers, fields and opaque dropdow
   const layout = readFileSync(new URL("../src/utils/layoutStyles.js", import.meta.url), "utf8");
   assert.match(theme, /panelBorder: "rgba\(148,163,184,0\.30\)"/);
   assert.match(theme, /fieldBorder: "rgba\(148,163,184,0\.38\)"/);
-  assert.match(theme, /MuiPaper:[\s\S]*?border: `1px solid \$\{colors\.panelBorder\}\`/);
+  assert.match(theme, /MuiPaper:[\s\S]*?border: `1px solid \$\{colors\.panelBorder\}`/);
   assert.match(theme, /MuiMenu:[\s\S]*?background: "#172235"/);
   assert.match(theme, /MuiMenuItem:[\s\S]*?&\.Mui-selected/);
   assert.match(layout, /darkPagePanelSx = \{[\s\S]*?rgba\(148,163,184,0\.30\)/);
@@ -183,5 +183,5 @@ test("shared display theme distinguishes outer papers, fields and opaque dropdow
     assert.match(page, /border: "1px solid rgba\(148,163,184,0\.30\)"/, name);
   }
   assert.match(diagnostics, /const BORDER = "rgba\(148, 163, 184, 0\.24\)"/);
-  assert.match(detail, /"\.MuiCard-root\.control-room-data-panel"|\& \.MuiCard-root\.control-room-data-panel/);
+  assert.match(detail, /"\.MuiCard-root\.control-room-data-panel"|& \.MuiCard-root\.control-room-data-panel/);
 });
