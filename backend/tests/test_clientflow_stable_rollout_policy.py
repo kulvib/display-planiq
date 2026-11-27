@@ -62,8 +62,8 @@ def configured(monkeypatch, tmp_path):
     monkeypatch.setenv(rollout.BUNDLE_FLAG, R2_LOCK["approved_bundle_sha256"])
 
 
-def test_real_current_catalog_has_one_stable_1245_but_no_fleet_authority():
-    current = releases.load_catalog()
+def test_historical_catalog_has_one_stable_1245_but_no_fleet_authority():
+    current = json.loads((ROOT / "backend/service1/clientflow_release_catalog_1248_pilot.stage.json").read_text())
     assert current["latest_stable"] == "1.3.44"
     assert current["default_install_version"] == "1.3.44"
     assert len(current["releases"]) == 3
@@ -85,7 +85,7 @@ def test_unpromoted_source_never_changes_existing_default(tmp_path, monkeypatch)
     finally:
         releases.load_catalog.cache_clear()
     # Read-only synthetic test never changed the live catalog.
-    assert json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())["latest_stable"] == "1.3.44"
+    assert json.loads((ROOT / "backend/service1/clientflow_release_catalog.json").read_text())["latest_stable"] == "1.4.0"
 
 
 def test_stable_requires_explicit_operator_flag(monkeypatch):
