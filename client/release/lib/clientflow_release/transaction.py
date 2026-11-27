@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -1364,13 +1365,17 @@ def _activate_release(
     # until the exact target definitions + active symlink are ready.  Stopping
     # the currently running units is not sufficient: an enabled target could
     # otherwise auto-start after a crash/power-loss in the middle of the swap.
-    _disable_target(layout)
-    _quiesce_runtime(layout)
-    _disable_power_lifecycle_reporters(layout)
-    if previous is not None:
-        _retire_preserved_first_activation_gui_before_update(layout)
-    activation_step = "apply_definitions"
+    activation_step = "disable_target"
     try:
+        _disable_target(layout)
+        activation_step = "quiesce_runtime"
+        _quiesce_runtime(layout)
+        activation_step = "disable_power_reporters"
+        _disable_power_lifecycle_reporters(layout)
+        if previous is not None:
+            activation_step = "retire_first_activation_gui"
+            _retire_preserved_first_activation_gui_before_update(layout)
+        activation_step = "apply_definitions"
         if previous is None:
             # Backend approval has been re-proved before _activate_release is entered.
             # The root-owned marker lets the already visible preactivation GUI move
@@ -1417,35 +1422,47 @@ def _activate_release(
             _enable_stable_updater_timer(layout)
             _commit_first_activation_gui_handoff(layout, release_id)
 
-        state["previous_release_id"] = previous
-        state["active_release_id"] = release_id
-        # Commit the outcome in the same fsynced write as active_release_id.
+        # Do not mutate the only in-memory recovery journal before the final
+        # atomic write succeeds. A write/fsync error must not erase the intent
+        # or staged identity used by the failure path.
+        activation_step = "commit_activation_outcome"
+        committed = deepcopy(state)
+        committed["previous_release_id"] = previous
+        committed["active_release_id"] = release_id
         _record_durable_rollback_outcome(
-            state, permit_id=manual_rollback_permit_id,
+            committed, permit_id=manual_rollback_permit_id,
             target=release_id, outcome="succeeded",
         )
-        state["staged_release_id"] = None
-        state["activation_intent"] = None
-        installed[release_id]["activated_at"] = _now()
+        committed["staged_release_id"] = None
+        committed["activation_intent"] = None
+        committed["installed"][release_id]["activated_at"] = _now()
         _append_history(
-            state,
+            committed,
             "activated",
             release_id=release_id,
             previous_release_id=previous,
             release_approval_reference=release_approval_reference,
         )
-        save_state(layout, state)
+        save_state(layout, committed)
     except Exception as activation_error:
-        if previous is None:
-            # A failed first activation must immediately return the preserved GUI
-            # to status-only pending mode; never leave an authorization marker.
-            _remove_first_activation_gui_handoff(layout)
         activation_failure = _safe_failure_details(activation_error, activation_step)
-        rollback_step = "quiesce_runtime"
+        rollback_step = "disable_target"
         try:
+            _disable_target(layout)
+            if previous is None:
+                # A failed first activation must revoke its GUI and updater
+                # handoff before attempting any pending-state restoration.
+                _remove_first_activation_gui_handoff(layout)
+                _disable_stable_updater_timer(layout)
+            rollback_step = "quiesce_runtime"
             _quiesce_runtime(layout)
             rollback_step = "disable_power_reporters"
             _disable_power_lifecycle_reporters(layout)
+            # atomic_write_json can fail after os.replace but before directory
+            # fsync. Re-establish the original intent durably before any
+            # predecessor definitions or symlink are changed.
+            rollback_step = "reassert_recovery_journal"
+            save_state(layout, state)
             rollback_step = "apply_definitions"
             if previous:
                 previous_root = layout.releases / previous
@@ -1473,6 +1490,19 @@ def _activate_release(
             else:
                 _restore_pending_first_activation(layout, release_root)
         except Exception as rollback_error:
+            # A failed rollback is not a boot authorization. Attempt each
+            # containment action independently; retain the original journal.
+            for action in (_disable_target, _quiesce_runtime, _disable_power_lifecycle_reporters):
+                try:
+                    action(layout)
+                except Exception:
+                    pass
+            if previous is None:
+                for action in (_remove_first_activation_gui_handoff, _disable_stable_updater_timer):
+                    try:
+                        action(layout)
+                    except Exception:
+                        pass
             _append_history(
                 state,
                 "automatic_rollback_failed",
@@ -1488,11 +1518,12 @@ def _activate_release(
             )
             save_state(layout, state)
             raise TransactionError("Aktivering og automatisk rollback fejlede") from rollback_error
-        state["active_release_id"] = previous
-        state["previous_release_id"] = None
-        state["activation_intent"] = None
+        restored = deepcopy(state)
+        restored["active_release_id"] = previous
+        restored["previous_release_id"] = None
+        restored["activation_intent"] = None
         _append_history(
-            state,
+            restored,
             "automatic_rollback_completed",
             failed_release_id=release_id,
             restored_release_id=previous,
@@ -1500,10 +1531,22 @@ def _activate_release(
             activation_failure=activation_failure,
         )
         _record_durable_rollback_outcome(
-            state, permit_id=manual_rollback_permit_id,
+            restored, permit_id=manual_rollback_permit_id,
             target=release_id, outcome="failed",
         )
-        save_state(layout, state)
+        try:
+            save_state(layout, restored)
+        except Exception as commit_error:
+            for action in (_disable_target, _quiesce_runtime, _disable_power_lifecycle_reporters):
+                try:
+                    action(layout)
+                except Exception:
+                    pass
+            _append_history(state, "automatic_rollback_failed", release_id=release_id,
+                            previous_release_id=previous,
+                            rollback_failure=_safe_failure_details(commit_error, "commit_rollback_outcome"))
+            save_state(layout, state)
+            raise TransactionError("Rollback journal kunne ikke committed; recovery intent er bevaret") from commit_error
         raise TransactionError("Aktivering fejlede; tidligere release blev automatisk gendannet") from activation_error
     return {"status": "active", "release_id": release_id, "previous_release_id": previous}
 
@@ -1740,10 +1783,19 @@ def recover_failed_update(
                         "schema_version": 1, "owner": "update_clientflow", "operation_id": post_boot,
                     }):
                 raise TransactionError("Post-boot recovery har mistet sin autoriserede installationslås")
-        elif any((state.get("active_release_id") != previous,
-                  state.get("staged_release_id") != failed,
-                  state.get("previous_release_id") is not None)):
-            raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
+        else:
+            if (state.get("active_release_id") != previous
+                    or state.get("staged_release_id") != failed):
+                raise TransactionError("Recovery afvist: durable activation-state matcher ikke forventet fejl")
+            # A second forward update can legitimately retain the older
+            # predecessor from the last successful activation. It is not the
+            # recovery target: only the current durable intent chooses that.
+            historical = state.get("previous_release_id")
+            if historical is not None:
+                historical = _validate_release_id(historical)
+                if (historical not in state["installed"]
+                        or int(historical.rsplit("-seq-", 1)[1]) >= int(previous.rsplit("-seq-", 1)[1])):
+                    raise TransactionError("Recovery afvist: ugyldig historisk predecessor")
         if not isinstance(state.get("installed"), dict) or not {previous, failed}.issubset(state["installed"]):
             raise TransactionError("Recovery kræver begge installerede releases")
         if _read_active_release_id(layout) not in {previous, failed}:
