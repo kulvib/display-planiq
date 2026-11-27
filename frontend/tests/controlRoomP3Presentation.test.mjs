@@ -152,3 +152,18 @@ test("Livestream diagnostics do not confuse process, generation and recent media
   assert.match(diagnostics, /window.setTimeout\(load, 30_000\)/);
   assert.doesNotMatch(diagnostics, /formatDiagnosticDate\(client\?\.livestream_last_segment\)/);
 });
+
+
+test("Control Room data panels, inner sections and fields have explicit distinct surfaces", () => {
+  assert.match(diagnostics, /className="control-room-data-panel"/);
+  assert.match(detail, /\.MuiCard-root\.control-room-data-panel[\s\S]*?rgba\(148,163,184,0\.36\)/);
+  assert.match(diagnostics, /const sectionSx = [^\n]*rgba\(15,23,42,0\.72\)[^\n]*rgba\(148,163,184,0\.24\)/);
+  assert.match(diagnostics, /MuiInputBase-root[^\n]*rgba\(2,6,23,0\.48\)/);
+  assert.match(diagnostics, /Mui-focused \.MuiOutlinedInput-notchedOutline/);
+});
+
+test("diagnostics names unverified rows without converting them to errors or OK", () => {
+  assert.match(diagnostics, /const unverifiedServiceRows = serviceRows\.filter/);
+  assert.match(diagnostics, /!\["ok", "warn", "error"\]\.includes\(serviceLevels\[index\]\)/);
+  assert.match(diagnostics, /unverifiedServiceRows\.map\(\(row\) => row\.label\)\.join/);
+});
