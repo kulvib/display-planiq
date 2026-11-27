@@ -36,18 +36,26 @@ def _isolated(tmp_path: Path) -> Path:
     for file in FILES:
         dest = target / file
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / file, dest)
+        shutil.copy2(ROOT / (FILES[3] if file == FILES[0] else file), dest)
     return target
 
 
-def test_promoted_catalog_has_exact_pinned_bytes_and_three_selectors():
+@pytest.fixture(autouse=True)
+def historical_1248_catalog(monkeypatch):
+    monkeypatch.setattr(releases, "CATALOG_PATH", SVC / "clientflow_release_catalog_1248_pilot.stage.json")
+    releases.load_catalog.cache_clear()
+    yield
+    releases.load_catalog.cache_clear()
+
+
+def test_promoted_catalog_has_exact_pinned_bytes_and_three_selectors(tmp_path):
     stage_path = SVC / "clientflow_release_catalog_1248_pilot.stage.json"
-    live_path = SVC / "clientflow_release_catalog.json"
+    live_path = _isolated(tmp_path) / FILES[0]
     assert live_path.read_bytes() == stage_path.read_bytes()
     stage = load_staged_catalog_1248()
     assert releases.load_catalog() == stage
     assert validated_catalog_mode_1248(active_catalog=stage) == "update_only_1248_pilot_catalog"
-    assert verified_mode(ROOT) == "update_only_1248_pilot_catalog"
+    assert verified_mode(live_path.parents[2]) == "update_only_1248_pilot_catalog"
     assert [r["release_sequence"] for r in stage["releases"]] == [1245, 1247, 1248]
     assert stage["retention_policy"] == {
         "max_selectable_versions": 3,
