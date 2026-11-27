@@ -42,7 +42,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { compactDarkChipSx } from "../../utils/chipStyles";
 import DateTimeEditDialog from "../calendarpage/DateTimeEditDialog";
 import { summarizeServiceLevels } from "../../utils/serviceHealthSummary.mjs";
-import { ubuntuInventoryView, diagnosticServiceLevel, defaultClientflowTarget } from "../../utils/controlRoomPresentation.mjs";
+import { ubuntuInventoryView, firmwareInventoryView, diagnosticServiceLevel, defaultClientflowTarget } from "../../utils/controlRoomPresentation.mjs";
 import { hasActiveLivestreamError } from "../../utils/livestreamHealth.mjs";
 import { calendarRebootView } from "./calendarRebootStatus.mjs";
 import ClientFlowHistoryOnDemand from "./ClientFlowHistoryOnDemand";
@@ -1900,7 +1900,8 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
   const [starting, setStarting] = React.useState(false);
   const [confirmation, setConfirmation] = React.useState(null);
   const supported = firmware?.supported === true;
-  const updateCount = Number.isSafeInteger(firmware?.update_count) && firmware.update_count >= 0 ? firmware.update_count : null;
+  const inventory = firmwareInventoryView(client);
+  const updateCount = inventory.count;
   const updateAvailable = firmware?.update_available === true && updateCount > 0;
   const requiresShutdown = firmware?.requires_shutdown === true;
   const inProgress = client?.pending_firmware_update === true || ["requested", "installing"].includes(String(client?.firmware_update_status || ""));
@@ -1921,21 +1922,8 @@ function FirmwareUpdateControl({ client, clientOnline, showSnackbar, onStarted, 
     }
   };
 
-  let statusText = "Status ikke rapporteret";
-  let statusColor = MUTED;
-  if (supported && firmware?.stale === false && updateCount !== null) {
-    if (updateAvailable) {
-      statusText = `${updateCount} opdatering${updateCount === 1 ? "" : "er"} tilgængelig${updateCount === 1 ? "" : "e"}`;
-      statusColor = "#fbbf24";
-    } else {
-      statusText = "Ingen firmwareopdateringer fundet i lokal metadata";
-      statusColor = "#22c55e";
-    }
-  }
-  if (firmware?.stale === true) {
-    statusText = "Firmwarestatus forældet";
-    statusColor = MUTED;
-  }
+  let statusText = inventory.label;
+  let statusColor = inventory.level === "ok" ? "#22c55e" : inventory.level === "warn" ? "#fbbf24" : MUTED;
   if (firmware?.error) {
     statusText = `Firmware-statusfejl: ${firmware.error}`;
     statusColor = "#f87171";
@@ -2753,6 +2741,7 @@ function DiagnosticsPanel({ client, onRefresh }) {
   const networkMessage = networkStatusMessage(client);
   const networkUnavailable = isNetworkUnavailable(client);
   const ubuntuView = ubuntuInventoryView(client);
+  const firmwareView = firmwareInventoryView(client);
   const ubuntuUpdateCount = ubuntuView.count;
   const hasUbuntuUpdates = Number.isFinite(ubuntuUpdateCount) && ubuntuUpdateCount > 0;
   const pendingChromeAction = normalizeText(client?.pending_chrome_action || "none");
@@ -3061,10 +3050,11 @@ function DiagnosticsPanel({ client, onRefresh }) {
     },
     {
       title: "Opdateringer",
-      description: "Ubuntu-pakker. ClientFlow-deployments vises i Software-panelet fra den canonical deployment-state-machine.",
+      description: "Verificerede Ubuntu- og firmwaremålinger fra System-agenten. ClientFlow-deployments vises i Software-panelet.",
       columns: 2,
       rows: [
-        { label: "Ubuntu updates", value: ubuntuView.label, level: ubuntuView.level },
+        { label: "Ubuntu-pakker", value: ubuntuView.label, level: ubuntuView.level },
+        { label: "Firmware", value: firmwareView.label, level: firmwareView.level },
         { label: "Ubuntu update broker", value: client?.service_ubuntu_update_status, service: true, unit: "clientflow-system-broker.socket" },
         { label: "Pending OS update", value: formatDiagnosticBoolean(client?.pending_os_update), boolean: client?.pending_os_update, trueLevel: "info" },
       ],

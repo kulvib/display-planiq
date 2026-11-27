@@ -1770,7 +1770,9 @@ def get_chrome_status(id: int, session=Depends(get_session), user=Depends(get_cu
     )[client_id]
     system_commands = load_latest_system_projection_commands(session, [client_id]).get(client_id)
 
-    _apply_status_runtime_snapshot(client, presence)
+    # Same canonical Status/System inventory as the full detail read.
+    # All rows are already loaded by the joined presence query above.
+    _apply_presence_for_read(client, presence)
     _apply_display_projection_for_read(
         session,
         client,

@@ -55,6 +55,11 @@ class LivestreamHandler:
                 # Wait within the existing 45s lease-backed command budget;
                 # a fast local retry can finish without a new backend claim.
                 status = self._wait_producer(generation_id, {"running"})
+                # Keep the acknowledgement boundary independently fail-closed.
+                if status.get("state") == "retrying":
+                    raise CommandRejected("producer_retrying", "Livestream afventer kontrolleret nyt capture-forsøg", retryable=True)
+                if status.get("state") != "running" or status.get("generation_id") != generation_id:
+                    raise CommandRejected("producer_not_ready", "Livestream-generation er ikke verificeret klar", retryable=True)
                 generation = self.transport.json_request(
                     "POST",
                     f"/api/livestream-agent/clients/{client_id}/generations/{generation_id}/started",

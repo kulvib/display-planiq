@@ -201,7 +201,9 @@ test("63D-73E warm tab keeps the player and health polling independent of bearer
   assert.match(source, /const hasMediaCapability = mediaCapabilityClientId !== null && mediaCapabilityClientId === clientId/);
   assert.match(source, /mediaCapabilityRef\.current = String\(payload\.media_capability\);\s*setMediaCapabilityClientId\(clientId\)/);
   assert.doesNotMatch(source, /setMediaCapability\(/);
-  assert.equal([...source.matchAll(/pageVisible, hasMediaCapability, mobileViewerActive/g)].length, 2);
+  // Health, player and pre-manifest recovery share the same readiness
+  // gate; none may depend on the rotating bearer string.
+  assert.equal([...source.matchAll(/pageVisible, hasMediaCapability, mobileViewerActive/g)].length, 3);
   assert.doesNotMatch(source, /pageVisible, mediaCapability, mobileViewerActive/);
   assert.match(source, /Authorization: `Bearer \$\{mediaCapabilityRef\.current\}`/);
   assert.match(source, /const token = mediaCapabilityRef\.current;\s*if \(token\) xhr\.setRequestHeader/);
