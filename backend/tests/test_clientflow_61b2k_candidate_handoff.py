@@ -224,9 +224,9 @@ def test_workflows_run_same_strict_handoff_gate_before_attestation_and_manual_ap
         assert '--handoff "$RUNNER_TEMP/handoff"' in content
         assert not any(action in content[content.rindex('verify_clientflow_candidate_handoff.py'):content.rindex('verify_clientflow_candidate_handoff.py')+150]
                        for action in ('--approve-release', '--publish-release'))
+        assert yaml.safe_load(content)['on']['workflow_dispatch']['inputs']
     assert '--source-preflight-only' not in approve
     assert '--source-preflight-only' not in build[build.index('Verify complete unapproved candidate handoff'):]
-        assert yaml.safe_load(content)['on']['workflow_dispatch']['inputs']
 
 
 def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1248():
