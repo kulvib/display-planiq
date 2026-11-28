@@ -1,0 +1,11 @@
+# ClientFlow 1.4.2 / 1252 — unsigned recovery candidate source stage
+
+Base main: 69d4f180f433cfde1160620682c63512394c6c48 (68N-B1). Recovery-journal source regression baseline: f31497c01048898245e25bc3a11356422c404134 (PR 450, green CI before identity transition).
+
+This source-only stage changes the canonical version and sequence, gates candidate builds on the exact closed 1251 catalog and immutable approved 1251/recovery inventory, and rejects rebuilding the approved 1251 identity from a different source. Historical source validators and tests retain exact approved catalog and artifact fixtures. No client runtime change beyond the existing draft recovery fixes in this stage. No runtime inputs changed.
+
+The read-only candidate build preflight queries paginated GitHub tags and visible releases/assets using the existing workflow token, rejects collisions with either version or sequence, and stops if inventory cannot be checked. The connected PR/commit/branch searches did not locate an existing 1252 identity; the full release/tag inventory is not verified by those searches. The operator must independently verify unpublished identity, including any inaccessible drafts and existing candidate build history, before dispatch. A clean inventory check is not release approval or an atomic reservation. Use only one reviewed exact source SHA for the candidate.
+
+The 1251 approved artifact, current standard catalog, policy revision 3, 1250 recovery predecessor and retained 1248/1250/1251 store remain unchanged. No deployment, fleet, rollback, fresh-install, retention deletion, signing, migration or authorization is granted. Do not change the standard or Native RDP eligibility by replacing version constants. The exact candidate artifact approval and a separately scoped 1251-to-1252 update/recovery authorization and RD continuity plan must precede physical installation.
+
+Remaining gates: complete CI on the staged SHA; inventory confirmation and operator build approval; remaining installation and recovery review; reproducible candidate build and exact provenance; independent physical recovery acceptance; separately authorized fresh-install and fleet acceptance. External encrypted backup and off-host restore remain open. No new paid service.
