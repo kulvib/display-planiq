@@ -75,8 +75,8 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
 
     # Only exactly approved and published 1.3.38/1239 is selectable.
     # The previous 1.3.37/1238 selector is removed; history is preserved as evidence.
-    assert source_version == "1.4.1"  # approved source identity
-    assert release_input["release_sequence"] == 1251
+    assert source_version == "1.4.2"  # unsigned successor source identity
+    assert release_input["release_sequence"] == 1252
     assert release_input["runtime_python"] == "3.13.14"
     assert data["catalog_sequence"] == 1243
     assert data["catalog_sequence"] == 1243  # immutable pre-reset history
@@ -86,7 +86,7 @@ def test_catalog_1239_promoted_after_exact_approval_and_publication() -> None:
     assert current["catalog_sequence"] == 1251
     from service1.clientflow_closed_standard_1251 import closed_standard_catalog
     assert current == closed_standard_catalog()
-    assert release_input["release_sequence"] == 1251
+    assert release_input["release_sequence"] == 1252
     assert data["latest_stable"] == "1.3.38"
     assert data["default_install_version"] == "1.3.38"
     assert release["release_id"] == "clientflow-1.3.38-seq-1239"

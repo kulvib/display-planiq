@@ -179,6 +179,10 @@ def test_failed_first_activation_restores_pending_definitions_and_keeps_updater_
         "switch",
         "prepare",
         "start",
+        # Revoke persistent boot and updater authority before recovery,
+        # then reassert the disabled state after pending definitions return.
+        "disable",
+        "updater-disabled",
         "quiesce",
         "definitions",
         "prepare",

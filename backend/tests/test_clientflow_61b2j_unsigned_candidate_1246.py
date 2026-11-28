@@ -44,8 +44,8 @@ def _rehash(root: Path, name: str) -> None:
 
 
 def test_unsigned_candidate_has_new_source_identity_and_no_approval():
-    assert (ROOT / 'client/VERSION').read_text().strip() == '1.4.1'
-    assert json.loads((ROOT / 'client/release/release-input.json').read_text())['release_sequence'] == 1251
+    assert (ROOT / 'client/VERSION').read_text().strip() == '1.4.2'
+    assert json.loads((ROOT / 'client/release/release-input.json').read_text())['release_sequence'] == 1252
     result = gate.inspect(ROOT)
     assert result['source_verified'] is True, result['checks']
     assert result['candidate_identity_advanced'] is True

@@ -24,11 +24,11 @@ def _json(name: str) -> dict:
 
 
 def test_1244_successor_preserves_strict_published_1242_pilot_catalog() -> None:
-    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.4.1"
+    assert (ROOT / "client/VERSION").read_text(encoding="utf-8").strip() == "1.4.2"
     source = _json("client/release/release-input.json")
     assert source == {
         "schema_version": 1,
-        "release_sequence": 1251,
+        "release_sequence": 1252,
         "minimum_ubuntu_lts": "26.04",
         "architecture": "amd64",
         "runtime_python": "3.13.14",
@@ -36,7 +36,7 @@ def test_1244_successor_preserves_strict_published_1242_pilot_catalog() -> None:
     catalog = _json("scripts/tests/fixtures/clientflow_1243_pre_reset_catalog.json")
     assert catalog["catalog_sequence"] == 1243
     assert catalog["catalog_sequence"] == 1243  # preserved pre-reset fixture
-    assert source["release_sequence"] == 1251
+    assert source["release_sequence"] == 1252
     assert catalog["latest_stable"] == catalog["default_install_version"] == "1.3.38"
     assert catalog["retention_policy"] == {"max_installable_versions": 1, "keep_blocked_metadata": False}
     assert [x["release_id"] for x in catalog["releases"]] == [
