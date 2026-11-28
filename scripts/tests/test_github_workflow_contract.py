@@ -9,7 +9,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
-FULL_SHA_ACTION_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}$")
 
 
 def _load(name: str) -> tuple[str, dict]:
@@ -20,31 +19,36 @@ def _load(name: str) -> tuple[str, dict]:
     return source, parsed
 
 
-def _external_actions(source: str) -> list[str]:
-    actions: list[str] = []
-    for raw_line in source.splitlines():
-        stripped = raw_line.strip()
-        if not stripped.startswith("uses:"):
-            continue
-        value = stripped.split(":", 1)[1].strip().split(" #", 1)[0]
-        if value.startswith("./"):
-            continue
-        actions.append(value)
-    return actions
-
-
 def test_external_actions_are_immutable_and_checkout_drops_credentials():
-    for workflow in (
-        "ci.yml",
-        "deployment-smoke.yml",
-        "release-build.yml",
-        "dependency-maintenance-candidate.yml",
-    ):
-        source, _ = _load(workflow)
-        actions = _external_actions(source)
-        assert actions
-        assert all(FULL_SHA_ACTION_RE.fullmatch(action) for action in actions)
-        assert "persist-credentials: false" in source
+    # Keep required workflows explicit; discover additional source workflows
+    # rather than making a retired one-off recipe a permanent dependency.
+    required = {
+        "ci.yml", "deployment-smoke.yml", "release-build.yml",
+        "release-approve.yml", "release-archive-approved.yml",
+        "single-node-smoke.yml", "freerdp-wasm-pilot.yml",
+        "livestream-mse-chromium.yml", "runtime-input-transport.yml",
+        "python-runtime-input-build.yml",
+    }
+    names = {path.name for pattern in ("*.yml", "*.yaml")
+             for path in WORKFLOW_DIR.glob(pattern)}
+    assert required <= names
+    for name in sorted(names):
+        _, workflow = _load(name)
+        for job in workflow["jobs"].values():
+            # Include reusable workflow references as well as action steps.
+            for step in (job, *job.get("steps", [])):
+                if "uses" not in step:
+                    continue
+                action = step["uses"]
+                assert isinstance(action, str)
+                if action.startswith("./"):
+                    continue
+                assert re.fullmatch(
+                    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?@[0-9a-f]{40}",
+                    action,
+                ), (name, action)
+                if action.startswith("actions/checkout@"):
+                    assert step.get("with", {}).get("persist-credentials") is False, name
 
 
 def test_ci_uses_read_only_permissions_and_safe_triggers():
@@ -66,10 +70,21 @@ def test_production_smoke_is_manual_main_only_and_uses_dispatched_sha():
     assert "python scripts/check_production_readiness.py" in source
     assert "secrets." not in source
 
-def test_dependency_maintenance_candidate_keeps_pyjwt_security_floor():
-    source, _ = _load("dependency-maintenance-candidate.yml")
-    assert 'text.count("PyJWT==2.15.1") != 1' in source
-    assert '"security_floor": {"PyJWT": "2.15.1"}' in source
+def test_pyjwt_security_floor_survives_retirement_of_dependency_maintenance_recipe():
+    assert "PyJWT==2.15.1" in (ROOT / "backend/requirements.txt").read_text().splitlines()
+    for path in ("backend/requirements.lock.txt", "requirements-ci.lock.txt"):
+        source = (ROOT / path).read_text()
+        assert re.search(r"(?m)^pyjwt==2\.15\.1 \\\n\s+--hash=sha256:[0-9a-f]{64}", source), path
+    assert '"PyJWT==2.15.1"' in (ROOT / "client/runtime/pyproject.toml").read_text()
+    lock = json.loads((ROOT / "client/release/runtime-platform-inputs.lock.json").read_text())
+    rows = [row for row in lock["artifacts"] if row["file"].lower().startswith("pyjwt-")]
+    assert len(rows) == 1
+    assert rows[0]["file"] == "pyjwt-2.15.1-py3-none-any.whl"
+    # If a replacement recipe is added, retain the original safeguards too.
+    if (WORKFLOW_DIR / "dependency-maintenance-candidate.yml").exists():
+        source, _ = _load("dependency-maintenance-candidate.yml")
+        assert 'text.count("PyJWT==2.15.1") != 1' in source
+        assert '"security_floor": {"PyJWT": "2.15.1"}' in source
 
 def test_backend_ci_does_not_duplicate_dedicated_python_gates():
     source, _ = _load("ci.yml")
