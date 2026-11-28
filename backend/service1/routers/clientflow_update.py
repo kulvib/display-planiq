@@ -444,6 +444,11 @@ def authorize_clientflow_artifact_download(
         "release_sequence": deployment.target_release_sequence,
     }
     try:
+        from ..clientflow_managed_rollout import require_access
+        try:
+            require_access(session, deployment)
+        except (ValueError, RuntimeError) as exc:
+            raise ClientFlowArtifactAuthorizationError(str(exc)) from exc
         verify_artifact_matches_deployment(
             release,
             deployment_release_id=deployment.target_release_id,

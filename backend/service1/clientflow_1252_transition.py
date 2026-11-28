@@ -17,7 +17,6 @@ from .clientflow_pilot_1251 import (
 CANDIDATE_ID = "clientflow-1.4.2-seq-1252"
 CANDIDATE_VERSION = "1.4.2"
 CANDIDATE_SEQUENCE = 1252
-PILOT_CLIENT_ID = 3
 OLDEST_ID = "clientflow-1.3.47-seq-1248"
 
 
@@ -39,13 +38,13 @@ def is_candidate_order(row) -> bool:
 
 
 def require_candidate_observation(row, event_type: str, payload: Mapping) -> None:
-    require(type(row.client_id) is int and row.client_id == PILOT_CLIENT_ID
+    require(type(row.client_id) is int and row.client_id > 0
             and row.target_release_id == CANDIDATE_ID
             and row.target_version == CANDIDATE_VERSION
             and type(row.target_release_sequence) is int
             and row.target_release_sequence == CANDIDATE_SEQUENCE
             and row.allow_downgrade is False,
-            "1252 kræver eksakt Viborg1 forward-update")
+            "1252 kræver eksakt forward-update")
     if event_type == "succeeded":
         require(payload.get("observed_release_id") == CANDIDATE_ID
                 and type(payload.get("observed_release_sequence")) is int

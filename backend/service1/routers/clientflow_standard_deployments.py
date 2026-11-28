@@ -40,6 +40,7 @@ from ..clientflow_standard_release import (
     StandardReleaseDenied, require_cutover_authority, validate_baseline_catalog, validate_selection,
 )
 from ..clientflow_update_models import ClientFlowDeployment, ClientFlowUpdateCredential
+from ..clientflow_rollout_scope import RolloutScope, require_organization_binding
 from ..db import get_session
 from ..models import Client
 from ..system_control import lock_system_client
@@ -53,6 +54,7 @@ class Target(BaseModel):
     model_config = ConfigDict(extra="forbid")
     client_id: int = Field(strict=True, gt=0)
     expected_source_version: str = Field(min_length=5, max_length=40)
+    expected_organization_id: int | None = Field(default=None, strict=True, gt=0)
 
 
 class StandardOrder(BaseModel):
@@ -61,6 +63,7 @@ class StandardOrder(BaseModel):
     expected_bundle_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     expected_revision: int = Field(strict=True, ge=1)
     targets: list[Target] = Field(min_length=1, max_length=MAX_REQUEST_CLIENTS)
+    organization_scope: RolloutScope | None = None
     confirmed: bool = Field(strict=True)
     password: str = Field(min_length=1, max_length=256)
 
@@ -155,6 +158,7 @@ def authorize_standard_deployments(
         if body.confirmed is not True or body.target_release_id != BASELINE_ID:
             raise StandardReleaseDenied("Bekræft den konkrete standardrelease")
         selected = validate_selection([(target.client_id, target.expected_source_version) for target in body.targets])
+        target_by_id = {target.client_id: target for target in body.targets}
         catalog = load_catalog()
         validate_baseline_catalog(catalog)
         # Reject the default-closed control before expensive artifact reads.
@@ -185,6 +189,7 @@ def authorize_standard_deployments(
             if client is None:
                 raise StandardReleaseDenied(f"Klient #{client_id} findes ikke")
             session.refresh(client)
+            require_organization_binding(body.organization_scope, target_by_id[client_id], client)
             _require_deployable_client(session, client)
             version = _canonical_runtime_version(session, client)
             if version != expected_version:
@@ -221,7 +226,9 @@ def authorize_standard_deployments(
                 severity="warning", details={"deployment_id": deployment.id, "client_id": client.id,
                     "source_version": version, "target_release_id": BASELINE_ID,
                     "bundle_sha256": artifact["bundle_sha256"], "policy_revision": control.revision,
-                    "reason": reason, "allow_downgrade": False},
+                    "reason": reason, "allow_downgrade": False,
+                    "organization_scope": body.organization_scope.model_dump() if body.organization_scope else None,
+                    "organization_id": client.organization_id},
             )
             rows.append({"deployment_id": deployment.id, "client_id": int(client.id), "state": "authorized"})
         session.commit()
@@ -505,3 +512,75 @@ def authorize_successor_pilot(
             ClientFlowReleaseSecurityDenied, ClientFlowDeploymentConflict, IntegrityError, OSError) as exc:
         session.rollback()
         raise HTTPException(status_code=409, detail="1251-pilotbestillingen kunne ikke verificeres") from exc
+
+
+# Version-independent managed forward order. The existing closed standard
+# remains the rollback predecessor until the reviewed policy transition.
+@router.get("/managed/availability")
+def managed_deployment_availability(
+    request: Request, response: Response, session: Session = Depends(get_session),
+    user=Depends(get_current_superadmin_user),
+):
+    from .. import clientflow_managed_rollout as managed
+    _require_actor(request, user)
+    _no_store(response)
+    try:
+        policy = managed.current_policy()
+        control = managed.require_control(session, policy)
+        artifact = managed.require_store(policy)
+        return {"available": True, "target_release_id": artifact["target_release_id"],
+                "target_version": artifact["target_version"], "source_version": policy.source["target_version"],
+                "bundle_sha256": artifact["bundle_sha256"], "revision": control.revision,
+                "max_clients": MAX_REQUEST_CLIENTS, "rollback_available": False}
+    except (ValueError, RuntimeError, OSError):
+        return {"available": False, "reason": "Managed releaseautorisation eller lager afventer verificering",
+                "rollback_available": False}
+
+
+@router.post("/managed", status_code=201)
+def authorize_managed_deployments(
+    body: StandardOrder, request: Request, response: Response,
+    session: Session = Depends(get_session), user=Depends(get_current_superadmin_user),
+):
+    from .. import clientflow_managed_rollout as managed
+    _require_actor(request, user)
+    _no_store(response)
+    try:
+        policy = managed.current_policy()
+        managed.require(body.confirmed is True and body.target_release_id == policy.target["target_release_id"]
+                        and body.expected_bundle_sha256 == policy.target["bundle_sha256"]
+                        and body.expected_revision == policy.revision, "Releasebestilling matcher ikke politik")
+        selected = managed.select_targets(policy, body.targets)
+        managed.require_control(session, policy)
+        _reauth(request, session, user, body.password)
+        artifact = managed.require_store(policy)
+        for target in selected:
+            lock_system_client(session, target.client_id)
+        control = managed.require_control(session, policy, lock=True)
+        verified = []
+        for target in selected:
+            client = managed.require_client(session, target.client_id, policy)
+            require_organization_binding(body.organization_scope, target, client)
+            verified.append(client)
+        rows = []
+        for client in verified:
+            reason = f"ClientFlow-opdatering {policy.source['target_version']} → {artifact['target_version']}"
+            deployment = create_authorized_deployment(session, client_id=client.id,
+                requested_by_user_id=int(user.id), **artifact, allow_downgrade=False,
+                reason=reason, managed_authority=managed.MANAGED_AUTHORITY)
+            add_audit_log(session, action="clientflow_managed_deployment_authorized", request=request,
+                actor=user, target_organization_id=client.organization_id, entity_type="clientflow_deployment",
+                entity_id=client.id, entity_label=f"{client.name} → {artifact['target_version']}",
+                severity="warning", details={"deployment_id": deployment.id, **artifact,
+                    "source_release_id": policy.source["target_release_id"], "policy_revision": control.revision,
+                    "organization_scope": body.organization_scope.model_dump() if body.organization_scope else None,
+                    "organization_id": client.organization_id, "allow_downgrade": False})
+            rows.append({"deployment_id": deployment.id, "client_id": client.id, "state": "authorized"})
+        session.commit()
+        return {"target_release_id": artifact["target_release_id"], "deployments": rows}
+    except HTTPException:
+        session.rollback()
+        raise
+    except (ValueError, RuntimeError, IntegrityError, OSError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Managed bestilling kunne ikke verificeres") from exc
