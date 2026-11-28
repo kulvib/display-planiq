@@ -78,11 +78,11 @@ def test_cli_is_readonly_and_requires_explicit_candidate_gate():
 
 def test_new_unsigned_source_identity_can_pass_only_build_eligibility(tmp_path):
     root = _copy_repository(tmp_path)
-    (root / 'client/VERSION').write_text('1.4.1\n')
+    (root / 'client/VERSION').write_text('1.4.2\n')
     _rehash(root, 'client/VERSION')
     release_input = root / 'client/release/release-input.json'
     record = json.loads(release_input.read_text())
-    record['release_sequence'] = 1251
+    record['release_sequence'] = 1252
     release_input.write_text(json.dumps(record) + '\n')
     _rehash(root, 'client/release/release-input.json')
     result = gate.inspect(root)
@@ -95,7 +95,7 @@ def test_new_unsigned_source_identity_can_pass_only_build_eligibility(tmp_path):
     assert result['pilot_accepted'] is False
 
 
-@pytest.mark.parametrize('version,sequence', [('1.3.44', 1246), ('1.3.45', 1245), ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.43', 1246), ('1.3.47', 1248), ('1.3.48', 1248), ('1.3.48', 1249), ('1.4.0', 1249), ('1.3.48', 1250), ('1.4.0', 1250), ('1.4.0', 1251), ('1.4.1', 1250), ('1.4.2', 1252)])
+@pytest.mark.parametrize('version,sequence', [('1.3.44', 1246), ('1.3.45', 1245), ('1.3.45', 1246), ('1.3.46', 1246), ('1.3.43', 1246), ('1.3.47', 1248), ('1.3.48', 1248), ('1.3.48', 1249), ('1.4.0', 1249), ('1.3.48', 1250), ('1.4.0', 1250), ('1.4.0', 1251), ('1.4.1', 1250), ('1.4.1', 1251), ('1.4.1', 1252), ('1.4.2', 1251), ('1.4.3', 1253)])
 def test_version_and_sequence_both_must_advance(tmp_path, version, sequence):
     root = _copy_repository(tmp_path)
     (root / 'client/VERSION').write_text(version + '\n')
@@ -187,3 +187,32 @@ def test_approved_1250_lock_cannot_change_even_with_rehash(tmp_path):
     assert report['checks']['complete_sha256_manifest']['pass'] is True
     assert report['checks']['unchanged_approved_1250_lock']['pass'] is False
     assert report['source_verified'] is False
+
+
+@pytest.mark.parametrize('name', [
+    'backend/service1/clientflow_pilot_1251_approval.json',
+    'backend/service1/clientflow_1251_archive_inventory.json',
+    'backend/service1/clientflow_release_catalog_1251_closed.stage.json',
+])
+def test_approved_1251_recovery_inputs_cannot_change_even_with_rehash(tmp_path, name):
+    root = _copy_repository(tmp_path)
+    path = root / name
+    # Change bytes without changing the parsed JSON object.
+    path.write_bytes(path.read_bytes() + b'\n')
+    _rehash(root, name)
+    report = gate.inspect(root)
+    assert report['checks']['complete_sha256_manifest']['pass'] is True
+    assert report['checks']['unchanged_approved_1251_lock']['pass'] is False
+    assert report['source_verified'] is False
+    assert report['candidate_identity_advanced'] is False
+
+
+def test_new_candidate_requires_exact_closed_1251_active_catalog(tmp_path):
+    root = _copy_repository(tmp_path)
+    name = 'backend/service1/clientflow_release_catalog.json'
+    (root / name).write_bytes((root / 'backend/service1/clientflow_release_catalog_1250_closed.stage.json').read_bytes())
+    _rehash(root, name)
+    report = gate.inspect(root)
+    assert report['source_verified'] is True
+    assert report['candidate_identity_advanced'] is False
+    assert report['deployment_authorized'] is False
