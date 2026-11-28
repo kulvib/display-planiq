@@ -1,6 +1,6 @@
 # 68N-B2 – draft recovery-journal candidate; not authorized for build or merge
 
-Baseline main 69d4f180f433cfde1160620682c63512394c6c48; installed and approved 1.4.1/1251 stays immutable. This draft intentionally retains current source identity until a separately reviewed candidate identity transition. Do not build, publish, merge, deploy or patch Viborg1 from this branch. Before ready-for-review, allocate a new release identity (proposed 1.4.2/1252, subject to repository release inventory), update source/version/identity contracts and prove the exact candidate. A green draft CI is source regression evidence, not artifact authorization.
+Baseline main 69d4f180f433cfde1160620682c63512394c6c48; installed and approved 1.4.1/1251 stays immutable. The draft initially retained the prior source identity; 68N-B3 stages a separate unsigned 1.4.2/1252 source identity. Do not build, publish, merge, deploy or patch Viborg1 from this branch until its complete CI, actual release/tag inventory and remaining recovery/installation review are complete. A green draft CI is source regression evidence, not artifact authorization.
 
 ## Concrete source findings and candidate changes
 
