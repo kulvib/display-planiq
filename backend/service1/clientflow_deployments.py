@@ -13,6 +13,9 @@ from .clientflow_release_security_policy import (
     require_centrally_eligible_release,
 )
 from .realtime_wakeup import queue_release_admin_wakeup
+from .clientflow_1252_transition import (
+    Candidate1252Denied, is_candidate_order, require_candidate_observation,
+)
 from .clientflow_update_models import (
     CLIENTFLOW_DEPLOYMENT_CANCELLABLE_STATES,
     CLIENTFLOW_DEPLOYMENT_TERMINAL_STATES,
@@ -328,6 +331,13 @@ def report_updater_event(
 ) -> tuple[ClientFlowDeployment, ClientFlowDeploymentEvent, bool]:
     """Apply one authenticated updater observation through backend-owned transitions."""
     deployment = deployment_for_update(session, deployment_id)
+    data = dict(payload or {})
+    candidate = is_candidate_order(deployment)
+    if candidate:
+        try:
+            require_candidate_observation(deployment, event_type, data)
+        except Candidate1252Denied as exc:
+            raise ClientFlowDeploymentConflict(str(exc)) from exc
     existing = _idempotent_event(
         session,
         event_id=event_id,
@@ -336,9 +346,10 @@ def report_updater_event(
         event_type=event_type,
     )
     if existing is not None:
+        if candidate and existing.payload != data:
+            raise ClientFlowDeploymentConflict("1252 event replay matcher ikke original payload")
         return deployment, existing, True
 
-    data = dict(payload or {})
     transitions: dict[str, dict[str, str]] = {
         "download_started": {"authorized": "downloading"},
         "bundle_verified": {"downloading": "verified"},
@@ -368,6 +379,18 @@ def report_updater_event(
             raise ClientFlowDeploymentConflict(
                 f"Event {event_type!r} er ikke gyldig fra state {deployment.state!r}"
             )
+        if candidate and event_type == "rolled_back":
+            # The authenticated terminal report must complete the original
+            # rollback-start observation, not invent a different restored ID
+            # or silently cross to a re-provisioned updater credential.
+            starts = session.exec(select(ClientFlowDeploymentEvent).where(
+                ClientFlowDeploymentEvent.deployment_id == deployment.id,
+                ClientFlowDeploymentEvent.event_type == "rollback_started",
+            ).limit(2)).all()
+            if (len(starts) != 1 or starts[0].credential_id != credential_id
+                    or starts[0].payload.get("failed_release_id") != data["failed_release_id"]
+                    or starts[0].payload.get("restored_release_id") != data["restored_release_id"]):
+                raise ClientFlowDeploymentConflict("1252 recovery mangler matchende rollback-start")
         if event_type == "succeeded":
             observed_release_id = str(data.get("observed_release_id") or "").strip()
             try:
