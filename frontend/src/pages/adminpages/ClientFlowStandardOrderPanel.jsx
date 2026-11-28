@@ -3,6 +3,8 @@ import { Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogConten
 import client from "../../api/client";
 import { BASELINE_ID, BASELINE_VERSION, MAX_ORDER_CLIENTS, eligibleOrderClients, prepareOrderTargets, validateOrderAvailability, verifyOrderResult } from "./clientflowStandardOrders.mjs";
 
+import { organizationOptions, organizationScope, filterRolloutClients, visibleSelection, bindOrganizationTargets } from "./clientflowRolloutSelection.mjs";
+
 const ORDER_PATH = "/api/clientflow/standard-deployments";
 
 export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
@@ -21,22 +23,15 @@ export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
     return () => { mounted.current = false; request.current?.abort(); };
   }, []);
   const eligible = React.useMemo(() => eligibleOrderClients(status), [status]);
-  const ids = React.useMemo(() => new Set(eligible.map((row) => row.id)), [eligible]);
+  const organizations = React.useMemo(() => organizationOptions(status.available_clients || []), [status.available_clients]);
+  const filtered = React.useMemo(() => filterRolloutClients(eligible, organization, query), [eligible, organization, query]);
+  const ids = React.useMemo(() => new Set(filtered.map(row=>row.id)), [filtered]);
+  const visible = visibleSelection(selected, filtered, MAX_ORDER_CLIENTS);
   React.useEffect(() => {
-    setSelected((previous) => previous.filter((id) => ids.has(id)));
-  }, [ids]);
-  const organizations = React.useMemo(() => {
-    const groups = new Map();
-    for (const row of eligible) {
-      const key = String(row.organization_id ?? "none");
-      groups.set(key, row.organization_name || (key === "none" ? "Ingen organisation" : "Organisation #" + key));
-    }
-    return [...groups].sort((a,b) => a[1].localeCompare(b[1], "da"));
-  }, [eligible]);
-  const filtered = eligible.filter((row) => (
-    (organization === "all" || String(row.organization_id ?? "none") === organization) &&
-    [row.name, row.id, row.locality, row.organization_name].filter(Boolean).join(" ").toLocaleLowerCase("da").includes(query.trim().toLocaleLowerCase("da"))
-  ));
+    setSelected(previous => visibleSelection(previous, filtered, MAX_ORDER_CLIENTS));
+  }, [filtered]);
+  const selectOrganization = value => {setOrganization(value);setSelected([]);setError("");};
+  const selectQuery = value => {setQuery(value);setSelected([]);setError("");};
   const allowed = status.standard_order_review_available === true && status.active_deployments_complete === true;
   const toggle = (id) => setSelected((previous) => previous.includes(id) ? previous.filter((value) => value !== id) :
     previous.length < MAX_ORDER_CLIENTS && ids.has(id) ? [...previous,id] : previous);
@@ -44,7 +39,7 @@ export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
   const review = async () => {
     if (busy || request.current || !allowed) return;
     let targets;
-    try { targets = prepareOrderTargets(status, selected); }
+    try { targets = bindOrganizationTargets(prepareOrderTargets(status, visible), filtered, organization); }
     catch (err) {setError(err.message);return;}
     const controller = new AbortController();
     request.current = controller;
@@ -53,7 +48,12 @@ export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
       const {data} = await client.get(ORDER_PATH + "/availability", {signal:controller.signal});
       const authority = validateOrderAvailability(data);
       if (!mounted.current || controller.signal.aborted) return;
-      setIntent({authority, targets, names:targets.map((target)=>eligible.find((row)=>row.id===target.client_id)?.name || "#" + target.client_id)});
+      if (authority.revision !== status.revision) throw new Error("Releasekontrollen er ændret – hent status igen");
+      setIntent({authority, targets, scope:organizationScope(organization), scopeKey:organization,
+        names:targets.map(target=>{
+          const row = filtered.find(value=>value.id===target.client_id);
+          return [row?.name || "#"+target.client_id, row?.organization_name || "Ingen organisation"].join(" · ");
+        })});
     } catch (err) {
       if (mounted.current && !controller.signal.aborted) setError(err?.message || "Kunne ikke kontrollere releaseautorisation");
     } finally {
@@ -66,13 +66,14 @@ export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
     if (busy || request.current || !intent || !password || !allowed) return;
     let targets;
     try {
-      targets = prepareOrderTargets(status, intent.targets.map((row)=>row.client_id));
-      if (JSON.stringify(targets)!==JSON.stringify(intent.targets)) throw new Error("Klientvalget er ændret");
+      targets = bindOrganizationTargets(prepareOrderTargets(status, intent.targets.map(row=>row.client_id)), filtered, organization);
+      if (intent.scopeKey !== organization || intent.authority.revision !== status.revision ||
+          JSON.stringify(targets)!==JSON.stringify(intent.targets)) throw new Error("Klientvalget, organisationen eller releasekontrollen er ændret");
     } catch (err) {setError(err.message);setIntent(null);setPassword("");return;}
     const controller = new AbortController();
     request.current = controller;
     const body = {target_release_id:BASELINE_ID, expected_bundle_sha256:intent.authority.bundle_sha256,
-      expected_revision:intent.authority.revision, targets, confirmed:true, password};
+      expected_revision:intent.authority.revision, organization_scope:intent.scope, targets, confirmed:true, password};
     setPassword("");setBusy(true);setError("");
     try {
       const {data} = await client.post(ORDER_PATH, body, {signal:controller.signal});
@@ -97,31 +98,32 @@ export default function ClientFlowStandardOrderPanel({status, onAuthorized}) {
       <Typography color="text.secondary">Vælg klienter enkeltvis eller efter organisation. Backend kontrollerer den præcise releasepakke, online-version og samtidige opdateringer inden bestilling.</Typography>
       {!allowed && <Alert severity="warning">Udrulning er lukket, eller klientstatus er ufuldstændig. Ingen installation kan bestilles.</Alert>}
       <Stack direction={{xs:"column",sm:"row"}} gap={1.5}>
-        <TextField fullWidth size="small" label="Søg klient" value={query} onChange={(event)=>setQuery(event.target.value)} />
-        <TextField select size="small" label="Organisation" value={organization} onChange={(event)=>setOrganization(event.target.value)} sx={{minWidth:200}}>
+        <TextField fullWidth size="small" label="Søg klient" value={query} disabled={busy || Boolean(intent)} onChange={(event)=>selectQuery(event.target.value)} />
+        <TextField select size="small" label="Organisation" value={organization} disabled={busy || Boolean(intent)} onChange={(event)=>selectOrganization(event.target.value)} sx={{minWidth:200}}>
           <MenuItem value="all">Alle organisationer</MenuItem>
           {organizations.map(([key,name])=><MenuItem key={key} value={key}>{name}</MenuItem>)}
         </TextField>
       </Stack>
       <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
-        <Chip label={selected.length + " / " + MAX_ORDER_CLIENTS + " valgt"} />
-        <Button size="small" disabled={!allowed || busy || selected.length>=MAX_ORDER_CLIENTS || !filtered.length}
-          onClick={()=>setSelected((previous)=>[...new Set([...previous,...filtered.map((row)=>row.id)])].slice(0,MAX_ORDER_CLIENTS))}>Vælg fra søgning</Button>
-        <Button size="small" disabled={busy || !selected.length} onClick={()=>setSelected([])}>Ryd valg</Button>
+        <Chip label={visible.length + " / " + MAX_ORDER_CLIENTS + " valgt"} />
+        <Button size="small" disabled={!allowed || busy || visible.length>=MAX_ORDER_CLIENTS || !filtered.length}
+          onClick={()=>setSelected([...new Set([...visible,...filtered.map(row=>row.id)])].slice(0,MAX_ORDER_CLIENTS))}>{filtered.length > MAX_ORDER_CLIENTS ? "Vælg op til "+MAX_ORDER_CLIENTS : "Vælg alle viste klienter"}</Button>
+        <Button size="small" disabled={busy || !visible.length} onClick={()=>setSelected([])}>Ryd valg</Button>
       </Stack>
       <Box sx={{maxHeight:340,overflowY:"auto",border:1,borderColor:"divider",borderRadius:2}}>
         {filtered.map((row)=><Box key={row.id} component="label" sx={{display:"flex",alignItems:"center",gap:1,p:1,borderBottom:1,borderColor:"divider"}}>
-          <Checkbox checked={selected.includes(row.id)} disabled={!allowed || busy || (!selected.includes(row.id) && selected.length>=MAX_ORDER_CLIENTS)}
+          <Checkbox checked={visible.includes(row.id)} disabled={!allowed || busy || (!visible.includes(row.id) && visible.length>=MAX_ORDER_CLIENTS)}
             onChange={()=>toggle(row.id)} inputProps={{"aria-label":"Vælg " + row.name}}/>
           <Box sx={{minWidth:0}}><Typography fontWeight={750}>{row.name}</Typography>
             <Typography variant="caption" color="text.secondary">{[row.organization_name,row.locality,"v"+row.reported_version].filter(Boolean).join(" · ")}</Typography></Box>
         </Box>)}
         {!filtered.length && <Typography sx={{p:2}} color="text.secondary">Ingen kompatible klienter i visningen.</Typography>}
       </Box>
-      <Typography variant="caption" color="text.secondary">1.4.0 er den nye baseline. Der er ingen tidligere godkendt 1.4-version at vælge til manuel rollback.</Typography>
+      <Typography variant="caption" color="text.secondary">{filtered.length} kompatible klienter i visningen. Skift af organisation eller søgning rydder valget. Højst {MAX_ORDER_CLIENTS} klienter pr. bestilling.</Typography>
+      <Typography variant="caption" color="text.secondary">Manuel rollback er ikke autoriseret.</Typography>
       {error && <Alert severity="error">{error}</Alert>}
       {message && <Alert severity="success">{message}</Alert>}
-      <Button variant="contained" disabled={!allowed || busy || !selected.length} onClick={review}>Gennemgå installation af ClientFlow {BASELINE_VERSION}</Button>
+      <Button variant="contained" disabled={!allowed || busy || !visible.length} onClick={review}>Gennemgå installation af ClientFlow {BASELINE_VERSION}</Button>
     </Stack>
     <Dialog open={Boolean(intent)} onClose={close} fullWidth maxWidth="sm">
       <Box component="form" onSubmit={confirm}>

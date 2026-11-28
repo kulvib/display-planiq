@@ -824,7 +824,27 @@ def test_standard_multi_client_order_is_atomic_and_auditable(environment, monkey
     row.reported_at = datetime.now(timezone.utc).replace(tzinfo=None)
     session.add(row)
     session.commit()
-    result = http.post(path, json=_standard_payload(ids=(8,7)))
+    # A filtered order must not silently include a client from another
+    # organization, or a stale organization selection after the review.
+    session.add(Organization(id=70, name="Test A"))
+    session.add(Organization(id=80, name="Test B"))
+    session.flush()
+    session.get(Client, 7).organization_id = 70
+    session.get(Client, 8).organization_id = 80
+    session.commit()
+    scoped = _standard_payload(ids=(8,7), organization_scope={"kind":"organization", "organization_id":70},
+        targets=[{"client_id":8,"expected_source_version":"1.3.47","expected_organization_id":80},
+                 {"client_id":7,"expected_source_version":"1.3.47","expected_organization_id":70}])
+    rejected = http.post(path, json=scoped)
+    assert rejected.status_code == 409, rejected.text
+    assert session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all() == []
+    scoped["organization_scope"] = {"kind":"all", "organization_id":None}
+    scoped["targets"][0]["expected_organization_id"] = 70
+    rejected = http.post(path, json=scoped)
+    assert rejected.status_code == 409, rejected.text
+    assert session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all() == []
+    scoped["targets"][0]["expected_organization_id"] = 80
+    result = http.post(path, json=scoped)
     assert result.status_code == 201, result.text
     assert [row["client_id"] for row in result.json()["deployments"]] == [7,8]
     rows = session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all()

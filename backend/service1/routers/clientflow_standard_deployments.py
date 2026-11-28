@@ -40,6 +40,7 @@ from ..clientflow_standard_release import (
     StandardReleaseDenied, require_cutover_authority, validate_baseline_catalog, validate_selection,
 )
 from ..clientflow_update_models import ClientFlowDeployment, ClientFlowUpdateCredential
+from ..clientflow_rollout_scope import RolloutScope, require_organization_binding
 from ..db import get_session
 from ..models import Client
 from ..system_control import lock_system_client
@@ -53,6 +54,7 @@ class Target(BaseModel):
     model_config = ConfigDict(extra="forbid")
     client_id: int = Field(strict=True, gt=0)
     expected_source_version: str = Field(min_length=5, max_length=40)
+    expected_organization_id: int | None = Field(default=None, strict=True, gt=0)
 
 
 class StandardOrder(BaseModel):
@@ -61,6 +63,7 @@ class StandardOrder(BaseModel):
     expected_bundle_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     expected_revision: int = Field(strict=True, ge=1)
     targets: list[Target] = Field(min_length=1, max_length=MAX_REQUEST_CLIENTS)
+    organization_scope: RolloutScope | None = None
     confirmed: bool = Field(strict=True)
     password: str = Field(min_length=1, max_length=256)
 
@@ -155,6 +158,7 @@ def authorize_standard_deployments(
         if body.confirmed is not True or body.target_release_id != BASELINE_ID:
             raise StandardReleaseDenied("Bekræft den konkrete standardrelease")
         selected = validate_selection([(target.client_id, target.expected_source_version) for target in body.targets])
+        target_by_id = {target.client_id: target for target in body.targets}
         catalog = load_catalog()
         validate_baseline_catalog(catalog)
         # Reject the default-closed control before expensive artifact reads.
@@ -185,6 +189,7 @@ def authorize_standard_deployments(
             if client is None:
                 raise StandardReleaseDenied(f"Klient #{client_id} findes ikke")
             session.refresh(client)
+            require_organization_binding(body.organization_scope, target_by_id[client_id], client)
             _require_deployable_client(session, client)
             version = _canonical_runtime_version(session, client)
             if version != expected_version:
@@ -221,7 +226,9 @@ def authorize_standard_deployments(
                 severity="warning", details={"deployment_id": deployment.id, "client_id": client.id,
                     "source_version": version, "target_release_id": BASELINE_ID,
                     "bundle_sha256": artifact["bundle_sha256"], "policy_revision": control.revision,
-                    "reason": reason, "allow_downgrade": False},
+                    "reason": reason, "allow_downgrade": False,
+                    "organization_scope": body.organization_scope.model_dump() if body.organization_scope else None,
+                    "organization_id": client.organization_id},
             )
             rows.append({"deployment_id": deployment.id, "client_id": int(client.id), "state": "authorized"})
         session.commit()
