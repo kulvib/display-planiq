@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .clientflow_1252_transition import (
-    CANDIDATE_ID, CANDIDATE_VERSION, CANDIDATE_SEQUENCE, OLDEST_ID,
+    CANDIDATE_ID, CANDIDATE_VERSION, CANDIDATE_SEQUENCE,
     PREDECESSOR_ID, Candidate1252Denied, require,
 )
 from .clientflow_pilot_1251 import (
