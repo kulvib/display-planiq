@@ -153,11 +153,6 @@ def authenticate_artifact_request(
     if deployment is None or int(deployment.client_id) != int(client.id):
         raise ClientFlowArtifactAuthorizationError("Artifact deployment blev ikke fundet for update identity")
     _require_downloadable(deployment)
-    from .clientflow_1252_authority import require_candidate_access
-    try:
-        require_candidate_access(session, deployment)
-    except (ValueError, RuntimeError) as exc:
-        raise ClientFlowArtifactAuthorizationError(str(exc)) from exc
     if claims.get("sub") != f"clientflow-artifact:{deployment.id}":
         raise ClientFlowArtifactAuthorizationError("Artifact access-token subject matcher ikke deployment")
     expected = (

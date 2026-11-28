@@ -16,8 +16,6 @@ import ClientFlowFleetOverview from "./ClientFlowFleetOverview";
 import ClientFlowStandardOrderPanel from "./ClientFlowStandardOrderPanel";
 import ClientFlowBaselinePilotPanel from "./ClientFlowBaselinePilotPanel";
 import ClientFlowSuccessorPilotPanel from "./ClientFlowSuccessorPilotPanel";
-import ClientFlowCandidate1252Panel from "./ClientFlowCandidate1252Panel";
-import ClientFlow1252RestorationPanel from "./ClientFlow1252RestorationPanel";
 import { validateStandardBaselineResponse, BASELINE_ID, CLOSED_STANDARD_ID } from "./clientflowStandardOrders.mjs";
 import { CANCELLABLE_STATES } from "./clientflowDeploymentHistory.mjs";
 import {
@@ -341,10 +339,6 @@ export default function ClientFlowReleaseAdministration() {
               : "ClientFlow 1.4.1 er standardrelease. Nyinstallation, udrulning og manuel rollback er fortsat lukket."}
           </Alert>}
           {status.phase === "standard_baseline" && status.successor_pilot_review_available === true && <ClientFlowSuccessorPilotPanel status={status} onAuthorized={refresh} /> }
-          {status.phase === "standard_baseline" && status.candidate_1252_review_available === true && <>
-            <ClientFlowCandidate1252Panel status={status} onAuthorized={refresh} />
-            <ClientFlow1252RestorationPanel status={status} onVerified={refresh} />
-          </>}
           {status.phase === "additive_draft_only" && !baselineInstalled && <ClientFlowBaselinePilotPanel status={status} onAuthorized={refresh} /> }
           {status.phase === "additive_draft_only" && baselineInstalled && <Alert severity="info">
             Viborg1 rapporterer ClientFlow 1.4.0. Standardrelease er fortsat {status.stable_version}, indtil den særskilte releasegodkendelse er gennemført.
