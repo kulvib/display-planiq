@@ -257,9 +257,9 @@ def test_duplicate_1247_build_rejected_for_new_main(tmp_path):
         verify('f' * 40, root=approved_1248)
     verify('c0d5a092efe0c4e8638866ad98621481d6f5d0e8', root=approved_1248)
     # Use an independent future identity fixture, not mutable main metadata.
-    (approved_1248 / 'client/VERSION').write_text('1.4.1\n')
+    (approved_1248 / 'client/VERSION').write_text('1.4.2\n')
     (approved_1248 / 'client/release/release-input.json').write_text(
-        '{"schema_version":1,"release_sequence":1251}'
+        '{"schema_version":1,"release_sequence":1252}'
     )
     verify('f' * 40, root=approved_1248)
     workflow = (ROOT / '.github/workflows/release-build.yml').read_text()
@@ -290,5 +290,66 @@ def test_approved_1250_cannot_be_rebuilt_or_reused_under_mismatched_identity(tmp
     release.write_text('{"schema_version":1,"release_sequence":1251}')
     with pytest.raises(ValueError, match="1250 is already approved"):
         verify(source, root=fixture)
-    version.write_text("1.4.1\n")
+    version.write_text("1.4.2\n")
+    release.write_text('{"schema_version":1,"release_sequence":1252}')
     verify("f" * 40, root=fixture)  # Not an approval; only not a duplicate.
+
+
+def test_approved_1251_is_immutable_and_mismatched_identity_is_denied(tmp_path):
+    from scripts.clientflow_63d11_prevent_duplicate_build import verify
+
+    fixture = tmp_path / "approved-1251"
+    (fixture / "client/release").mkdir(parents=True)
+    (fixture / "backend/service1").mkdir(parents=True)
+    version = fixture / "client/VERSION"
+    release = fixture / "client/release/release-input.json"
+    approval = fixture / "backend/service1/clientflow_pilot_1251_approval.json"
+    shutil.copy2(ROOT / "backend/service1/clientflow_pilot_1251_approval.json", approval)
+    source = json.loads(approval.read_text())["source_commit"]
+    version.write_text("1.4.1\n")
+    release.write_text('{"schema_version":1,"release_sequence":1251}')
+    verify(source, root=fixture)
+    with pytest.raises(ValueError, match="1251 is already approved"):
+        verify("f" * 40, root=fixture)
+    version.write_text("1.4.2\n")
+    with pytest.raises(ValueError, match="1251 is already approved"):
+        verify(source, root=fixture)
+    version.write_text("1.4.1\n")
+    release.write_text('{"schema_version":1,"release_sequence":1252}')
+    with pytest.raises(ValueError, match="1251 is already approved"):
+        verify(source, root=fixture)
+    release.write_text('{"schema_version":1,"release_sequence":1251}')
+    approval.write_bytes(approval.read_bytes() + b'\n')
+    with pytest.raises(ValueError, match="1251 is already approved"):
+        verify(source, root=fixture)
+    version.write_text("1.4.2\n")
+    release.write_text('{"schema_version":1,"release_sequence":1252}')
+    verify("f" * 40, root=fixture)
+
+
+@pytest.mark.parametrize("tags,releases", [
+    ([[{"name": "clientflow-1.4.2-1252"}]], [[]]),
+    ([[], [{"name": "clientflow-1.4.1-seq-1252"}]], [[]]),
+    ([[]], [[{"tag_name": "clientflow-1.4.2", "name": "", "assets": []}]]),
+    ([[]], [[{"tag_name": "other", "name": "ClientFlow 1252", "assets": []}]]),
+    ([[]], [[{"tag_name": "other", "name": None, "assets": [{"name": "clientflow-1.4.2.tar"}]}]]),
+])
+def test_candidate_inventory_rejects_version_or_sequence_collision(tags, releases):
+    from scripts.clientflow_63d11_prevent_duplicate_build import require_unpublished_inventory
+
+    with pytest.raises(ValueError, match="already appears"):
+        require_unpublished_inventory(tags, releases, version="1.4.2", sequence=1252)
+
+
+def test_candidate_inventory_requires_complete_parseable_pages():
+    from scripts.clientflow_63d11_prevent_duplicate_build import require_unpublished_inventory
+
+    require_unpublished_inventory(
+        [[{"name": "clientflow-1.4.1-1251-approved-transport"}], [{"name": "1.4.20"}]],
+        [[{"tag_name": "clientflow-1.4.1-1251-approved-transport",
+           "name": "ClientFlow 1.4.1", "assets": [{"name": "clientflow-1251.tar"}]}]],
+        version="1.4.2", sequence=1252,
+    )
+    for tags, releases in (([], [[]]), ([[]], {}), ([[{}]], [[]]), ([[]], [[{"tag_name": "other"}]])):
+        with pytest.raises(ValueError, match="Invalid"):
+            require_unpublished_inventory(tags, releases, version="1.4.2", sequence=1252)
