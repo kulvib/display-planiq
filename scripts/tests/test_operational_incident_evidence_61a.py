@@ -122,5 +122,5 @@ def test_release_trust_remains_fail_closed_until_operator_provisioning():
     trust = json.loads((ROOT / "client/release/rollback-trust.json").read_text(encoding="utf-8"))
     release = json.loads((ROOT / "client/release/release-input.json").read_text(encoding="utf-8"))
     assert trust == {"schema_version": 1, "enabled": False, "keys": []}
-    # 1251 is the current unsigned source candidate; rollback trust remains disabled.
-    assert release["release_sequence"] == 1251
+    # 1252 is the current unsigned source candidate; rollback trust remains disabled.
+    assert release["release_sequence"] == 1252
