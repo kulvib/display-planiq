@@ -17,8 +17,8 @@ from clientflow_63d6_active_catalog_contract import projected_stable_1245, verif
 
 BASELINE_VERSION = (1, 3, 44)
 BASELINE_SEQUENCE = 1245
-EXPECTED_CANDIDATE_VERSION = (1, 4, 1)
-EXPECTED_CANDIDATE_SEQUENCE = 1251
+EXPECTED_CANDIDATE_VERSION = (1, 4, 2)
+EXPECTED_CANDIDATE_SEQUENCE = 1252
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
 VERSION_RE = re.compile(r'\d+\.\d+\.\d+\Z')
 REQUIRED_SOURCES = (
@@ -40,6 +40,10 @@ REQUIRED_SOURCES = (
     'backend/service1/clientflow_release_catalog.json',
     'backend/service1/clientflow_pilot_1245_approval.json',
     'backend/service1/clientflow_pilot_1250_approval.json',
+    'backend/service1/clientflow_pilot_1251_approval.json',
+    'backend/service1/clientflow_1251_archive_inventory.json',
+    'backend/service1/clientflow_release_catalog_1251_closed.stage.json',
+    'scripts/tests/test_clientflow_68n_recovery_journal.py',
     'backend/service1/clientflow_1245_fleet_acceptance.json',
 )
 
@@ -238,15 +242,30 @@ def inspect(root: Path) -> dict:
         return 'approved_1250_lock_preserved'
 
     check('unchanged_approved_1250_lock', immutable_1250)
+
+    def immutable_1251():
+        pins = {
+            'backend/service1/clientflow_pilot_1251_approval.json': '2926a9d1bdb1d364616f11c44ef1aba43664e6107379eaa97562b31002cb6038',
+            'backend/service1/clientflow_1251_archive_inventory.json': '521b32f00437fcc880fa9b05647b841ac33aee85786548bdb0311a59756d3cbc',
+            'backend/service1/clientflow_release_catalog_1251_closed.stage.json': 'c3c98d8e30791483d1f5e5ade7a70dc96a732b8b69f7dc7440740c025c2d10a5',
+        }
+        for name, digest in pins.items():
+            if hashlib.sha256(_read(root, name)).hexdigest() != digest:
+                raise ValueError('approved_1251_recovery_source_changed')
+        return 'approved_1251_and_recovery_inventory_preserved'
+
+    check('unchanged_approved_1251_lock', immutable_1251)
     identity = check('release_source_identity', lambda: _identity(root))
     version = identity[0] if identity is not None else None
     sequence = identity[1] if identity is not None else None
     # Only the explicitly staged NEXT candidate is eligible for build; do not
     # infer approval for arbitrary future versions from mere monotonicity.
-    candidate_identity = bool(identity is not None and
-        tuple(int(x) for x in version.split('.')) == EXPECTED_CANDIDATE_VERSION and
-        sequence == EXPECTED_CANDIDATE_SEQUENCE)
     source_ok = all(row['pass'] for row in checks.values())
+    candidate_identity = bool(source_ok and identity is not None and
+        tuple(int(x) for x in version.split('.')) == EXPECTED_CANDIDATE_VERSION and
+        sequence == EXPECTED_CANDIDATE_SEQUENCE and
+        hashes.get('backend/service1/clientflow_release_catalog.json') ==
+        'c3c98d8e30791483d1f5e5ade7a70dc96a732b8b69f7dc7440740c025c2d10a5')
     return {
         'schema_version': 1,
         'kind': 'offline_readonly_release_source_gate',
