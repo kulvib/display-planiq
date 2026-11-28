@@ -87,6 +87,26 @@ def _verify_original_catalog(repo: Path, release_id: str, sequence: int) -> None
         mode = verified_mode(repo)
     except ActiveCatalogDenied as exc:
         raise HandoffError("stable_catalog_changed") from exc
+    # The current candidate has a separate, exact closed-standard contract.
+    # Do not let a valid historical catalog become an alternate 1252 base,
+    # or allow arbitrary successors simply because their sequence is higher.
+    if sequence == 1252 or release_id.startswith("clientflow-1.4.2-") or mode == "closed_1251_standard":
+        _require(mode == "closed_1251_standard"
+                 and sequence == 1252
+                 and release_id == "clientflow-1.4.2-seq-1252", "stable_catalog_changed")
+        pins = {
+            "backend/service1/clientflow_release_catalog.json":
+                "c3c98d8e30791483d1f5e5ade7a70dc96a732b8b69f7dc7440740c025c2d10a5",
+            "backend/service1/clientflow_release_catalog_1251_closed.stage.json":
+                "c3c98d8e30791483d1f5e5ade7a70dc96a732b8b69f7dc7440740c025c2d10a5",
+            "backend/service1/clientflow_pilot_1251_approval.json":
+                "2926a9d1bdb1d364616f11c44ef1aba43664e6107379eaa97562b31002cb6038",
+            "backend/service1/clientflow_1251_archive_inventory.json":
+                "521b32f00437fcc880fa9b05647b841ac33aee85786548bdb0311a59756d3cbc",
+        }
+        for name, digest in pins.items():
+            _require(_file_hash(repo / name)[1] == digest, "stable_catalog_changed")
+        return
     allowed = {
         "stable_1245_only": (1245, 1),
         "update_only_1246_pilot_catalog": (1246, 2),
@@ -109,6 +129,31 @@ def _verify_original_catalog(repo: Path, release_id: str, sequence: int) -> None
         _require(mode in {"update_only_1247_pilot_catalog", "update_only_1248_pilot_catalog"}, "stable_catalog_changed")
 
 
+def _source_identity(repo: Path) -> tuple[str, dict, int, str]:
+    version = _regular(repo / "client/VERSION", 128).read_text(encoding="ascii").strip()
+    _require(bool(VERSION.fullmatch(version)), "invalid_version")
+    inputs = _load(repo / "client/release/release-input.json")
+    seq = inputs.get("release_sequence")
+    _require(type(seq) is int and seq > 0, "invalid_sequence")
+    return version, inputs, seq, f"clientflow-{version}-seq-{seq}"
+
+
+def _verify_source_policy(repo: Path, release_id: str, seq: int) -> None:
+    _verify_original_catalog(repo, release_id, seq)
+    fleet = _load(repo / "backend/service1/clientflow_1245_fleet_acceptance.json")
+    _require(fleet.get("physical_pilot_accepted") is False, "pilot_acceptance_not_disarmed")
+
+
+def source_preflight(repo: Path) -> dict:
+    """Check only the source-side handoff predicates before either build."""
+    _require(repo.is_dir() and not repo.is_symlink(), "invalid_directory")
+    _, _, seq, release_id = _source_identity(repo)
+    _verify_source_policy(repo, release_id, seq)
+    return {"result": "HANDOFF_SOURCE_PREFLIGHT_ONLY", "release_id": release_id,
+            "artifact_verified": False, "release_approved": False,
+            "deployment_authorized": False, "physical_pilot_accepted": False}
+
+
 def verify(repo: Path, handoff: Path, *, source_sha: str,
            candidate_sha256: str | None = None,
            installer_sha256: str | None = None,
@@ -120,12 +165,7 @@ def verify(repo: Path, handoff: Path, *, source_sha: str,
     _require(repo.is_dir() and not repo.is_symlink() and handoff.is_dir()
              and not handoff.is_symlink(), "invalid_directory")
 
-    version = _regular(repo / "client/VERSION", 128).read_text(encoding="ascii").strip()
-    _require(bool(VERSION.fullmatch(version)), "invalid_version")
-    inputs = _load(repo / "client/release/release-input.json")
-    seq = inputs.get("release_sequence")
-    _require(type(seq) is int and seq > 0, "invalid_sequence")
-    release_id = f"clientflow-{version}-seq-{seq}"
+    version, inputs, seq, release_id = _source_identity(repo)
     candidate = f"{release_id}-candidate.tar"
     installer = f"clientflow-installer-{version}.pyz"
     expected_artifacts = STATIC | {candidate, installer}
@@ -134,9 +174,7 @@ def verify(repo: Path, handoff: Path, *, source_sha: str,
     for name in expected_handoff:
         _regular(handoff / name)
 
-    _verify_original_catalog(repo, release_id, seq)
-    fleet = _load(repo / "backend/service1/clientflow_1245_fleet_acceptance.json")
-    _require(fleet.get("physical_pilot_accepted") is False, "pilot_acceptance_not_disarmed")
+    _verify_source_policy(repo, release_id, seq)
 
     record = _load(handoff / "REPRODUCIBILITY.json")
     _require(record.get("schema_version") == 1 and record.get("reproducible") is True,
@@ -246,18 +284,28 @@ def verify(repo: Path, handoff: Path, *, source_sha: str,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, required=True)
-    parser.add_argument("--handoff", type=Path, required=True)
-    parser.add_argument("--expected-source-sha", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--handoff", type=Path)
+    mode.add_argument("--source-preflight-only", action="store_true")
+    parser.add_argument("--expected-source-sha")
     parser.add_argument("--expected-candidate-sha256")
     parser.add_argument("--expected-installer-sha256")
     parser.add_argument("--expected-runtime-transport-sha256")
     args = parser.parse_args()
     try:
-        result = verify(args.repo.resolve(), args.handoff.resolve(),
-                        source_sha=args.expected_source_sha,
-                        candidate_sha256=args.expected_candidate_sha256,
-                        installer_sha256=args.expected_installer_sha256,
-                        runtime_transport_sha256=args.expected_runtime_transport_sha256)
+        if args.source_preflight_only:
+            _require(all(value is None for value in (
+                args.expected_source_sha, args.expected_candidate_sha256,
+                args.expected_installer_sha256, args.expected_runtime_transport_sha256,
+            )), "source_preflight_does_not_verify_artifact_or_provenance")
+            result = source_preflight(args.repo.resolve())
+        else:
+            _require(args.expected_source_sha is not None, "invalid_expected_source")
+            result = verify(args.repo.resolve(), args.handoff.resolve(),
+                            source_sha=args.expected_source_sha,
+                            candidate_sha256=args.expected_candidate_sha256,
+                            installer_sha256=args.expected_installer_sha256,
+                            runtime_transport_sha256=args.expected_runtime_transport_sha256)
     except (HandoffError, OSError, KeyError, TypeError, ValueError, tarfile.TarError) as exc:
         parser.exit(1, f"STOP: invalid candidate handoff: {type(exc).__name__}: {exc}\n")
     print(json.dumps(result, sort_keys=True))

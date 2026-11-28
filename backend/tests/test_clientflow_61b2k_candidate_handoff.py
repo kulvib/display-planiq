@@ -212,16 +212,21 @@ def test_modified_or_unsafe_handoff_fails_closed(tmp_path, scenario, attack):
 def test_workflows_run_same_strict_handoff_gate_before_attestation_and_manual_approval():
     build = (ROOT / '.github/workflows/release-build.yml').read_text()
     approve = (ROOT / '.github/workflows/release-approve.yml').read_text()
-    assert build.count('python scripts/verify_clientflow_candidate_handoff.py') == 1
+    assert build.count('python scripts/verify_clientflow_candidate_handoff.py') == 2
+    assert build.count('--source-preflight-only') == 1
+    assert build.index('Require exact candidate handoff source policy before building') < build.index('Fetch exact runtime-input transport')
+    assert build.index('--source-preflight-only') < build.index('Build unapproved candidate from exact source and epoch')
     assert approve.count('/usr/bin/python3 scripts/verify_clientflow_candidate_handoff.py') == 1
     assert build.index('Verify complete unapproved candidate handoff') < build.index('Attest reproducible candidate provenance')
     assert approve.index('Reverify exact unapproved candidate handoff') < approve.index('Approve exact candidate with canonical source approval gate')
     for content in (build, approve):
         assert '--expected-source-sha' in content
         assert '--handoff "$RUNNER_TEMP/handoff"' in content
-        assert not any(action in content[content.index('verify_clientflow_candidate_handoff.py'):content.index('verify_clientflow_candidate_handoff.py')+150]
+        assert not any(action in content[content.rindex('verify_clientflow_candidate_handoff.py'):content.rindex('verify_clientflow_candidate_handoff.py')+150]
                        for action in ('--approve-release', '--publish-release'))
         assert yaml.safe_load(content)['on']['workflow_dispatch']['inputs']
+    assert '--source-preflight-only' not in approve
+    assert '--source-preflight-only' not in build[build.index('Verify complete unapproved candidate handoff'):]
 
 
 def test_actual_source_catalog_preserves_stable_1245_and_only_update_only_1248():
@@ -334,3 +339,134 @@ def test_full_unsigned_1248_handoff_with_exact_active_1248_catalog(scenario):
     assert verified['release_id'] == release_id
     assert verified['release_approved'] is False
     assert verified['deployment_authorized'] is False
+
+
+def test_actual_current_source_passes_handoff_preflight():
+    # Always exercise the actual source identity and active catalog, not
+    # only a fixture frozen at a prior release.
+    result = handoff_gate.source_preflight(ROOT)
+    assert result == {
+        'result': 'HANDOFF_SOURCE_PREFLIGHT_ONLY',
+        'release_id': 'clientflow-1.4.2-seq-1252',
+        'artifact_verified': False, 'release_approved': False,
+        'deployment_authorized': False, 'physical_pilot_accepted': False,
+    }
+
+
+@pytest.fixture
+def scenario_1252(scenario):
+    repo, handoff = scenario
+    # Copy the actual current source catalog and every historical pin required
+    # by verified_mode; never mock the catalog check.
+    names = (
+        'client/VERSION', 'client/release/release-input.json',
+        'client/release/release-build-toolchain.json',
+        'backend/service1/clientflow_release_catalog.json',
+        'backend/service1/clientflow_release_catalog_1246_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1246_approval.json',
+        'backend/service1/clientflow_release_catalog_1247_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1247_approval.json',
+        'backend/service1/clientflow_release_catalog_1248_pilot.stage.json',
+        'backend/service1/clientflow_pilot_1248_approval.json',
+        'backend/service1/clientflow_release_catalog_1250_closed.stage.json',
+        'backend/service1/clientflow_pilot_1250_approval.json',
+        'backend/service1/clientflow_release_catalog_1251_closed.stage.json',
+        'backend/service1/clientflow_pilot_1251_approval.json',
+        'backend/service1/clientflow_1251_archive_inventory.json',
+        'backend/service1/clientflow_1245_fleet_acceptance.json',
+    )
+    for name in names:
+        shutil.copy2(ROOT / name, repo / name)
+    version = (repo / 'client/VERSION').read_text().strip()
+    seq = json.loads((repo / 'client/release/release-input.json').read_text())['release_sequence']
+    assert (version, seq) == ('1.4.2', 1252)
+    rid = f'clientflow-{version}-seq-{seq}'
+    candidate = rid + '-candidate.tar'
+    installer = f'clientflow-installer-{version}.pyz'
+    (handoff / INSTALLER).rename(handoff / installer)
+    (handoff / CANDIDATE).unlink()
+    manifest_path = handoff / 'manifest.candidate.json'
+    manifest = json.loads(manifest_path.read_text())
+    manifest.update(version=version, release_sequence=seq, release_id=rid)
+    manifest['fresh_installer']['file'] = installer
+    _save(manifest_path, manifest)
+    with tarfile.open(handoff / candidate, 'w', format=tarfile.PAX_FORMAT) as archive:
+        for member, blob in (
+            ('manifest.json', manifest_path.read_bytes()),
+            ('clientflow-payload.tar', (handoff / 'clientflow-payload.tar').read_bytes()),
+            (installer, (handoff / installer).read_bytes()),
+        ):
+            _add_member(archive, member, blob)
+    artifacts = sorted({candidate, installer, 'clientflow-payload.tar', 'manifest.candidate.json'})
+    (handoff / 'SHA256SUMS').write_text(''.join(
+        f'{_hash((handoff / name).read_bytes())}  {name}\n' for name in artifacts))
+    record_path = handoff / 'REPRODUCIBILITY.json'
+    record = json.loads(record_path.read_text())
+    record.update(version=version, release_sequence=seq, release_id=rid)
+    record['artifacts'] = {
+        name: {'size': (handoff / name).stat().st_size,
+               'sha256': _hash((handoff / name).read_bytes())}
+        for name in artifacts + ['SHA256SUMS']
+    }
+    _save(record_path, record)
+    return repo, handoff, candidate, installer
+
+
+def test_full_1252_unsigned_handoff_matches_actual_closed_1251(scenario_1252):
+    repo, handoff, candidate, installer = scenario_1252
+    result = handoff_gate.verify(
+        repo, handoff, source_sha=SHA,
+        candidate_sha256=_hash((handoff / candidate).read_bytes()),
+        installer_sha256=_hash((handoff / installer).read_bytes()),
+        runtime_transport_sha256=TRANSPORT)
+    assert result['release_id'] == 'clientflow-1.4.2-seq-1252'
+    assert result['result'] == 'VERIFIED_UNSIGNED_HANDOFF_ONLY'
+    assert result['release_approved'] is False
+    assert result['deployment_authorized'] is False
+    assert result['physical_pilot_accepted'] is False
+
+
+@pytest.mark.parametrize('name', [
+    'backend/service1/clientflow_release_catalog.json',
+    'backend/service1/clientflow_release_catalog_1251_closed.stage.json',
+    'backend/service1/clientflow_pilot_1251_approval.json',
+    'backend/service1/clientflow_1251_archive_inventory.json',
+])
+def test_1252_rejects_even_semantically_identical_rewritten_pins(scenario_1252, name):
+    repo, handoff, _, _ = scenario_1252
+    path = repo / name
+    path.write_bytes(path.read_bytes() + b'\n')
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate.source_preflight(repo)
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate.verify(repo, handoff, source_sha=SHA)
+
+
+def test_1252_cannot_use_older_valid_catalog(scenario_1252):
+    repo, handoff, _, _ = scenario_1252
+    shutil.copy2(repo / 'backend/service1/clientflow_release_catalog_1250_closed.stage.json',
+                 repo / 'backend/service1/clientflow_release_catalog.json')
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate.source_preflight(repo)
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate.verify(repo, handoff, source_sha=SHA)
+
+
+@pytest.mark.parametrize('rid,seq', [
+    ('clientflow-1.4.1-seq-1251', 1251),
+    ('clientflow-1.4.3-seq-1253', 1253),
+    ('clientflow-1.4.2-seq-1253', 1253),
+    ('clientflow-1.4.3-seq-1252', 1252),
+])
+def test_closed_1251_only_allows_exact_1252_successor(scenario_1252, rid, seq):
+    repo, _, _, _ = scenario_1252
+    with pytest.raises(handoff_gate.HandoffError, match='stable_catalog_changed'):
+        handoff_gate._verify_original_catalog(repo, rid, seq)
+
+
+def test_1252_rejects_changed_payload_after_early_source_preflight(scenario_1252):
+    repo, handoff, _, _ = scenario_1252
+    assert handoff_gate.source_preflight(repo)['artifact_verified'] is False
+    (handoff / 'clientflow-payload.tar').write_bytes(b'tampered after preflight')
+    with pytest.raises(handoff_gate.HandoffError, match='reproducibility_artifact_mismatch'):
+        handoff_gate.verify(repo, handoff, source_sha=SHA)
