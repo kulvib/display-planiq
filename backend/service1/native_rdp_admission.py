@@ -155,12 +155,57 @@ def _closed_baseline_eligibility(session, *, client, catalog, control, latest, v
     return "update_evidence_mismatch"
 
 
+@lru_cache(maxsize=2)
+def _verified_1252_artifact(path: Path, fingerprint: tuple) -> dict:
+    from .clientflow_pilot_1252 import candidate_release, match_candidate_artifact
+    artifact = {**deployment_release_snapshot(candidate_release()),
+                "target_version": "1.4.2", "target_release_sequence": 1252}
+    match_candidate_artifact(artifact)
+    if _artifact_fingerprint(path) != fingerprint:
+        raise ValueError("1252 artifact changed during verification")
+    return artifact
+
+
+def canonical_1252_artifact() -> dict:
+    from .clientflow_1252_transition import CANDIDATE_ID
+    path = _artifact_path(CANDIDATE_ID)
+    fingerprint = _artifact_fingerprint(path)
+    artifact = _verified_1252_artifact(path, fingerprint)
+    if _artifact_path(CANDIDATE_ID) != path or _artifact_fingerprint(path) != fingerprint:
+        raise ValueError("1252 artifact changed after verification")
+    return dict(artifact)
+
+
+def _candidate_1252_eligibility(session, *, latest, version):
+    from .clientflow_1252_authority import require_candidate_access, require_candidate_history, recovery_events, RECOVERY_PAYLOAD
+    from .clientflow_1252_transition import PREDECESSOR_ID
+    require_candidate_access(session, latest)
+    require_candidate_history(session, latest)
+    if version == "1.4.2":
+        artifact = canonical_1252_artifact()
+        return ("physical_test_eligible" if latest.observed_previous_release_id == PREDECESSOR_ID
+                and matches_completed_update(latest, client_id=3, artifact=artifact)
+                else "update_evidence_mismatch")
+    if version != SUCCESSOR_VERSION or latest.state not in {"failed", "cancelled", "rolled_back"}:
+        return "update_evidence_mismatch"
+    events = recovery_events(session, latest)
+    if (len(events) != 1 or events[0].credential_id is not None or events[0].payload != RECOVERY_PAYLOAD
+            or events[0].received_at < latest.completed_at):
+        return "update_evidence_mismatch"
+    match_successor_artifact(canonical_successor_artifact())
+    return "physical_test_eligible"
+
+
 def _closed_standard_eligibility(session, *, client, catalog, control, latest, version):
     # A closed selector is not a fleet grant. Preserve only the exact
     # already installed Viborg1 across the old/new control binding.
     require_closed_standard_control(catalog, control.model_dump(), allow_predecessor=True)
-    if (client.id != 3 or client.name != "Viborg1" or client.ubuntu_version != "26.04"
-            or version != SUCCESSOR_VERSION):
+    if client.id != 3 or client.name != "Viborg1" or client.ubuntu_version != "26.04":
+        return "cutover_closed"
+    from .clientflow_1252_transition import is_candidate_order
+    if latest is not None and is_candidate_order(latest):
+        return _candidate_1252_eligibility(session, latest=latest, version=version)
+    if version != SUCCESSOR_VERSION:
         return "cutover_closed"
     predecessors = session.exec(select(ClientFlowDeployment).where(
         ClientFlowDeployment.client_id == 3,

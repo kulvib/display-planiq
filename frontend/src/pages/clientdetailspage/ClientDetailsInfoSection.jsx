@@ -240,7 +240,9 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
     Number.isSafeInteger(Number(clientId)) && Number(clientId) > 0 && isSuperadmin && clientOnline === true;
   const selectedReleaseRequiresReboot = selectedRelease?.requires_reboot === true;
   const deploymentRelease = catalogUpdateReleases.find((release) => release.version === deployment?.target_version) || null;
-  const deploymentRequiresReboot = deploymentRelease?.requires_reboot === true;
+  const deploymentRequiresReboot = deploymentRelease?.requires_reboot === true ||
+    (releaseCatalog?.catalog_sequence === 1251 && Number(clientId) === 3 &&
+      deployment?.target_release_id === "clientflow-1.4.2-seq-1252" && deployment?.target_version === "1.4.2");
   const isDowngrade = Boolean(
     installedVersion && resolvedSelectedVersion && compareClientflowVersions(resolvedSelectedVersion, installedVersion) < 0
   );
@@ -558,7 +560,10 @@ function ClientFlowUpdateControl({ clientId, clientVersion, clientOnline, pendin
         </Alert>
       )}
       {!catalogLoading && !catalogError && releaseCatalog && selectableReleases.length === 0 && (
-        <Alert severity="info" sx={{ mt: 1 }}>{installedVersion ? "Ingen kompatibel ClientFlow-opdatering i det aktuelle katalog." : "Installeret version er endnu ikke verificeret."}</Alert>
+        <Alert severity="info" sx={{ mt: 1 }}>{releaseCatalog?.catalog_sequence === 1251 && Number(clientId) === 3 &&
+          String(installedVersion || "").replace(/^v/i, "") === "1.4.1"
+          ? "1.4.2-engangspiloten bestilles kun under Administration → ClientFlow Releases. Standardrelease er fortsat 1.4.1."
+          : installedVersion ? "Ingen kompatibel ClientFlow-opdatering i det aktuelle katalog." : "Installeret version er endnu ikke verificeret."}</Alert>
       )}
       {selectedReleaseRequiresReboot && !disabled && !sameVersionSelected && !showPanel && (
         <Alert severity="info" sx={{ mt: 1 }}>

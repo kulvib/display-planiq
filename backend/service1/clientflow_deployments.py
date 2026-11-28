@@ -171,7 +171,24 @@ def create_authorized_deployment(
     reason: str | None,
     release_candidate_sha256: str | None = None,
     source_commit: str | None = None,
+    candidate_1252_order: bool = False,
 ) -> ClientFlowDeployment:
+    if target_release_id == "clientflow-1.4.2-seq-1252" or target_version == "1.4.2" or target_release_sequence == 1252:
+        from types import SimpleNamespace
+        from .clientflow_1252_authority import require_exact_order, require_preorder
+        if candidate_1252_order is not True or requested_by_user_id is None:
+            raise ClientFlowDeploymentConflict("1252 kræver særskilt superadministratorbestilling")
+        try:
+            require_exact_order(SimpleNamespace(client_id=client_id, allow_downgrade=allow_downgrade,
+                target_release_id=target_release_id, target_version=target_version,
+                target_release_sequence=target_release_sequence, bundle_sha256=bundle_sha256,
+                bundle_size=bundle_size, release_approval_reference=release_approval_reference,
+                release_candidate_sha256=release_candidate_sha256, source_commit=source_commit))
+            require_preorder(session, lock=True)
+        except (ValueError, RuntimeError) as exc:
+            raise ClientFlowDeploymentConflict(str(exc)) from exc
+    elif candidate_1252_order is not False:
+        raise ClientFlowDeploymentConflict("1252-autorisation matcher ikke releaseidentitet")
     if active_deployment(session, client_id=client_id, for_update=True) is not None:
         raise ClientFlowDeploymentConflict("Klienten har allerede en aktiv ClientFlow-deployment")
     if unacknowledged_recovery_failure(session, client_id=client_id) is not None:
@@ -261,6 +278,14 @@ def authorize_activation(
     active runtime.  Once ACTIVATING is committed, cancellation is forbidden.
     """
     deployment = deployment_for_update(session, deployment_id)
+    if is_candidate_order(deployment):
+        from .clientflow_1252_authority import require_candidate_access
+        try:
+            require_candidate_access(session, deployment)
+            if credential_id is None:
+                raise Candidate1252Denied("1252 requires authenticated activation")
+        except (ValueError, RuntimeError) as exc:
+            raise ClientFlowDeploymentConflict(str(exc)) from exc
     existing = _idempotent_event(
         session,
         event_id=event_id,

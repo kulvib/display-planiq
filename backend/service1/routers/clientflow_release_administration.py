@@ -422,6 +422,7 @@ def _closed_1251_status(session: Session, catalog: dict) -> dict:
         **_release_inventory(session),
         "phase": "standard_baseline",
         "successor_pilot_review_available": False,
+        "candidate_1252_review_available": mode == "bound",
         "closed_standard_transition_pending": mode == "pending",
         "revision": control.revision,
         "cutover_enabled": False, "fleet_open": False,
