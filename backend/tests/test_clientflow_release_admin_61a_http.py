@@ -913,3 +913,100 @@ def test_1250_pilot_exact_one_shot_does_not_open_cutover(environment, monkeypatc
     assert not control.fleet_open and not control.fresh_install_open and not control.cutover_enabled
     assert len(session.exec(select(ClientFlowDeployment)).all()) == 1
     assert session.exec(select(AuditLog).where(AuditLog.action == "clientflow_1250_pilot_authorized")).first() is not None
+
+
+def test_managed_forward_order_is_atomic_across_organizations(environment, monkeypatch):
+    from dataclasses import replace
+    from datetime import timedelta, timezone
+    from uuid import uuid4
+
+    from service1 import clientflow_managed_rollout as managed
+    from service1.clientflow_closed_standard_1251 import closed_standard_catalog
+    from service1.clientflow_pilot_1251 import CONFLICTING_FLAGS
+    from service1.clientflow_deployments import authorize_activation, ClientFlowDeploymentConflict, report_updater_event
+
+    http, session = environment
+    policy = managed.current_policy()
+    path = "/api/clientflow/standard-deployments/managed"
+    # Default-closed code must never read the artifact or create an order.
+    monkeypatch.setattr(managed, "require_store", lambda *_: pytest.fail("disabled policy touched artifact"))
+    assert http.get(path + "/availability").json()["available"] is False
+    enabled = replace(policy, enabled=True)
+    monkeypatch.setattr(managed, "current_policy", lambda: enabled)
+    monkeypatch.setattr(managed, "load_catalog", closed_standard_catalog)
+    # This fixture does not contain real TAR bytes; publication contracts
+    # cover those independently. All DB/client/order gates remain real.
+    monkeypatch.setattr(managed, "require_store", lambda p: dict(p.target))
+    monkeypatch.setenv("CLIENTFLOW_FRESH_INSTALL_SUSPENDED", "1")
+    monkeypatch.setenv("CLIENTFLOW_SIGNED_ROLLBACK_ENABLED", "false")
+    for flag in CONFLICTING_FLAGS:
+        monkeypatch.delenv(flag, raising=False)
+
+    control = session.get(ClientFlowReleaseControl, 1)
+    control.stable_release_id = policy.source["target_release_id"]
+    control.stable_bundle_sha256 = policy.source["bundle_sha256"]
+    control.revision = policy.revision
+    session.add(control)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    credentials = {}
+    for client_id, org_id in ((7,70), (8,80)):
+        session.add(Organization(id=org_id, name=f"Test {org_id}"))
+        session.flush()
+        session.add(Client(id=client_id, name=f"Test {client_id}", status="approved",
+                           ubuntu_version="26.04", organization_id=org_id))
+        session.flush()
+        _record_status_version(session, client_id=client_id, version=policy.source["target_version"])
+        session.flush()
+        status_row = session.get(ClientDomainStatus, f"test-status-row-{client_id}")
+        status_row.reported_at = now
+        session.add(status_row)
+        credentials[client_id] = str(uuid4())
+        session.add(ClientFlowUpdateCredential(id=credentials[client_id], client_id=client_id,
+                    key_id=f"managed-key-{client_id}", public_key_pem="fixture-only", created_at=now))
+        session.add(ClientFlowDeployment(
+            id=str(uuid4()), client_id=client_id, **policy.source,
+            requested_at=now-timedelta(hours=2), state_updated_at=now-timedelta(hours=1),
+            completed_at=now-timedelta(hours=1), state="succeeded", allow_downgrade=False,
+            observed_release_id=policy.source["target_release_id"],
+            observed_release_sequence=policy.source["target_release_sequence"],
+            observed_previous_release_id="clientflow-1.4.0-seq-1250",
+        ))
+    session.commit()
+    assert http.get(path + "/availability").json()["available"] is True
+    payload = {"target_release_id":policy.target["target_release_id"],
+               "expected_bundle_sha256":policy.target["bundle_sha256"],
+               "expected_revision":policy.revision, "confirmed":True, "password":"correct-password",
+               "organization_scope":{"kind":"organization","organization_id":70},
+               "targets":[{"client_id":8,"expected_source_version":"1.4.1","expected_organization_id":80},
+                          {"client_id":7,"expected_source_version":"1.4.1","expected_organization_id":70}]}
+    assert http.post(path, json=payload).status_code == 409
+    assert session.exec(select(ClientFlowDeployment).where(ClientFlowDeployment.completed_at.is_(None))).all() == []
+    payload["organization_scope"] = {"kind":"all","organization_id":None}
+    result = http.post(path, json=payload)
+    assert result.status_code == 201, result.text
+    rows = result.json()["deployments"]
+    assert [row["client_id"] for row in rows] == [7,8]
+    assert http.post(path, json=payload).status_code == 409
+    for result_row in rows:
+        deployment = session.get(ClientFlowDeployment, result_row["deployment_id"])
+        managed.require_access(session, deployment)
+        for event_type in ("download_started", "bundle_verified", "staged"):
+            report_updater_event(session, deployment_id=deployment.id,
+                credential_id=credentials[deployment.client_id], event_id=str(uuid4()), event_type=event_type)
+        with pytest.raises(ClientFlowDeploymentConflict):
+            authorize_activation(session, deployment_id=deployment.id,
+                credential_id=credentials[8 if deployment.client_id == 7 else 7])
+        authorize_activation(session, deployment_id=deployment.id,
+            credential_id=credentials[deployment.client_id], event_id=str(uuid4()))
+        report_updater_event(session, deployment_id=deployment.id,
+            credential_id=credentials[deployment.client_id], event_id=str(uuid4()),
+            event_type="health_check_started", payload={"release_id":policy.target["target_release_id"]})
+        report_updater_event(session, deployment_id=deployment.id,
+            credential_id=credentials[deployment.client_id], event_id=str(uuid4()), event_type="succeeded",
+            payload={"observed_release_id":policy.target["target_release_id"],
+                     "observed_release_sequence":policy.target["target_release_sequence"],
+                     "observed_previous_release_id":policy.source["target_release_id"]})
+        session.commit()
+        assert deployment.state == "succeeded"
+    assert len(session.exec(select(AuditLog).where(
+        AuditLog.action == "clientflow_managed_deployment_authorized")).all()) == 2
