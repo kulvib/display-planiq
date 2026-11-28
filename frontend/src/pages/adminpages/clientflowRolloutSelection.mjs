@@ -39,7 +39,7 @@ export function visibleSelection(selected, visible, max) {
 }
 
 export function bindOrganizationTargets(targets, visible, key) {
-  const scope = organizationScope(key);
+  organizationScope(key);
   const lookup = new Map(visible.map(row=>[row.id,row]));
   return targets.map(target=>{
     const row = lookup.get(target.client_id);
