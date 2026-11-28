@@ -78,12 +78,14 @@ jobs:
         # Never use --source-only here: that is for CI of historical source.
         run: python scripts/clientflow_61b2g_release_source_gate.py --repo-root "$GITHUB_WORKSPACE"
 
-      - name: Refuse rebuilding approved 1247, 1248 or 1250 identity from changed source
+      - name: Refuse approved identity reuse and GitHub release collisions
         env:
           EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          GH_TOKEN: ${{ github.token }}
         run: >-
           python scripts/clientflow_63d11_prevent_duplicate_build.py
           --expected-source-sha "$EXPECTED_SOURCE_SHA"
+          --verify-unpublished-repository "$GITHUB_REPOSITORY"
 
       - name: Fetch exact runtime-input transport
         env:
