@@ -107,7 +107,7 @@ def main() -> int:
         "frontend/package-lock.json", "frontend/dependency-audit-allowlist.json",
         "frontend/scripts/auditDependencies.mjs", "frontend/tests/dependencyRuntime.test.mjs",
         "DEPENDENCY_MAINTENANCE.md", ".github/workflows/ci.yml",
-        ".github/workflows/deployment-smoke.yml", ".github/workflows/dependency-maintenance-candidate.yml",
+        ".github/workflows/deployment-smoke.yml",
         "render.yaml",
     ]
     missing = [item for item in required if not (ROOT / item).is_file()]
@@ -238,9 +238,16 @@ def main() -> int:
     deployment_smoke = (ROOT / ".github/workflows/deployment-smoke.yml").read_text()
     if f'python-version: "{PYTHON_VERSION}"' not in deployment_smoke:
         raise ValueError("Deployment smoke Python-version afviger")
-    maintenance = (ROOT / ".github/workflows/dependency-maintenance-candidate.yml").read_text()
-    if f'CLIENTFLOW_PYTHON_VERSION: "{PYTHON_VERSION}"' not in maintenance or f'python-version: "{PYTHON_VERSION}"' not in maintenance:
-        raise ValueError("Dependency-maintenance Python-version afviger")
+    # The retired one-time dependency upgrade recipe is not a permanent
+    # dependency gate. A future reviewed recipe must still match the
+    # canonical toolchain if this optional workflow path is reintroduced.
+    maintenance_path = ROOT / ".github/workflows/dependency-maintenance-candidate.yml"
+    if maintenance_path.exists() or maintenance_path.is_symlink():
+        if maintenance_path.is_symlink() or not maintenance_path.is_file():
+            raise ValueError("Dependency-maintenance workflow skal være en almindelig fil")
+        maintenance = maintenance_path.read_text()
+        if f'CLIENTFLOW_PYTHON_VERSION: "{PYTHON_VERSION}"' not in maintenance or f'python-version: "{PYTHON_VERSION}"' not in maintenance:
+            raise ValueError("Dependency-maintenance Python-version afviger")
 
     print(f"Dependency-kontrakt bestået: {PRODUCT}, Python {PYTHON_VERSION}, Node {NODE_VERSION}, npm {NPM_VERSION}, pip {PIP_VERSION}")
     return 0

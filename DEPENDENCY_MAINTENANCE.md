@@ -73,3 +73,7 @@ Remediation: Ved første officielle patched picomatch-udgivelse regenereres den 
 ## Lukket: picomatch GHSA-fc5q-39xc-vjpf (26. november 2026)
 
 Den ovenstående disposition er historisk. GitHub trak advisoryen officielt tilbage 18. november 2026, fordi forholdet ikke længere klassificeres som et sikkerhedsproblem (opdateret 19. november): https://github.com/advisories/GHSA-fc5q-39xc-vjpf. CI 45790259057 rapporterede 0 sårbarheder under npm ci, men den tidligere undtagelse udløb 25. november og blokerede begge dependency-gates. Den aktive allowlist er nu tom; den særlige dormant-waiver er fjernet. Der er ikke tale om en ny patchet picomatch-version: package.json og package-lock.json er uændrede. Nye eller genindførte advisories, udløbne undtagelser og mangelfulde auditrapporter blokerer fortsat CI. Den fulde npm audit og regression skal bestå før merge. Fortsat kun betroede glob-mønstre i buildværktøjer.
+
+## Afsluttet engangsopgradering (68N-C3)
+
+Den tidligere `.github/workflows/dependency-maintenance-candidate.yml` var en specifik, allerede gennemført versionsmigration, ikke en generel løbende opdateringsmekanisme. Workflowet pensioneres. Nye opdateringer skal fortsat ske i en isoleret kandidat med eksplicit gennemgåede versionsmål, hash-fastlåste lockfiler, dependency-kontrakt, sikkerhedsaudit og fuld CI før merge. Hvis en ny opskrift genintroduceres under samme filnavn, kontrolleres dens Python-toolchain fortsat. Produktionens read-only smoke-test og alle faste dependency-gates bevares.

@@ -68,3 +68,26 @@ def test_workflow_action_references_are_immutable():
             if reference.startswith("./"):
                 continue
             assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", reference), (workflow.name, reference)
+
+
+def test_consolidated_freerdp_workflow_retains_offline_matrix_and_browser_proof():
+    import yaml
+
+    source = (plan.ROOT / plan.WORKFLOW).read_text()
+    workflow = yaml.safe_load(source)
+    # PyYAML's YAML 1.1 parser treats the unquoted 'on' key as True.
+    triggers = workflow.get("on", workflow.get(True))
+    assert "scripts/diagnose_freerdp_wasm_browser.py" in triggers["pull_request"]["paths"]
+    assert "frontend/public/native-rdp/**" in triggers["pull_request"]["paths"]
+    assert "workflow_dispatch" in triggers
+    assert workflow["permissions"] == {"contents": "read"}
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"plan-build", "compile-wasm", "chromium-wasm-proof", "offline-startup-diagnostics"}
+    assert "permissions" not in jobs["offline-startup-diagnostics"]
+    assert "python3 scripts/diagnose_freerdp_wasm_browser.py" in source
+    assert "python3 scripts/prove_freerdp_pinned_wasm_chromium.py" in source
+    assert "stage-verified-binary:" not in source
+    assert "contents: write" not in source
+    assert "git push" not in source
+    assert not (plan.ROOT / ".github/workflows/freerdp-browser-diagnostics.yml").exists()
+    assert not (plan.ROOT / ".github/workflows/dependency-maintenance-candidate.yml").exists()
