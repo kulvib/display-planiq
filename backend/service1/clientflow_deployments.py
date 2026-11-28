@@ -171,7 +171,21 @@ def create_authorized_deployment(
     reason: str | None,
     release_candidate_sha256: str | None = None,
     source_commit: str | None = None,
+    managed_authority: str | None = None,
 ) -> ClientFlowDeployment:
+    # Keep historical paths unchanged; a managed target must have its
+    # own reviewed authority and exact durable source/target binding.
+    from .clientflow_managed_rollout import authorize_creation
+    try:
+        managed_evidence = authorize_creation(session, snapshot={
+            "target_release_id": target_release_id, "target_version": target_version,
+            "target_release_sequence": target_release_sequence, "bundle_sha256": bundle_sha256,
+            "bundle_size": bundle_size, "release_approval_reference": release_approval_reference,
+            "release_candidate_sha256": release_candidate_sha256, "source_commit": source_commit,
+        }, client_id=client_id, requested_by_user_id=requested_by_user_id,
+            allow_downgrade=allow_downgrade, authority=managed_authority)
+    except (ValueError, RuntimeError) as exc:
+        raise ClientFlowDeploymentConflict(str(exc)) from exc
     if active_deployment(session, client_id=client_id, for_update=True) is not None:
         raise ClientFlowDeploymentConflict("Klienten har allerede en aktiv ClientFlow-deployment")
     if unacknowledged_recovery_failure(session, client_id=client_id) is not None:
@@ -214,6 +228,9 @@ def create_authorized_deployment(
             "allow_downgrade": allow_downgrade,
         },
     )
+    if managed_evidence is not None:
+        append_event(session, deployment_id=deployment.id,
+                     event_type="managed_forward_authorized", payload=managed_evidence)
     try:
         session.flush()
     except IntegrityError as exc:
@@ -271,11 +288,15 @@ def authorize_activation(
     if existing is not None:
         return deployment
     try:
+        from .clientflow_managed_rollout import require_access, require_credential
+        if is_candidate_order(deployment):
+            require_access(session, deployment)
+            require_credential(session, deployment, credential_id)
         require_centrally_eligible_release(
             release_id=deployment.target_release_id,
             release_sequence=deployment.target_release_sequence,
         )
-    except ClientFlowReleaseSecurityDenied as exc:
+    except (ValueError, ClientFlowReleaseSecurityDenied) as exc:
         raise ClientFlowDeploymentConflict(str(exc)) from exc
     if deployment.state != "staged" or deployment.completed_at is not None:
         raise ClientFlowDeploymentConflict(

@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import {organizationOptions, organizationScope, filterRolloutClients, visibleSelection, bindOrganizationTargets} from "../src/pages/adminpages/clientflowRolloutSelection.mjs";
 
 const rows = [
-  {id:3,name:"Viborg1",organization_id:10,organization_name:"Kulturskole"},
+  {id:3,name:"Viborg1",organization_id:10,organization_name:"Organisation A"},
   {id:7,name:"Klient B",organization_id:20,organization_name:"Skole"},
-  {id:8,name:"Klient C",organization_id:10,organization_name:"Kulturskole"},
+  {id:8,name:"Klient C",organization_id:10,organization_name:"Organisation A"},
   {id:9,name:"Klient D",organization_id:null},
 ];
 test("organization dropdown groups actual IDs and includes unassigned clients",()=>{

@@ -82,7 +82,7 @@ def test_rotation_plan_rejects_bad_inputs(baseline, attack):
 
 
 @pytest.mark.parametrize("changes", [
-    {"client_id": 4}, {"allow_downgrade": True}, {"target_release_sequence": 1251},
+    {"client_id": 0}, {"allow_downgrade": True}, {"target_release_sequence": 1251},
     {"target_release_id": PREVIOUS}, {"target_version": "1.4.1"},
 ])
 def test_mixed_identity_or_wrong_client_does_not_bypass_contract(changes):
@@ -161,3 +161,11 @@ def test_rollback_requires_exact_matching_authenticated_event_chain(database):
     assert row.observed_release_id is None  # not a successful 1252 deployment
     events = session.exec(select(ClientFlowDeploymentEvent)).all()
     assert len(events) == 2 and {event.event_type for event in events} == {"rollback_started", "rolled_back"}
+
+
+@pytest.mark.parametrize("client_id", [3, 7, 100, 101])
+def test_outcome_contract_is_independent_of_client_identity(client_id):
+    row = SimpleNamespace(client_id=client_id, allow_downgrade=False, target_release_id=TARGET,
+                          target_release_sequence=1252, target_version="1.4.2")
+    transition.require_candidate_observation(row, "succeeded", SUCCESS)
+    transition.require_candidate_observation(row, "rolled_back", ROLLBACK)
